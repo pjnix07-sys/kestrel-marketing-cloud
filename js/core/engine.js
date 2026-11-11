@@ -1,0 +1,226 @@
+/* Kestrel Marketing Cloud - MC.engine: boots the Fernway Outfitters sample world and drives the
+   simulated clock. One tick = one simulated hour. The wall-clock scheduler is a setTimeout chain
+   (pause / 1x / 4x / 16x) that runs regardless of which view is open; each fire advances exactly
+   one tick inside a single store batch, so subscribers see one notify per tick. advance(world) is
+   the shared tick pipeline used by both the live world and replay. */
+(function () {
+  'use strict';
+  var MC = window.MC = window.MC || {};
+  var E = MC.engine = MC.engine || {};
+
+  var assign = Object.assign;
+  E.SPEEDS = { pause: 0, '1x': 1200, '4x': 300, '16x': 75 };
+  E.SPEED_KEYS = ['pause', '1x', '4x', '16x'];
+  E.PHASES = [
+    { id: 'profiles', label: 'Generating 6,000 sample customer profiles' },
+    { id: 'history', label: 'Replaying 60 days of sample history' },
+    { id: 'scores', label: 'Scoring propensity, churn and lifetime value' },
+    { id: 'agents', label: 'Starting the eight agents' }
+  ];
+
+  var speed = 'pause';
+  var timer = null;
+  var booted = false;
+  var bootPromise = null;
+  var listeners = [];
+  E.checkpoints = {};
+  E.lastTickMs = 0;
+  E.lastError = null;
+
+  function now() { return MC.util.now(); }
+  function report(e) { if (window.console && console.error) console.error(e); }
+  function emit() {
+    var l = listeners.slice();
+    for (var i = 0; i < l.length; i++) { try { l[i](); } catch (e) { report(e); } }
+  }
+  // Engine-level listeners (speed changes, tick timing). The store notifies world changes.
+  E.subscribe = function (fn) {
+    listeners.push(fn);
+    return function () { var i = listeners.indexOf(fn); if (i >= 0) listeners.splice(i, 1); };
+  };
+
+  /* ======================= tick pipeline (§10.6) ======================= */
+  // Prepares a freshly generated world (adds any registered agent missing from it). Live and replay share it.
+  E.prepare = function (world) {
+    if (MC.runtime && typeof MC.runtime.ensureAgents === 'function') MC.runtime.ensureAgents(world);
+    return world;
+  };
+
+  // ONE tick on the given world; no store access.
+  E.advance = function (world) {
+    var t = world.meta.tick + 1;
+    world.meta = assign({}, world.meta, { tick: t });
+    var h = MC.time.hourOf(t), d = MC.time.dayOf(t);
+    if (h === 0) MC.sim.dayRoll(world, d);
+    MC.sim.step(world, t);
+    if (MC.runtime && typeof MC.runtime.runDue === 'function') MC.runtime.runDue(world, t);
+    return world;
+  };
+
+  function pauseWithError(e) {
+    report(e);
+    E.lastError = e;
+    E.setSpeed('pause');
+    try {
+      if (MC.uiStore && MC.uiStore.addToast) {
+        MC.uiStore.addToast({ text: 'The simulation hit a problem and paused. Your work is safe; reload to start a fresh sample world.', tone: 'crit' });
+      }
+    } catch (e2) { report(e2); }
+  }
+
+  // Advances the live world one tick: one batch, one notify, a checkpoint digest at each day roll.
+  E.tickOnce = function () {
+    var w = MC.store.getState();
+    if (!w) return null;
+    var t0 = now(), ok = true;
+    try {
+      MC.store.batch(function () {
+        E.advance(w);
+        var t = w.meta.tick;
+        if (MC.time.hourOf(t) === 0 && MC.replay && typeof MC.replay.digestWorld === 'function') {
+          E.checkpoints[t] = MC.replay.digestWorld(w).state;
+        }
+      });
+    } catch (e) { ok = false; pauseWithError(e); }
+    E.lastTickMs = now() - t0;
+    emit();
+    return ok ? w.meta.tick : null;
+  };
+
+  /* ======================= wall-clock scheduler ======================= */
+  function clear() { if (timer !== null) { clearTimeout(timer); timer = null; } }
+  function schedule(delay) { clear(); timer = setTimeout(fire, Math.max(0, delay)); }
+  function fire() {
+    timer = null;
+    if (speed === 'pause' || !booted) return;
+    var start = now();
+    E.tickOnce();
+    if (speed === 'pause') return;
+    // Exactly one tick per fire; an overrun skips ahead instead of queueing.
+    schedule(E.SPEEDS[speed] - (now() - start));
+  }
+
+  E.setSpeed = function (key) {
+    if (!Object.prototype.hasOwnProperty.call(E.SPEEDS, key)) return speed;
+    var changed = key !== speed;
+    speed = key;
+    clear();
+    if (key !== 'pause' && booted) schedule(E.SPEEDS[key]);
+    if (changed) {
+      try { if (MC.uiStore && MC.uiStore.set) MC.uiStore.set({ speed: key }); } catch (e) { report(e); }
+      emit();
+    }
+    return speed;
+  };
+  E.getSpeed = function () { return speed; };
+  E.isBooted = function () { return booted; };
+
+  // Advances n ticks synchronously (typically while paused) with a single notify.
+  E.step = function (n) {
+    n = Math.max(1, Math.min(24 * 7, (n | 0) || 1));
+    if (!MC.store.getState()) return null;
+    var last = null;
+    MC.store.batch(function () {
+      for (var i = 0; i < n; i++) { last = E.tickOnce(); if (last === null) break; }
+    });
+    return last;
+  };
+
+  /* ======================= boot / restart ======================= */
+  function phaseInfo(id) {
+    for (var i = 0; i < E.PHASES.length; i++) if (E.PHASES[i].id === id) return { index: i, total: E.PHASES.length, label: E.PHASES[i].label };
+    return { index: -1, total: E.PHASES.length, label: id };
+  }
+  function tell(onPhase, id) {
+    if (typeof onPhase !== 'function') return;
+    try { onPhase(id, phaseInfo(id)); } catch (e) { report(e); }
+  }
+  function yieldThen(fn) { setTimeout(fn, 0); }
+
+  // Generates a world in slices (yielding between phases so the boot card can paint).
+  function generateWorld(seed, onPhase) {
+    return new Promise(function (resolve, reject) {
+      if (!(MC.data && (typeof MC.data.generateSteps === 'function' || typeof MC.data.generate === 'function'))) {
+        reject(new Error('MC.data.generate missing (owner: core)'));
+        return;
+      }
+      var finish = function (w) {
+        tell(onPhase, 'agents');
+        yieldThen(function () {
+          try { resolve(E.prepare(w)); } catch (e) { reject(e); }
+        });
+      };
+      if (typeof MC.data.generateSteps !== 'function') {
+        tell(onPhase, 'profiles');
+        yieldThen(function () { try { finish(MC.data.generate(seed)); } catch (e) { reject(e); } });
+        return;
+      }
+      var it;
+      try { it = MC.data.generateSteps(seed); } catch (e) { reject(e); return; }
+      var guard = 0;
+      tell(onPhase, 'profiles');
+      var next = function () {
+        try {
+          var r = it.next() || {};
+          if (r.phase) tell(onPhase, r.phase);
+          if (r.done || r.world) { if (!r.world) throw new Error('The sample world generator returned nothing.'); finish(r.world); return; }
+          if (++guard > 100) throw new Error('The sample world generator did not finish.');
+          yieldThen(next);
+        } catch (e) { reject(e); }
+      };
+      yieldThen(next);
+    });
+  }
+  E.generateWorld = generateWorld;
+
+  E.boot = function (opts) {
+    opts = opts || {};
+    if (bootPromise) return bootPromise;
+    var seed = opts.seed === undefined ? MC.SEED : opts.seed;
+    bootPromise = generateWorld(seed, opts.onPhase).then(function (w) {
+      E.checkpoints = {};
+      MC.store.init(w);
+      booted = true;
+      E.setSpeed(opts.speed && E.SPEEDS[opts.speed] !== undefined ? opts.speed : '1x');
+      emit();
+      return w;
+    }, function (e) { bootPromise = null; throw e; });
+    return bootPromise;
+  };
+
+  function resetFocus(w) {
+    var UI = MC.uiStore;
+    if (!UI || !UI.getState) return;
+    var s = UI.getState(), f = assign({}, s.focus || {}), changed = false;
+    function fix(view, key, exists) {
+      var v = f[view];
+      if (v && v[key] !== null && v[key] !== undefined && !exists(v[key])) { var o = assign({}, v); o[key] = null; f[view] = o; changed = true; }
+    }
+    fix('campaigns', 'id', function (id) { return !!w.campaigns.byId[id]; });
+    fix('content', 'variantId', function (id) { return !!w.variants.byId[id]; });
+    fix('audiences', 'segmentId', function (id) { return !!w.segments.byId[id]; });
+    fix('audiences', 'profileIdx', function (i) { return i >= 0 && i < w.profiles.n; });
+    fix('agents', 'auditId', function () { return false; });
+    if (f.campaigns && f.campaigns.mode === 'detail' && !f.campaigns.id) { f.campaigns = assign({}, f.campaigns, { mode: 'board' }); changed = true; }
+    var patch = { verifying: null };
+    if (changed) patch.focus = f;
+    UI.set(patch);
+  }
+
+  // Pauses, regenerates the world (clearing the log, checkpoints and toasts) and resumes at 1x.
+  E.restart = function (seed, onPhase) {
+    E.setSpeed('pause');
+    var s = seed === undefined || seed === null ? MC.SEED : seed;
+    return generateWorld(s, onPhase).then(function (w) {
+      E.checkpoints = {};
+      E.lastError = null;
+      try { if (MC.uiStore && MC.uiStore.clearToasts) MC.uiStore.clearToasts(); } catch (e) { report(e); }
+      MC.store.init(w);
+      booted = true;
+      resetFocus(w);
+      E.setSpeed('1x');
+      emit();
+      return w;
+    });
+  };
+})();
