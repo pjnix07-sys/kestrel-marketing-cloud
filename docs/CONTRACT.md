@@ -1972,3 +1972,31 @@ Live dispatches are stamped with `world.meta.tick` and are processed before tick
 | Continuously optimize and improve | Optimizer, Send-Time, Pacer, Guard and Copy act on live campaigns; realized impact measured against the control cohort; agent track records |
 | Approvals, undo, trust | Approvals drawer, ProposalCard (Why, Expected impact, Guardrails, Changes), stale handling, `undoCheck`, chained audit |
 | Determinism verification | Agents → Audit & replay → Verify determinism (§10.11), with first-divergence reporting |
+
+## 11. Design amendments (binding — added Nov 15; override §9, the §7 view specs and §10.11 where they conflict)
+
+Direction from the user: a wow-factor prototype that does not overwhelm; the simulation must be invisible; no generic AI-generated design tells; the agentic layer surfaced meaningfully but calmly.
+
+### 11.1 The simulation is invisible
+- No sim clock, no "Sim day N", and no Pause/1x/4x/16x speed controls anywhere in the UI. The engine ticks continuously at its default pace; pacing constants live only in engine.js. (Engine/time remapping happens in a core pass; view builders follow the display rules below now.)
+- Views show calendar dates and relative times ("2h ago", "yesterday"), never ticks. Agent cadence is worded ("every 6 hours"), never "every N ticks". Display dates anchor to the real current date at boot via MC.time's display mapping; tick arithmetic is unchanged.
+- Sample-data banner copy: "You're exploring Fernway Outfitters, a fictional outdoor brand with sample data." Never mention simulator, determinism, ticks or seeds in marketer-facing copy.
+- Agents view: NO "Verify determinism" control and NO digest/hash values anywhere (supersedes §10.11's UI; MC.replay remains a dev-only utility with no UI). Run traces read as plain language: what the agent saw, what it decided, why, what changed, with Undo where applicable.
+- The overflow menu may hold a single quiet "Jump ahead a day / a week" item; nothing else in the chrome references time control.
+
+### 11.2 No AI tells (hard rules, all views and kit)
+- No colored left accent rails or edge bars on cards, rows, callouts or banners; status is carried by one small pill or dot, never an edge stripe.
+- Max one bordered surface level per region; no card-in-card nesting. Prefer whitespace and type hierarchy over boxes; hairline dividers only where scanning needs them.
+- At most one status pill per row; no chip or badge clusters. Semantic color only for real status; the russet agent color appears only on genuine agent attributions.
+- No gradients, no glow shadows (one subtle elevation for overlays and drawers only), no emoji, icons only in nav and on actions, not beside every label.
+- No walls of stat tiles: Command Center leads with at most 4 KPIs; other views lead with their object, not tiles.
+- One primary button per region; everything else quiet or text style.
+
+### 11.3 Calm agentic surfacing
+- One "What changed" feed (home) narrates agent actions in plain English with inline View and Undo.
+- Objects an agent touched carry a small agent dot with attribution in hover or detail ("Optimized by Send-Time Tuner, 2h ago"); no persistent badges.
+- The top-bar agent pulse is one quiet dot that animates only when an agent acts; clicking it opens the activity feed. The approvals control is a single count.
+- Toasts only for autopilot actions, batched ("Send-Time Tuner adjusted 3 campaigns"), never one per micro-action.
+
+### 11.4 Lead with the 80% use case
+- Each view opens on its primary object with one primary action: Campaigns on the board, Content on the composer, Audiences on the segment list, Analytics on the performance overview, Agents on the roster with activity. Dense artifacts (overlap matrices, attribution tables, parameter editors, traces) sit behind tabs or disclosure, closed by default.

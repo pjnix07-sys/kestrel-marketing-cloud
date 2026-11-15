@@ -496,10 +496,12 @@
   function Unbuilt(p) {
     var Empty = ui('EmptyState');
     var title = TITLES[p.route] || 'This area';
+    var ready = NAV.filter(function (n) { return MC.views && typeof MC.views[n.route] === 'function'; }).map(function (n) { return n.label; });
+    var body = ready.length > 1 ? ready.slice(0, -1).join(', ') + ' and ' + ready[ready.length - 1] + ' are ready to explore while this one is finished.'
+      : ready.length ? ready[0] + ' is ready to explore while this one is finished.' : 'Check back after the next deployment.';
     return html`<section className="app-unbuilt">
       <h1 id="page-title" tabIndex="-1" className="app-page-h1">${title}</h1>
-      ${Empty ? html`<${Empty} icon="sparkle" title="This area is still being built."
-        body="Command Center, Audiences and Analytics are ready to explore while this one is finished." />`
+      ${Empty ? html`<${Empty} icon="sparkle" title="This area is still being built." body=${body} />`
         : html`<p>This area is still being built.</p>`}
     </section>`;
   }
@@ -549,6 +551,12 @@
     bootState = Object.assign({}, bootState, patch);
     bootSubs.slice().forEach(function (fn) { fn(bootState); });
   }
+  function bootError(e) {
+    var m = String((e && e.message) || e || '');
+    var miss = /^(MC\.[A-Za-z0-9_.]+) missing/.exec(m);
+    if (miss) return 'Part of the simulator (' + miss[1] + ") isn't included in this deployment yet, so the sample world can't be generated. Reload once every file has been published.";
+    return 'Something went wrong while generating the sample world: ' + m;
+  }
   function startBoot() {
     setBoot({ started: true, error: null, phase: 'profiles' });
     try {
@@ -556,7 +564,7 @@
         var r = MC.engine.boot({ seed: MC.SEED, onPhase: function (ph) { setBoot({ phase: typeof ph === 'string' ? ph : (ph && ph.phase) || bootState.phase }); } });
         if (r && typeof r.then === 'function') {
           r.then(function () { setBoot({ phase: 'done' }); notifySpeed(); },
-            function (e) { report(e); setBoot({ error: 'Something went wrong while generating the sample world: ' + ((e && e.message) || e) }); });
+            function (e) { report(e); setBoot({ error: bootError(e) }); });
         } else { setBoot({ phase: 'done' }); notifySpeed(); }
         return;
       }
@@ -564,14 +572,14 @@
         // Engine not available: show a still snapshot of the generated world (no clock, no agents).
         window.setTimeout(function () {
           try { MC.store.init(MC.data.generate(MC.SEED)); setBoot({ phase: 'done' }); }
-          catch (e) { report(e); setBoot({ error: 'Something went wrong while generating the sample world: ' + ((e && e.message) || e) }); }
+          catch (e) { report(e); setBoot({ error: bootError(e) }); }
         }, 0);
         return;
       }
       setBoot({ error: 'The simulation engine for this deployment is missing, so there is no sample world to show yet.' });
     } catch (e) {
       report(e);
-      setBoot({ error: 'Something went wrong while generating the sample world: ' + ((e && e.message) || e) });
+      setBoot({ error: bootError(e) });
     }
   }
   function useBoot() {
