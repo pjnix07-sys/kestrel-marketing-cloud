@@ -204,3 +204,4 @@
 @media (prefers-reduced-motion: reduce) {
   .v-agents * { transition: none !important; animation: none !important; }
 }
+.v-agents .ag-autonomy { justify-items: start; }
