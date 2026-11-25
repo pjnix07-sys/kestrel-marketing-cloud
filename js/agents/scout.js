@@ -82,9 +82,12 @@
     return out;
   }
   function deciles(world, key) {
-    var col = columnOf(world, key), arr = [];
-    for (var i = 0; i < col.length; i++) if (isNum(col[i])) arr.push(col[i]);
-    arr.sort(function (a, b) { return a - b; });
+    var col = columnOf(world, key), m = 0, i;
+    for (i = 0; i < col.length; i++) if (isNum(col[i])) m++;
+    var arr = new Float64Array(m);
+    m = 0;
+    for (i = 0; i < col.length; i++) if (isNum(col[i])) arr[m++] = col[i];
+    arr.sort();
     var out = [];
     if (!arr.length) return out;
     for (var q = 1; q <= 9; q++) {
@@ -114,19 +117,15 @@
   function ruleOf(conds) { return { op: 'all', items: conds.map(function (c) { return { attr: c.attr, cmp: c.cmp, value: Array.isArray(c.value) ? c.value.slice() : c.value }; }) }; }
 
   /* ---------------- scoring ---------------- */
-  function scoreBits(bits, lab, base) {
-    var n = 0, k = 0;
-    for (var i = 0; i < lab.length; i++) if (lab[i] && bits[i]) { n++; if (lab[i] === 2) k++; }
-    var rate = n ? k / n : 0, lift = base > 0 ? rate / base : 0;
-    return { n: n, k: k, rate: rate, lift: lift, score: lift > 1 ? lift * Math.sqrt(n) : 0 };
-  }
   function andBits(a, b) {
     var out = new Uint8Array(a.length);
     for (var i = 0; i < a.length; i++) out[i] = a[i] & b[i];
     return out;
   }
   function count(bits) { var c = 0; for (var i = 0; i < bits.length; i++) c += bits[i]; return c; }
-  function jaccard(a, b) {
+  // Jaccard similarity; sizes let most pairs skip the scan (J <= min/max).
+  function jaccard(a, na, b, nb) {
+    if (Math.min(na, nb) <= JACCARD_MAX * Math.max(na, nb)) return Math.min(na, nb) / Math.max(1, Math.max(na, nb));
     var inter = 0, uni = 0;
     for (var i = 0; i < a.length; i++) { if (a[i] && b[i]) inter++; if (a[i] || b[i]) uni++; }
     return uni ? inter / uni : 0;
@@ -181,14 +180,32 @@
       return { proposals: [], insights: [], trace: trace };
     }
 
+    // Scoring only walks the reached people; full-population bitsets are built lazily for finalists.
+    var lidx = [];
+    for (var li = 0; li < lab.length; li++) if (lab[li]) lidx.push(li);
+    var LN = lidx.length, lconv = new Uint8Array(LN);
+    for (var lj = 0; lj < LN; lj++) lconv[lj] = lab[lidx[lj]] === 2 ? 1 : 0;
+    function project(bits) { var o = new Uint8Array(LN); for (var j = 0; j < LN; j++) o[j] = bits[lidx[j]]; return o; }
+    function stats(n, k) {
+      var rate = n ? k / n : 0, lift = base > 0 ? rate / base : 0;
+      return { n: n, k: k, rate: rate, lift: lift, score: lift > 1 ? lift * Math.sqrt(n) : 0 };
+    }
+    function score1(a) { var n = 0, k = 0; for (var j = 0; j < LN; j++) if (a[j]) { n++; k += lconv[j]; } return stats(n, k); }
+    function score2(a, b) { var n = 0, k = 0; for (var j = 0; j < LN; j++) if (a[j] & b[j]) { n++; k += lconv[j]; } return stats(n, k); }
+    function andL(a, b) { var o = new Uint8Array(LN); for (var j = 0; j < LN; j++) o[j] = a[j] & b[j]; return o; }
+    function bitsOf(x) {
+      if (!x.bits) x.bits = andBits(bitsOf(x.parent), x.last.bits);
+      return x.bits;
+    }
+
     // depth 1
     var conds = candidates(world), singles = [];
     conds.forEach(function (c) {
       var bits;
       try { bits = S().evaluate(world, { op: 'all', items: [c] }).bits; } catch (e) { return; }
-      var s = scoreBits(bits, lab, base);
+      var lb = project(bits), s = score1(lb);
       if (s.n < MIN_CELL || s.n > 0.9 * obs.touched) return;
-      singles.push({ conds: [c], key: condKey(c), attrs: [c.attr], bits: bits, n: s.n, k: s.k, rate: s.rate, lift: s.lift, score: s.score });
+      singles.push({ conds: [c], key: condKey(c), attrs: [c.attr], bits: bits, lb: lb, n: s.n, k: s.k, rate: s.rate, lift: s.lift, score: s.score });
     });
     singles.sort(byScore);
     var all = singles.slice(), frontier = singles.filter(function (x) { return x.score > 0; }).slice(0, EXPAND_TOP), pairs = 0;
@@ -197,15 +214,16 @@
     for (var depth = 2; depth <= p.maxDepth; depth++) {
       var next = [];
       frontier.forEach(function (r) {
+        var rb = r.lb;
         singles.forEach(function (s1) {
           var c = s1.conds[0];
           if (r.attrs.indexOf(c.attr) >= 0) return;
-          var bits = andBits(r.bits, s1.bits), s = scoreBits(bits, lab, base);
+          var s = score2(rb, s1.lb);
           pairs++;
           if (s.n < MIN_CELL) return;
           var cs = r.conds.concat([c]);
           var key = cs.map(condKey).sort().join('&');
-          next.push({ conds: cs, key: key, attrs: r.attrs.concat([c.attr]), bits: bits, n: s.n, k: s.k, rate: s.rate, lift: s.lift, score: s.score });
+          next.push({ conds: cs, key: key, attrs: r.attrs.concat([c.attr]), bits: null, parent: r, last: s1, n: s.n, k: s.k, rate: s.rate, lift: s.lift, score: s.score });
         });
       });
       next.sort(byScore);
@@ -213,6 +231,7 @@
       next = next.filter(function (x) { if (seen[x.key]) return false; seen[x.key] = true; return true; });
       all = all.concat(next);
       frontier = next.filter(function (x) { return x.score > 0; }).slice(0, EXPAND_TOP);
+      frontier.forEach(function (x) { x.lb = andL(x.parent.lb, x.last.lb); });
     }
     all.sort(byScore);
     trace.push({ step: 'decide', text: 'Tested ' + num(singles.length) + ' single conditions' + (pairs ? ' and ' + num(pairs) + ' combinations' : '') +
@@ -227,13 +246,16 @@
     obs.open.forEach(function (o) {
       try { existing.push({ name: 'an open suggestion', bits: S().evaluate(world, o.rule).bits }); } catch (e) { /* skip */ }
     });
+    existing.forEach(function (x) { x.size = count(x.bits); });
     var picks = [], dropped = [];
     for (var i = 0; i < all.length && picks.length < p.topK; i++) {
       var x = all[i];
       if (x.lift < p.minLift || x.n < p.minSupport) continue;
       var clash = null;
-      for (var j = 0; j < existing.length && !clash; j++) if (jaccard(x.bits, existing[j].bits) > JACCARD_MAX) clash = existing[j].name;
-      for (var q = 0; q < picks.length && !clash; q++) if (jaccard(x.bits, picks[q].bits) > JACCARD_MAX) clash = 'another suggestion';
+      bitsOf(x);
+      x.size = count(x.bits);
+      for (var j = 0; j < existing.length && !clash; j++) if (jaccard(x.bits, x.size, existing[j].bits, existing[j].size) > JACCARD_MAX) clash = existing[j].name;
+      for (var q = 0; q < picks.length && !clash; q++) if (jaccard(x.bits, x.size, picks[q].bits, picks[q].size) > JACCARD_MAX) clash = 'another suggestion';
       if (clash) { if (dropped.length < 10) dropped.push({ rule: S().describe(ruleOf(x.conds)), result: 'Skipped: almost the same people as ' + clash }); continue; }
       picks.push(x);
     }
@@ -253,7 +275,7 @@
       }
       if (names[name.toLowerCase()]) name = (name + ' (new)').slice(0, 60);
       names[name.toLowerCase()] = true;
-      var size = count(x.bits), desc = S().describe(rule);
+      var size = x.size, desc = S().describe(rule);
       var wl = MC.util.wilson(x.k, x.n, 1.28);
       var impact = { metric: 'order rate vs average', delta: x.rate - base, lo: wl[0] - base, hi: wl[1] - base, unit: 'pp', horizonDays: 0,
         confidence: x.lift >= 2 ? 'high' : 'medium' };

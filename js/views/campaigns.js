@@ -177,7 +177,7 @@
   }
   function Spark(p) {
     var S = chart('Sparkline');
-    if (!S || !p.values || p.values.length < 2) return null;
+    if (!S || !p.values || p.values.length < 2 || !p.values.some(function (v) { return v > 0; })) return null;
     return h`<${S} values=${p.values} width=${p.width || 88} height=${p.height || 22} color="chart-1" area=${true} ariaLabel=${p.label} />`;
   }
 
@@ -240,6 +240,7 @@
   }
   function continuePlanning(c) {
     setBriefStore(briefFromCampaign(c));
+    briefOwner.id = c.id;
     planMemo.plan = null; planMemo.key = null; planMemo.accepted = {}; planMemo.edits = {}; planMemo.regen = {};
     setFocus({ mode: 'planner', id: c.id });
   }
@@ -247,6 +248,7 @@
     var w = getWorld(), b = briefFromCampaign(c, true), t = todayOf(w);
     if (b.startDay <= t) { var len = Math.max(1, b.endDay - b.startDay); b.startDay = t + 2; b.endDay = b.startDay + len; }
     setBriefStore(b);
+    briefOwner.id = null;
     planMemo.plan = null; planMemo.key = null; planMemo.accepted = {}; planMemo.edits = {}; planMemo.regen = {};
     setFocus({ mode: 'planner', id: null });
   }
@@ -687,13 +689,36 @@
         <${Figure} label="Spend pace" value=${fin(stats.pace) ? pct(stats.pace, 0) : DASH} sub=${paceText ? paceText + MID + money(c.budget.total, true) + ' budget' : money(c.budget.total, true) + ' budget'} />
       </div>` : null;
 
+    var segs = useSel(React.useCallback(function (w) { return w.segments; }, []));
+    var seg = segs && segs.byId ? segs.byId[c.segmentId] : null;
+    var briefText = typeof c.brief === 'string' ? c.brief : (c.brief && c.brief.notes) || '';
+    var planPanel = h`<${Panel} id="cmp-plan-summary" title="Plan" sub=${c.status === 'draft' ? 'Draft. Agents never change drafts; schedule it when preflight checks pass.' : 'Scheduled. It goes live on ' + dayLabel(dayOf(c.startTick)) + '.'}>
+        ${briefText ? h`<p className="cm-brief-text">${briefText}</p>` : null}
+        <dl className="cm-facts cm-facts-plain">
+          <div className="cm-fact"><dt>Goal</dt><dd className="num">${goalFmt(c.goal.type, c.goal.target, true)}${c.goal.type === 'revenue' ? '' : ' ' + (GOAL_NOUN[c.goal.type] || '')}</dd></div>
+          <div className="cm-fact"><dt>Budget</dt><dd className="num">${money(c.budget.total, true)}</dd></div>
+          <div className="cm-fact"><dt>Audience</dt><dd className="cm-fact-text">${seg ? seg.name : 'Not set'}</dd></div>
+          <div className="cm-fact"><dt>Runs</dt><dd className="cm-fact-text num">${plural(Math.max(1, dayOf(c.endTick) - dayOf(c.startTick)), 'day', 'days')}</dd></div>
+        </dl>
+        <p className="cm-muted cm-small cm-gap-top">${chList(c.channels)}${MID}${toneLabel(c.tone)} tone${MID}${offerLabel(c.offer)}</p>
+      <//>`;
+    if (!started) {
+      return h`<div className="cm-overview">
+        <div className="cm-ov-main">${planPanel}</div>
+        <aside className="cm-ov-side" aria-label="Agents on this campaign">
+          <section className="cm-side-sec"><h2 className="cm-h3">Agents</h2>
+            <p className="cm-muted cm-small">${c.status === 'draft' ? 'Agents never change drafts. Once the campaign is live they tune send times, traffic splits and budget within your guardrails.' : 'Agents start tuning send times, traffic splits and budget once the campaign is live.'}</p>
+          </section>
+        </aside>
+      </div>`;
+    }
     return h`<div className="cm-overview">
       <div className="cm-ov-main">
         <${Panel} id="cmp-results" title="Results" sub=${started ? (out.label + (stats && stats.daysLeft > 0 ? MID + plural(stats.daysLeft, 'day', 'days') + ' left' : '')) : 'Results appear once the campaign goes live on ' + dayLabel(dayOf(c.startTick)) + '.'}>
           ${figures}
           ${started && LC ? h`<div className="cm-chart">
               <${LC} series=${[{ id: 'm', label: GOAL_LABEL[c.goal.type] + ' per day', points: points }]} markers=${markers}
-                yFormat=${c.goal.type === 'revenue' ? 'moneyCompact' : 'int'} height=${220}
+                yFormat=${c.goal.type === 'revenue' ? 'moneyCompact' : 'int'} xFormat=${dayShort} height=${220}
                 ariaLabel=${GOAL_LABEL[c.goal.type] + ' per day for ' + c.name} emptyText="Daily results appear after the first full day." />
             </div>` : null}
         <//>
@@ -915,6 +940,17 @@
           </div>` : null}
         ${msg ? h`<${Msg} text=${msg.text} tone=${msg.tone} />` : null}
       <//>
+      ${(c.include || EMPTY).length ? h`<${Panel} id="cmp-include" title="Also included" sub="Extra segments whose members join this campaign.">
+          <ul className="cm-rows">${c.include.map(function (sid) {
+            var x = byId[sid];
+            var who = x ? agentIdOf(x.author) : null;
+            return h`<li key=${sid} className="cm-rowline">
+              <span>${x ? x.name : sid}</span><span className="cm-muted num">${x ? num(x.count) : ''}</span>
+              ${who ? h`<${AgentNote} text=${'Suggested by ' + agentName(who)} />` : null}
+              ${editable ? h`<${Link} onClick=${function () { act('campaign/include', { id: c.id, segmentId: sid, on: false }, 'Segment removed from this campaign.'); }}>Remove<//>` : null}
+            </li>`;
+          })}</ul>
+        <//>` : null}
       <${Panel} id="cmp-suppress" title="Exclusions" sub="People here are never sent this campaign.">
         ${(c.suppress || EMPTY).length ? h`<ul className="cm-rows">${c.suppress.map(function (sid) {
           var x = byId[sid];
@@ -1090,6 +1126,7 @@
      Planner
      ================================================================ */
   // Survives navigation for the session (never persisted, never in the world).
+  var briefOwner = { id: null };
   var planMemo = { plan: null, key: null, accepted: {}, edits: {}, regen: {}, fallback: false, draftedTick: null, trace: EMPTY };
   var SECTIONS = [
     { id: 'audience', n: 1, label: 'Audience', editable: true },
@@ -1210,17 +1247,15 @@
         })}</div>
         ${p.showErrors && errs.channels ? h`<p className="cm-msg is-crit">${errs.channels}</p>` : null}
       </fieldset>
-      <div className="cm-form-grid">
-        <div className="cm-field-plain">
+      <div className="cm-field-plain">
           <span className="cm-label" id="brief-tone-label">Tone</span>
           ${Seg ? h`<${Seg} id="brief-tone" label="Tone" size="sm" value=${b.tone} onChange=${function (v) { patch('tone', v); }}
               options=${TONES.map(function (t) { return { value: t, label: toneLabel(t) }; })} />`
             : h`<${Sel} id="brief-tone" value=${b.tone} options=${TONES.map(function (t) { return { value: t, label: toneLabel(t) }; })} onChange=${function (v) { patch('tone', v); }} />`}
-        </div>
-        <${Field} id="brief-offer" label="Offer">
-          <${Sel} id="brief-offer" value=${b.offer} options=${OFFERS.map(function (o) { return { value: o, label: offerLabel(o) }; })} onChange=${function (v) { patch('offer', v); }} />
-        <//>
       </div>
+      <${Field} id="brief-offer" label="Offer">
+        <${Sel} id="brief-offer" value=${b.offer} options=${OFFERS.map(function (o) { return { value: o, label: offerLabel(o) }; })} onChange=${function (v) { patch('offer', v); }} />
+      <//>
       <${Field} id="brief-notes" label="Notes for the planner" hint="Optional. Anything the plan should keep in mind.">
         <${TA} id="brief-notes" value=${b.notes || ''} rows=${2} maxLength=${400} onChange=${function (v) { patch('notes', v); }} />
       <//>
@@ -1331,7 +1366,7 @@
     return h`<div>
       <p className="cm-forecast-head num">Expected ${unit ? '' : (GOAL_NOUN[goal.type] || '') + ' '}<strong>${goalFmt(goal.type, f.lo, true)}${DASH}${goalFmt(goal.type, f.hi, true)}</strong>
         <span className="cm-muted"> against a goal of ${goalFmt(goal.type, goal.target, true)}</span></p>
-      ${LC && pts.length > 1 ? h`<${LC} series=${series} band=${band} height=${160} yFormat=${unit ? 'moneyCompact' : 'int'} ariaLabel="Forecast per day" noTable=${false} />` : null}
+      ${LC && pts.length > 1 ? h`<${LC} series=${series} band=${band} height=${160} xFormat=${dayShort} yFormat=${unit ? 'moneyCompact' : 'int'} ariaLabel="Forecast per day" noTable=${false} />` : null}
     </div>`;
   }
 
@@ -1344,7 +1379,16 @@
     var draftCampaign = useCampaign(draftId);
     var segments = useSel(React.useCallback(function (w) { return w.segments; }, []));
     var tick = useSel(selTick) || 0;
-    var bs = React.useState(function () { return stored ? clone(stored) : defaultBrief(w0); }), brief = bs[0], setBriefSt = bs[1];
+    var bs = React.useState(function () {
+      // A stored brief belongs to the plan it was written for (new plan or a specific draft).
+      if (stored && briefOwner.id === draftId) return clone(stored);
+      planMemo.plan = null; planMemo.key = null; planMemo.accepted = {}; planMemo.edits = {}; planMemo.regen = {}; planMemo.fallback = false;
+      briefOwner.id = draftId;
+      var c0 = draftId && w0 && w0.campaigns ? w0.campaigns.byId[draftId] : null;
+      var b0 = c0 ? briefFromCampaign(c0) : defaultBrief(w0);
+      setTimeout(function () { setBriefStore(b0); }, 0);
+      return b0;
+    }), brief = bs[0], setBriefSt = bs[1];
     var ps = React.useState(planMemo), memo = ps[0], setMemoSt = ps[1];
     var es = React.useState(null), msg = es[0], setMsg = es[1];
     var vs = React.useState(false), showErrors = vs[0], setShowErrors = vs[1];

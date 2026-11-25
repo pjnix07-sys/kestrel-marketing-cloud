@@ -131,7 +131,8 @@
     var r = C.apply(world, { type: action.type, payload: payload }, { origin: 'user', tick: tick });
     if (!r.ok) return { ok: false, error: r.error };
     world.log = (world.log || []).concat([{ seq: (world.log || []).length + 1, tick: tick, type: action.type, payload: payload }]);
-    var silent = action.type.indexOf('proposal/') === 0 || action.type === 'insight/dismiss';
+    var silent = action.type.indexOf('proposal/') === 0 || action.type === 'insight/dismiss' ||
+      action.type === 'agent/aiRun' || action.type.indexOf('ai/') === 0;
     if (!silent) {
       var ent = def.entity ? def.entity(payload, r.created) : null;
       addFeed(world, { tick: tick, kind: 'user', entity: ent || undefined, text: text || action.type, tone: 'neutral' });
@@ -1290,6 +1291,45 @@
     null,
     function () { return { runRequested: true }; },
     function (n) { return 'You asked ' + n + ' to run now'; });
+
+  agentAction('agent/setAiMode', 'Reasoning on or off',
+    function (world, p) { return (p.aiMode === 'on' || p.aiMode === 'off') ? null : 'Pick on or off.'; },
+    function (world, p) { return { aiMode: p.aiMode }; },
+    function (n, p) { return p.aiMode === 'off' ? 'You set ' + n + ' to use its standard playbook only' : 'You let ' + n + ' reason through its runs again'; });
+
+  /* ================= Haiku agent fleet (§12.5) ================= */
+  // Logged world fact: whether agent runs wait for the fleet's verdict. Dispatched by MC.ai.fleet when the
+  // connection state changes; turning it off completes every waiting run with its rule-based drafts.
+  C.define('ai/setEnabled', {
+    by: ['user'],
+    label: 'Connect agent reasoning',
+    validate: function (world, p) { return typeof p.on === 'boolean' ? null : 'Pick on or off.'; },
+    reduce: function (world, p) {
+      var cur = world.ai || { on: false, pending: {} };
+      world.ai = assign({}, cur, { on: p.on, pending: assign({}, cur.pending || {}) });
+      if (!p.on && MC.runtime && typeof MC.runtime.resolveAiRun === 'function') {
+        sortedKeys(world.ai.pending).forEach(function (rid) {
+          var job = world.ai.pending[rid];
+          MC.runtime.resolveAiRun(world, { runId: rid, agentId: job.agentId, fallback: true, reason: 'disconnected' });
+        });
+      }
+    },
+    inverse: function () { return []; },
+    describe: function (world, p) { return p.on ? 'Agents now reason through their runs' : 'Agents went back to their standard playbooks'; }
+  });
+
+  // The logged result of one agent run (Haiku's validated verdict, or fallback). Replay applies it without any API call.
+  C.define('agent/aiRun', {
+    by: ['user'],
+    label: 'Agent run result',
+    validate: function (world, p) {
+      if (!(MC.runtime && typeof MC.runtime.aiRunErr === 'function')) return 'The agent runtime isn’t available.';
+      return MC.runtime.aiRunErr(world, p);
+    },
+    reduce: function (world, p) { MC.runtime.resolveAiRun(world, p); },
+    inverse: function () { return []; },
+    describe: function (world, p) { return agentName(p.agentId) + ' finished a run'; }
+  });
 
   /* ================= proposals ================= */
   function prop(world, id) { return world.proposals && world.proposals.byId[id]; }

@@ -24,7 +24,7 @@
   PL.GOAL_WEIGHT = {
     revenue: { active: 1.0, lapsed: 0.5 },
     conversions: { active: 1.0, lapsed: 0.6 },
-    reactivation: { active: 0.15, lapsed: 1.6 },
+    reactivation: { active: 0.05, lapsed: 1.6 },
     engagement: { active: 1.0, lapsed: 0.8 },
     launch: { active: 1.1, lapsed: 0.5 }
   };
@@ -107,8 +107,7 @@
     if (key === 'lastOrderDays') { for (i = 0; i < n; i++) if (P.lastOrder[i] !== NEVER()) out.push(d - P.lastOrder[i]); }
     else if (key === 'engRate') { for (i = 0; i < n; i++) out.push(MC.models.engRate(world, i)); }
     else { var col = { prop: P.prop, churn: P.churn, ltv: P.ltv, visits30: P.visits30 }[key]; for (i = 0; i < n; i++) out.push(col[i]); }
-    out.sort(function (a, b) { return a - b; });
-    return out;
+    return Float64Array.from(out).sort();
   }
   function q(world, key, p) {
     var c = column(world, key);
@@ -152,30 +151,33 @@
   }
 
   /* ---------------- section 1: audience ---------------- */
+  // Expected value counts each reachable member's chance to buy, weighted by how well they fit the goal.
   function audienceStats(world, bits, br) {
-    var P = world.profiles, d = T().dayOf(world.meta.tick), n = 0, reach = 0, primary = 0, sumProp = 0, sumAov = 0, buyers = 0, lapsed = 0;
+    var gw = PL.GOAL_WEIGHT[br.goal.type] || PL.GOAL_WEIGHT.revenue;
+    var P = world.profiles, d = T().dayOf(world.meta.tick), n = 0, reach = 0, primary = 0, sumProp = 0, sumAov = 0, buyers = 0, lapsed = 0, wProp = 0;
     var bitsAny = 0, pBit = MC.CH.BIT[br.channels[0]];
     br.channels.forEach(function (ch) { bitsAny |= MC.CH.BIT[ch]; });
     for (var i = 0; i < P.n; i++) {
       if (!bits[i]) continue;
       n++;
-      if ((P.consent[i] & bitsAny & ~P.unsub[i]) !== 0) reach++;
+      var isLapsed = P.lastOrder[i] === NEVER() || d - P.lastOrder[i] > LAPSED_DAYS;
       if (reachableBit(P, i, pBit)) primary++;
       sumProp += P.prop[i];
       if (P.orders[i] > 0 && P.aov[i] > 0) { sumAov += P.aov[i]; buyers++; }
-      if (P.lastOrder[i] === NEVER() || d - P.lastOrder[i] > LAPSED_DAYS) lapsed++;
+      if (isLapsed) lapsed++;
+      if ((P.consent[i] & bitsAny & ~P.unsub[i]) !== 0) { reach++; wProp += P.prop[i] * (isLapsed ? gw.lapsed : gw.active); }
     }
     var prod = br.productFocus && productById(world, br.productFocus);
     var aov = buyers ? sumAov / buyers : (prod ? prod.price : meanPrice(world));
-    return { size: n, reach: reach, primaryPct: n ? primary / n : 0, meanProp: n ? sumProp / n : 0, aov: aov, lapsedShare: n ? lapsed / n : 0 };
+    return { size: n, reach: reach, primaryPct: n ? primary / n : 0, meanProp: n ? sumProp / n : 0, aov: aov, lapsedShare: n ? lapsed / n : 0,
+      goalWeight: reach && sumProp > 0 ? wProp / Math.max(1e-9, sumProp * reach / n) : 0, ev: wProp * aov };
   }
   function buildAudience(world, br, params, regenN) {
-    var opts = [], gw = PL.GOAL_WEIGHT[br.goal.type] || PL.GOAL_WEIGHT.revenue;
+    var opts = [];
     function add(segmentId, segment, name, bits, source) {
       var s = audienceStats(world, bits, br);
       if (s.size < params.minSegmentSize && segmentId !== br.segmentId) return;
-      var w = gw.active * (1 - s.lapsedShare) + gw.lapsed * s.lapsedShare;
-      var ev = s.reach * s.meanProp * s.aov * w;
+      var w = s.goalWeight, ev = s.ev;
       var o = { segmentId: segmentId, name: name, size: s.size, reach: s.reach, meanProp: r4(s.meanProp), aov: r2(s.aov),
         primaryReach: r4(s.primaryPct), lapsedShare: r4(s.lapsedShare), goalWeight: r4(w), ev: Math.round(ev), source: source, bits: bits };
       if (segment) o.segment = segment;
@@ -388,7 +390,7 @@
     var tk = ticksOf(world, br);
     function rn(sec) { return isNum(regen[sec]) ? Math.max(0, Math.floor(regen[sec])) : 0; }
     trace.push({ step: 'observe', text: 'Read the brief: ' + (GOAL_LABEL[br.goal.type] || 'Revenue').toLowerCase() + ' goal, ' + money(br.budget) + ' over ' +
-      r2(tk.days) + ' days on ' + listJoin(br.channels.map(chLower)) + '.' });
+      (Math.round(tk.days * 10) / 10) + ' days on ' + listJoin(br.channels.map(chLower)) + '.' });
 
     var aud = buildAudience(world, br, params, rn('audience'));
     var chosen = aud.options[aud.chosen] || null;
