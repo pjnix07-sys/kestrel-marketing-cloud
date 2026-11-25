@@ -149,7 +149,7 @@
 /* side panes */
 .v-content .cs-pane { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
 .v-content .cs-pane-head { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
-.v-content .cs-previewas { display: flex; align-items: center; gap: 8px; }
+.v-content .cs-previewas { white-space: nowrap; display: flex; align-items: center; gap: 8px; }
 .v-content .cs-preview { min-width: 0; }
 
 /* previews */
@@ -228,3 +228,7 @@
   .v-content .cs-result { grid-template-columns: auto minmax(0, 1fr) auto; }
   .v-content .cs-result .ch-ring, .v-content .cs-result .cs-ring-fb { display: none; }
 }
+
+/* compact add row */
+.v-content .cs-add .cs-add-camp { flex: 1 1 160px; width: auto; }
+.v-content .cs-add .cs-add-share { flex: 0 0 auto; width: 88px; }

@@ -484,7 +484,7 @@
       createNew(v.campaignId, n ? Math.round(100 / (n + 1)) / 100 : 0);
     }
 
-    var hookLabel = v ? chLabel(v.channel) + ' ' + DOT + ' Variant ' + v.name : 'New ' + (chLabel(ch) === 'Social ads' ? 'social' : chLabel(ch).toLowerCase()) + ' draft';
+    var hookLabel = v ? chLabel(v.channel) + ' ' + DOT + ' Variant ' + v.name : 'New ' + ({ email: 'email', sms: 'SMS', push: 'push', social: 'social ad', web: 'web ad' }[ch] || ch) + ' draft';
     var Conflict = MC.ui && MC.ui.ConflictChip;
     var upAgent = v ? agentOf(v.updatedBy) : null;
     var StatusPill = MC.ui && MC.ui.StatusPill;
@@ -526,7 +526,7 @@
           : h`<${ChannelPicker} value=${ch} onChange=${p.onChannel} />`}
       </header>
       ${v ? h`<${AgentLine} variant=${v} />` : null}
-      ${S.conflict && Conflict ? h`<${Conflict} agentId=${upAgent || undefined} who=${upAgent ? undefined : 'another change'} onTheirs=${S.takeTheirs} onMine=${S.keepMine} />` : null}
+      ${S.conflict && Conflict ? h`<${Conflict} agentId=${upAgent || undefined} who=${upAgent ? undefined : 'someone else'} onTheirs=${S.takeTheirs} onMine=${S.keepMine} />` : null}
       <div className="cs-fields">
         ${textFields.map(function (k) {
           return h`<${FieldRow} key=${k} k=${k} value=${d.fields[k]} limit=${limitFor(k, brand)} vlike=${vlike} readOnly=${readOnly}
@@ -562,9 +562,12 @@
     var Seg = MC.ui && MC.ui.Segmented;
     var campaigns = useSel(function (w) { return w.campaigns; });
     var gs = React.useState(genMemo), g = gs[0], setG = gs[1];
-    function patchG(x) { setG(function (cur) { var n = Object.assign({}, cur, x); genMemo = n; return n; }); }
-    var os = React.useState(function () { return { tone: d.tone || 'practical', offer: d.offer || 'none', productId: d.productId || '', count: 4 }; });
-    var o = os[0], setO = os[1];
+    function patchG(x) { setG(function (cur) { var n = Object.assign({}, cur, x, { form: genMemo.form }); genMemo = n; return n; }); }
+    var os = React.useState(function () {
+      return genMemo.form && genMemo.form.key === p.formKey ? genMemo.form.o : { tone: d.tone || 'practical', offer: d.offer || 'none', productId: d.productId || '', count: 4 };
+    });
+    var o = os[0], setO0 = os[1];
+    function setO(fn) { setO0(function (cur) { var n = fn(cur); genMemo.form = { key: p.formKey, o: n }; return n; }); }
     var ls = React.useState({}), locks = ls[0], setLocks = ls[1];
     var bs = React.useState(false), busy = bs[0], setBusy = bs[1];
     var ms = React.useState(null), msg = ms[0], setMsg = ms[1];
@@ -751,6 +754,8 @@
     var score = React.useMemo(function () {
       try { return has(CP(), 'score') ? CP().score(p.vlike) : null; } catch (e) { return null; }
     }, [p.fieldsKey, p.vlike.tone, p.vlike.offer, p.vlike.productId]);
+    var hookEmpty = !str(p.vlike.fields[hookOf(p.vlike.channel)]).trim();
+    if (hookEmpty) score = null;
     var contrib = score ? (score.contributions || EMPTY).slice(0, 6) : EMPTY;
     var maxAbs = contrib.reduce(function (m, c) { return Math.max(m, Math.abs(c.delta)); }, 1);
     var ch = p.vlike.channel === 'web' ? 'social' : p.vlike.channel;
@@ -771,7 +776,7 @@
           <${Ring} value=${score ? score.score : null} size=${52} />
           <div>
             <p className="cs-score-num num">${score ? score.score : DASH}<span className="cs-muted"> / 100</span></p>
-            <p className="cs-muted num">${score ? 'About ' + fmtPct(score.predOpen) + ' open' + (ch === 'email' ? '' : 's') + ' and ' + fmtPct(score.predClick, 2) + ' click' : ''}</p>
+            <p className="cs-muted num">${hookEmpty ? 'Write or generate copy to see a prediction.' : ''}${score ? 'About ' + fmtPct(score.predOpen) + ' open' + (ch === 'email' ? '' : 's') + ' and ' + fmtPct(score.predClick, 2) + ' click' : ''}</p>
           </div>
         </div>
         ${contrib.length ? h`<div className="cs-why">
@@ -852,7 +857,7 @@
 
     var composer = h`<div className="cs-col cs-col-compose">
       <${Composer} S=${S} variant=${v} brand=${brand} draftKey=${p.draftKey} onChannel=${p.onChannel} onCreated=${p.onCreated} />
-      <${Generator} key=${d.channel} channel=${d.channel} draft=${d} defaultCid=${v ? v.campaignId : ''} onEdit=${p.onEditGenerated} onOpen=${p.onCreated} />
+      <${Generator} key=${d.channel} formKey=${p.draftKey} channel=${d.channel} draft=${d} defaultCid=${v ? v.campaignId : ''} onEdit=${p.onEditGenerated} onOpen=${p.onCreated} />
     </div>`;
     var preview = h`<${PreviewPane} vlike=${vlike} fieldsKey=${fieldsKey} profileIdx=${profileIdx} setProfileIdx=${setProfileIdx} />`;
     var checks = h`<${ChecksPane} vlike=${vlike} fieldsKey=${fieldsKey} brand=${brand} variant=${v} readOnly=${readOnly} onFix=${fix} onFixAll=${fixAll} />`;
@@ -878,23 +883,33 @@
     var React = R();
     var ready = useSel(function (w) { return !!(w && w.variants && w.campaigns); });
     var focus = MC.hooks.useUi(function (s) { return s.focus && s.focus.content; }) || {};
-    var vid = focus.variantId || null;
+    // Open on the composer with real work: the first live variant, unless the marketer asked for a new draft.
+    var fallbackVid = useSel(function (w) {
+      if (viewMemo.wantNew) return null;
+      var lib = sel('variantLibrary', w) || EMPTY;
+      for (var i = 0; i < lib.length; i++) {
+        if (lib[i].status !== 'live') continue;
+        for (var j = 0; j < lib[i].variants.length; j++) if (lib[i].variants[j].status === 'live') return lib[i].variants[j].id;
+      }
+      return null;
+    });
+    var vid = focus.variantId || fallbackVid || null;
     var variant = useSel(function (w) { return vid ? w.variants.byId[vid] || null : null; });
     var channel = COMPOSE_CHANNELS.indexOf(focus.channel) >= 0 || focus.channel === 'web' ? focus.channel : 'email';
     var wide = useMedia('(min-width: 1200px)');
     var ls = React.useState(false), libOpen = ls[0], setLibOpen = ls[1];
     var rs = React.useState(viewMemo.newRev), newRev = rs[0], setNewRev = rs[1];
-    var missing = !!vid && ready && !variant;
+    var missing = !!focus.variantId && ready && !variant;
     var ch = variant ? variant.channel : channel;
     var key = draftKey(variant ? variant.id : null, ch);
 
-    function select(id, c) { setFocus({ variantId: id, channel: c }); if (!wide) setLibOpen(false); }
-    function startNew(c) { setFocus({ variantId: null, channel: c || channel }); if (!wide) setLibOpen(false); }
+    function select(id, c) { viewMemo.wantNew = false; setFocus({ variantId: id, channel: c }); if (!wide) setLibOpen(false); }
+    function startNew(c) { viewMemo.wantNew = true; setFocus({ variantId: null, channel: c || channel }); if (!wide) setLibOpen(false); }
     function editGenerated(r) {
       var c = r.channel || ch;
       var base = blankFields(c);
       drafts[draftKey(null, c)] = { channel: c, fields: normFields(c, r.fields), baseFields: base, baseVer: null, tone: r.tone, offer: r.offer, productId: r.productId };
-      viewMemo.newRev++; setNewRev(viewMemo.newRev);
+      viewMemo.newRev++; setNewRev(viewMemo.newRev); viewMemo.wantNew = true;
       setFocus({ variantId: null, channel: c });
     }
 
