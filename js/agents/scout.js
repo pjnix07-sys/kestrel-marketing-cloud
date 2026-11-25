@@ -173,8 +173,10 @@
   function decide(obs, ctx) {
     var world = ctx.world, p = ctx.params, t = ctx.tick, trace = [], proposals = [];
     var lab = obs.labels, base = obs.touched ? obs.bought / obs.touched : 0;
-    trace.push({ step: 'observe', text: 'Looked at the ' + num(obs.touched) + ' customers your campaigns reached in the last ' + obs.lookbackDays +
-      ' days. ' + num(obs.bought) + ' of them ordered (' + pct(base) + ').' });
+    trace.push({ step: 'observe', text: obs.touched < p.minSupport
+      ? 'Your campaigns have reached only ' + num(obs.touched) + (obs.touched === 1 ? ' customer' : ' customers') + ' in the last ' + obs.lookbackDays + ' days.'
+      : 'Looked at the ' + num(obs.touched) + ' customers your campaigns reached in the last ' + obs.lookbackDays +
+        ' days. ' + num(obs.bought) + ' of them ordered (' + pct(base) + ').' });
     if (obs.touched < p.minSupport || obs.bought < 10 || !(base > 0)) {
       trace.push({ step: 'decide', text: 'Not enough recent orders to compare groups yet, so no new segments this time.' });
       return { proposals: [], insights: [], trace: trace };
@@ -292,9 +294,9 @@
         var c = ret.c;
         proposals.push({
           kind: 'retarget', target: { kind: 'campaign', id: c.id },
-          title: 'Add “' + name + '” to the ' + c.name + ' audience',
-          rationale: why + ' ' + num(ret.fresh) + ' of them can get ' + chName(c.channels[0]) + ' and aren’t in ' + c.name + ' yet. ' +
-            'The campaign’s own audience stays as it is; this adds a new segment alongside it.',
+          title: 'Add \u201c' + name + '\u201d to the ' + c.name + ' audience',
+          rationale: why + ' ' + num(ret.fresh) + ' of them can get ' + chName(c.channels[0]) + ' and aren\u2019t in ' + c.name + ' yet. ' +
+            'The campaign\u2019s own audience stays as it is; this adds a new segment alongside it.',
           evidence: evidence.concat([{ label: 'New people for the campaign', value: num(ret.fresh) }]),
           impact: { metric: 'extra orders', delta: ret.fresh * x.rate, lo: ret.fresh * wl[0], hi: ret.fresh * wl[1], unit: '#', horizonDays: 0,
             confidence: impact.confidence },
@@ -304,8 +306,8 @@
             { type: 'campaign/include', payload: { id: c.id, segmentId: '$1', on: true } }
           ],
           diff: [
-            { label: 'New segment', before: '—', after: name },
-            { label: 'Rule', before: '—', after: desc },
+            { label: 'New segment', before: '\u2014', after: name },
+            { label: 'Rule', before: '\u2014', after: desc },
             { label: c.name + ' audience', before: ((world.segments.byId[c.segmentId] || {}).name || 'Its segment'), after: ((world.segments.byId[c.segmentId] || {}).name || 'Its segment') + ' + ' + name }
           ]
         });
@@ -318,9 +320,9 @@
         evidence: evidence, impact: impact, risk: 'low', horizon: 0,
         actions: [{ type: 'segment/create', payload: { segment: segment } }],
         diff: [
-          { label: 'New segment', before: '—', after: name },
-          { label: 'Rule', before: '—', after: desc },
-          { label: 'People', before: '—', after: num(size) }
+          { label: 'New segment', before: '\u2014', after: name },
+          { label: 'Rule', before: '\u2014', after: desc },
+          { label: 'People', before: '\u2014', after: num(size) }
         ]
       });
     });

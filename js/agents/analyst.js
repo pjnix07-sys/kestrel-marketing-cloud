@@ -210,7 +210,7 @@
           ' lifts that to about ' + pct(prob2, 0) + '. The budget stays the same and is spread over the longer run.',
         evidence: [
           { label: 'Projected', value: gf(projected) + ' of ' + gf(c.goal.target) },
-          { label: 'Chance of hitting the goal', value: pct(prob, 0) + ' → ' + pct(prob2, 0) },
+          { label: 'Chance of hitting the goal', value: pct(prob, 0) + ' \u2192 ' + pct(prob2, 0) },
           { label: 'Recent pace', value: gf(meanDaily) + ' a day' }
         ],
         impact: { metric: 'revenue', unit: '$', delta: Math.round(delta), lo: Math.round(Math.max(0, delta - se)), hi: Math.round(delta + se),
@@ -220,7 +220,7 @@
           { label: 'Chance of hitting the goal', before: pct(prob, 0), after: pct(prob2, 0) }]
       });
     });
-    if (rows.length) trace.push({ step: 'decide', text: 'Checked each live campaign’s outlook against its goal.', rows: rows });
+    if (rows.length) trace.push({ step: 'decide', text: 'Checked each live campaign\u2019s outlook against its goal.', rows: rows });
 
     // 3. Weekly return by segment, on Mondays.
     if (obs.dow === 1) {

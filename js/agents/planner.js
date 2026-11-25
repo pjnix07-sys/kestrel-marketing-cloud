@@ -380,7 +380,7 @@
       (br.endDay - br.startDay + 1) + (br.endDay === br.startDay ? ' day.' : ' days.');
   }
 
-  // plan(world, brief, regen?, opts?) -> plan (see §10.9). Pure: never mutates the world.
+  // plan(world, brief, regen?, opts?) -> plan (see CONTRACT 10.9). Pure: never mutates the world.
   PL.plan = function (world, brief, regen, opts) {
     opts = opts || {};
     regen = regen || {};
@@ -394,7 +394,7 @@
 
     var aud = buildAudience(world, br, params, rn('audience'));
     var chosen = aud.options[aud.chosen] || null;
-    trace.push({ step: 'decide', text: 'Ranked ' + aud.options.length + ' audiences by expected value (people reachable × chance to buy × order value × goal fit).',
+    trace.push({ step: 'decide', text: 'Ranked ' + aud.options.length + ' audiences by expected value (people reachable \u00d7 chance to buy \u00d7 order value \u00d7 goal fit).',
       rows: aud.options.map(function (o) { return { audience: o.name, people: o.size, reachable: o.reach, value: money(o.ev) }; }) });
 
     var bud = buildBudget(world, br, tk, aud, regenRng(world, digest, 'budget', rn('budget')), rn('budget'));
@@ -411,7 +411,7 @@
       fc.goal.target = target;
       fc.goal.p = r4(U().normCdf((fc.goal.mean - target) / Math.max(1e-9, (fc.goal.hi - fc.goal.mean) / Z80)));
     }
-    trace.push({ step: 'decide', text: 'Forecast ' + money(fc.lo) + '–' + money(fc.hi) + ' in revenue' +
+    trace.push({ step: 'decide', text: 'Forecast ' + money(fc.lo) + '\u2013' + money(fc.hi) + ' in revenue' +
       (fc.goal.p !== null ? ', a ' + pct(fc.goal.p) + ' chance of reaching the goal.' : '.') });
 
     var sendHour = {};
@@ -489,9 +489,12 @@
   function decide(obs, ctx) {
     var world = ctx.world, p = ctx.params, t = ctx.tick, trace = [], proposals = [];
     trace.push({ step: 'observe', text: obs.events.length
-      ? 'Looked ' + obs.lookaheadDays + ' days ahead: ' + listJoin(obs.events.map(function (e) { return e.label + ' (' + MC.fmt.dayShort(e.day) + ')'; })) + '.'
+      ? 'Looked ' + obs.lookaheadDays + ' days ahead: ' + listJoin(obs.events.map(function (e) { return e.label; })) + '.'
       : 'No holidays in the next ' + obs.lookaheadDays + ' days.',
-      rows: obs.events.map(function (e) { return { event: e.label, day: MC.fmt.dayLabel(e.day), covered: e.coveredBy ? 'Yes: ' + e.coveredBy : 'Nothing planned' }; }) });
+      rows: obs.events.map(function (e) {
+        var n = e.day - obs.day;
+        return { event: e.label, when: n === 0 ? 'Today' : (n === 1 ? 'Tomorrow' : 'In ' + n + ' days'), covered: e.coveredBy ? 'Yes: ' + e.coveredBy : 'Nothing planned' };
+      }) });
     var open = obs.events.filter(function (e) { return !e.coveredBy && e.startOk; });
     if (!open.length) {
       trace.push({ step: 'decide', text: 'Every upcoming holiday already has a campaign, so no new draft this week.' });
@@ -519,17 +522,17 @@
         'This draft reaches ' + (aud ? aud.name + ' (' + num(aud.size) + ' people)' : 'your audience') + ' on ' + listJoin(brief.channels.map(chLower)) + ' with ' +
         money(budget) + ' over ' + Math.round(days) + ' days. It arrives as a draft; nothing sends until you schedule it.',
       evidence: [
-        { label: 'Expected revenue', value: money(fc.lo) + '–' + money(fc.hi) },
-        { label: 'Audience', value: aud ? aud.name + ', ' + num(aud.size) + ' people' : '—' },
+        { label: 'Expected revenue', value: money(fc.lo) + '\u2013' + money(fc.hi) },
+        { label: 'Audience', value: aud ? aud.name + ', ' + num(aud.size) + ' people' : '\u2014' },
         { label: 'Preflight', value: pre.fails ? pre.fails + ' to fix' : (pre.warns ? pre.warns + ' warnings' : 'All checks pass') }
       ],
       impact: { metric: 'campaign revenue', unit: '$', delta: fc.mean, lo: fc.lo, hi: fc.hi, horizonDays: r2(days), confidence: 0.5 },
       actions: [{ type: 'campaign/create', payload: plan.payload }],
       diff: [
-        { label: 'Campaign', before: '—', after: spec.name + ' (draft)' },
-        { label: 'Dates', before: '—', after: MC.fmt.stamp(plan.startTick) + ' – ' + MC.fmt.dayLabel(endDay) },
-        { label: 'Audience', before: '—', after: aud ? aud.name : '—' },
-        { label: 'Budget', before: '—', after: listJoin(brief.channels.map(function (ch) { return chName(ch) + ' ' + money(plan.sections.budget.byChannel[ch]); })) }
+        { label: 'Campaign', before: '\u2014', after: spec.name + ' (draft)' },
+        { label: 'Dates', before: '\u2014', after: MC.fmt.stamp(plan.startTick) + ' \u2013 ' + MC.fmt.dayLabel(endDay) },
+        { label: 'Audience', before: '\u2014', after: aud ? aud.name : '\u2014' },
+        { label: 'Budget', before: '\u2014', after: listJoin(brief.channels.map(function (ch) { return chName(ch) + ' ' + money(plan.sections.budget.byChannel[ch]); })) }
       ]
     });
     trace.push({ step: 'decide', text: 'Drafted a ' + e.label + ' campaign for review.' });
@@ -550,7 +553,7 @@
     autopilotMaxRisk: 'low',
     params: {
       lookaheadDays: { label: 'Look ahead', type: 'int', 'default': 21, min: 7, max: 60, step: 1, help: 'How far ahead to look for holidays with nothing planned.' },
-      minSegmentSize: { label: 'Smallest audience', type: 'int', 'default': 300, min: 50, max: 3000, step: 50, help: 'Audiences smaller than this aren’t suggested.' },
+      minSegmentSize: { label: 'Smallest audience', type: 'int', 'default': 300, min: 50, max: 3000, step: 50, help: 'Audiences smaller than this aren\u2019t suggested.' },
       variantsPerChannel: { label: 'Variants per channel', type: 'int', 'default': 3, min: 1, max: 6, step: 1, help: 'How many email, SMS and push variants a plan starts with.' }
     },
     emits: ['campaign/create'],

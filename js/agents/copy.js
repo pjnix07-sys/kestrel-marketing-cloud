@@ -24,10 +24,10 @@
   function hookKey(ch) { return (MC.copy && MC.copy.HOOK && MC.copy.HOOK[ch]) || 'subject'; }
   function hookOf(v) {
     var s = String(((v && v.fields) || {})[hookKey(v.channel)] || '').replace(/\s+/g, ' ').trim();
-    if (s.length > 52) s = s.slice(0, 50).replace(/\s+\S*$/, '') + '…';
+    if (s.length > 52) s = s.slice(0, 50).replace(/\s+\S*$/, '') + '\u2026';
     return s;
   }
-  function quote(v) { var h = hookOf(v); return h ? '“' + h + '”' : 'variant ' + v.name; }
+  function quote(v) { var h = hookOf(v); return h ? '\u201c' + h + '\u201d' : 'variant ' + v.name; }
 
   /* ---------------- observe ---------------- */
   function observe(world, ctx) {
@@ -139,6 +139,7 @@
       var lead = 0;
       for (var i = 1; i < vs.length; i++) if (pBest[i] > pBest[lead]) lead = i;
       var L = vs[lead], w = ctrWindows(L.daily);
+      row.leader = 'Variant ' + L.name + ': ' + pct(pBest[lead], 0) + ' chance best' + (w.last !== null ? ', ' + pct(w.last, 2) + ' clicks per send lately' : '');
       var tired = w.last !== null && w.peak !== null && w.peak > 0 && w.last <= (1 - p.decayThreshold) * w.peak;
       var settled = vs.length >= 2 && pBest[lead] >= SETTLED && L.sends >= obs.minSample;
       if (!tired && !settled) return;
@@ -178,7 +179,7 @@
       var sendsH = (u.recentSends / 3) * Math.min(horizonDays, Math.max(0, (u.endTick - t) / 24));
       var exp = share * sendsH, delta = exp * (rateNew - rateAvg) * value;
       var sd = Math.sqrt(Math.max(1, exp * Math.max(rateNew, rateAvg))) * value;
-      if (!tired && !(rateNew > rateAvg)) { row.result = 'Best draft isn’t predicted to beat the current mix'; return; }
+      if (!tired && !(rateNew > rateAvg)) { row.result = 'Best draft isn\u2019t predicted to beat the current mix'; return; }
 
       var letter = nextLetter(world, u.cid, u.ch);
       var variant = { campaignId: u.cid, channel: u.ch, name: letter, fields: best.fields, tone: best.tone, offer: best.offer,
@@ -191,7 +192,7 @@
       why += ' A new challenger, ' + quote(variant) + ', starts on ' + pct(share, 0) + ' of traffic (content score ' + Math.round(best.predicted.score) +
         ' vs ' + Math.round(L.score) + ' for the leader).';
       row.result = 'Draft variant ' + letter;
-      var diff = [{ label: 'New ' + chLower(u.ch) + ' variant ' + letter, before: '—', after: hookOf(variant) }];
+      var diff = [{ label: 'New ' + chLower(u.ch) + ' variant ' + letter, before: '\u2014', after: hookOf(variant) }];
       vs.forEach(function (v) {
         diff.push({ label: 'Variant ' + v.name + ' share', before: pct(v.share, 0), after: pct(v.share * (1 - share), 0) });
       });
@@ -202,9 +203,9 @@
         title: 'Add a fresh ' + chLower(u.ch) + ' challenger to ' + u.name,
         rationale: why,
         evidence: [
-          { label: tired ? 'Leader’s click rate, last 3 days' : 'Chance the leader is best', value: tired ? pct(w.last, 2) : pct(pBest[lead], 0) },
-          { label: tired ? 'Its peak' : 'Leader’s sends', value: tired ? pct(w.peak, 2) : num(L.sends) },
-          { label: 'New copy’s content score', value: String(Math.round(best.predicted.score)) },
+          { label: tired ? 'Leader\u2019s click rate, last 3 days' : 'Chance the leader is best', value: tired ? pct(w.last, 2) : pct(pBest[lead], 0) },
+          { label: tired ? 'Its peak' : 'Leader\u2019s sends', value: tired ? pct(w.peak, 2) : num(L.sends) },
+          { label: 'New copy\u2019s content score', value: String(Math.round(best.predicted.score)) },
           { label: 'Drafts considered', value: drafts.length + (drops ? ', ' + drops + ' failed brand checks' : '') + (dups ? ', ' + dups + ' too similar' : '') }
         ],
         impact: { metric: 'revenue', unit: '$', delta: Math.round(delta), lo: Math.round(delta - 1.28 * sd), hi: Math.round(delta + 1.28 * sd),
@@ -225,7 +226,7 @@
     autonomy: { 'default': 'suggest', allowed: ['off', 'suggest', 'autopilot'] },
     autopilotMaxRisk: 'low',
     params: {
-      decayThreshold: { label: 'Tiring threshold', type: 'pct', 'default': 0.15, min: 0.05, max: 0.5, step: 0.05, help: 'Write new copy when the leader’s click rate falls this far below its best 3 days.' },
+      decayThreshold: { label: 'Tiring threshold', type: 'pct', 'default': 0.15, min: 0.05, max: 0.5, step: 0.05, help: 'Write new copy when the leader\u2019s click rate falls this far below its best 3 days.' },
       candidates: { label: 'Drafts per channel', type: 'int', 'default': 6, min: 2, max: 12, step: 1, help: 'How many drafts to write before picking the best one.' },
       maxVariants: { label: 'Most live variants', type: 'int', 'default': 4, min: 2, max: 6, step: 1, help: 'Stop adding copy once a channel has this many live variants.' },
       challengerShare: { label: 'Challenger share', type: 'pct', 'default': 0.10, min: 0.05, max: 0.25, step: 0.01, help: 'The share of traffic a new variant starts with.' }
