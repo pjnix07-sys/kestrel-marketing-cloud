@@ -1991,6 +1991,8 @@ Direction from the user: a wow-factor prototype that does not overwhelm; the sim
 - No gradients, no glow shadows (one subtle elevation for overlays and drawers only), no emoji, icons only in nav and on actions, not beside every label.
 - No walls of stat tiles: Command Center leads with at most 4 KPIs; other views lead with their object, not tiles.
 - One primary button per region; everything else quiet or text style.
+- No glassmorphism: no backdrop-filter blur, no translucent or frosted panels, bars or overlays (a plain scrim behind modal drawers is the only translucency).
+- No curved or rounded left-edge bars or accent stripes on buttons, banners, cards, rows or nav items; selection and status use background, weight or one small dot.
 
 ### 11.3 Calm agentic surfacing
 - One "What changed" feed (home) narrates agent actions in plain English with inline View and Undo.

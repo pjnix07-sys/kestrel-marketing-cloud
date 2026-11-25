@@ -1,6 +1,7 @@
-/* Kestrel Marketing Cloud - application shell: sidebar + phone top bar, sim clock and speed,
-   agent pulse, theme, approvals drawer, toasts, bare-hash router, error boundaries, boot.
-   Sample tenant: Fernway Outfitters (fictional; every number is simulated). */
+/* Kestrel Marketing Cloud - application shell: sidebar + phone top bar, quiet agent pulse,
+   approvals count, theme, approvals drawer, batched autopilot toasts, bare-hash router,
+   error boundaries, boot. Sample tenant: Fernway Outfitters (fictional). Per §11 the shell shows
+   no clock or pace controls; the only time control is the overflow menu's "Jump ahead". */
 (function () {
   'use strict';
   var MC = window.MC = window.MC || {};
@@ -69,12 +70,6 @@
   ];
   var TITLES = {};
   NAV.forEach(function (n) { TITLES[n.route] = n.label; });
-  var SPEEDS = [
-    { value: 'pause', label: 'Pause', ariaLabel: 'Pause' },
-    { value: '1x', label: '1×', ariaLabel: 'Real-time speed, 1 times' },
-    { value: '4x', label: '4×', ariaLabel: '4 times speed' },
-    { value: '16x', label: '16×', ariaLabel: '16 times speed' }
-  ];
   var THEMES = [
     { value: 'system', label: 'System', icon: 'monitor', ariaLabel: 'System theme' },
     { value: 'light', label: 'Light', icon: 'sun', ariaLabel: 'Light theme' },
@@ -83,7 +78,6 @@
 
   /* ---------------- selectors (module-level, stable) ---------------- */
   function selReady(w) { return !!w; }
-  function selTick(w) { return w && w.meta ? w.meta.tick : 0; }
   function selOpenCount(w) { return w && w.proposals && w.proposals.open ? w.proposals.open.length : 0; }
   function selProposals(w) { return w ? w.proposals : null; }
   function selCampaigns(w) { return w ? w.campaigns : null; }
@@ -91,87 +85,54 @@
   function selDrawer(s) { return s.drawer; }
   function selTheme(s) { return s.theme; }
   function selSample(s) { return s.sampleDismissed; }
-  function selVerifying(s) { return s.verifying; }
   function selCampFocus(s) { return s.focus && s.focus.campaigns; }
 
-  /* ---------------- engine speed (lives outside the world) ---------------- */
-  function readSpeed() {
-    try { return MC.engine && typeof MC.engine.getSpeed === 'function' ? MC.engine.getSpeed() : 'pause'; } catch (e) { return 'pause'; }
-  }
-  var speedSubs = [];
-  function notifySpeed() { speedSubs.slice().forEach(function (fn) { fn(); }); }
-  function useSpeed() {
-    var st = useState(readSpeed), speed = st[0], set = st[1];
-    useEffect(function () {
-      function sync() { var s = readSpeed(); set(function (p) { return p === s ? p : s; }); }
-      speedSubs.push(sync);
-      var unsub = MC.store.subscribe(sync);
-      var unsubE = MC.engine && typeof MC.engine.subscribe === 'function' ? MC.engine.subscribe(sync) : null;
-      sync();
-      return function () { unsub(); if (unsubE) unsubE(); var i = speedSubs.indexOf(sync); if (i >= 0) speedSubs.splice(i, 1); };
-    }, []);
-    return speed;
-  }
-  function setSpeed(key) {
-    try { if (MC.engine && typeof MC.engine.setSpeed === 'function') MC.engine.setSpeed(key); } catch (e) { report(e); }
-    notifySpeed();
-  }
-  function stepOnce() {
-    try { if (MC.engine && typeof MC.engine.step === 'function') MC.engine.step(1); } catch (e) { report(e); }
-    notifySpeed();
-  }
-  function hasEngine() { return !!(MC.engine && typeof MC.engine.setSpeed === 'function'); }
   function report(e) { if (window.console && console.error) console.error(e); }
 
-  /* ---------------- clock ---------------- */
-  function clockText(t) {
-    if (MC.fmt && MC.fmt.clock) return MC.fmt.clock(t);
-    if (MC.fmt && MC.fmt.date && MC.fmt.time) return MC.fmt.date(t) + ' ' + DOT + ' ' + MC.fmt.time(t);
-    return 'Hour ' + t;
-  }
-  function compactClock(t) {
-    if (MC.fmt && MC.fmt.stamp) return MC.fmt.stamp(t).replace(' ' + DOT + ' ', ' ');
-    return clockText(t);
-  }
-  function simDay(t) { return MC.time && MC.time.simDay ? MC.time.simDay(t) : Math.floor(t / 24) + 1; }
-
-  function SimClock(p) {
-    var tick = useSel(selTick) || 0;
-    var speed = useSpeed();
-    var verifying = useUi(selVerifying);
-    var paused = speed === 'pause';
-    if (p.compact) {
-      return html`<span className="app-clock app-clock--compact num" aria-label=${'Simulated time ' + clockText(tick) + (paused ? ', paused' : '')}>${compactClock(tick)}</span>`;
-    }
-    return html`<div className="app-clock" aria-label=${'Simulated time ' + clockText(tick) + ', sim day ' + simDay(tick) + (paused ? ', paused' : '')}>
-      <span className="app-clock-time num">${clockText(tick)}</span>
-      <span className="app-clock-sub">
-        <span className="num">${'Sim day ' + simDay(tick)}</span>
-        ${verifying ? html`<span className="app-chip app-chip--accent num">${'Verifying ' + (verifying.done || 0) + ' / ' + (verifying.total || 0)}</span>`
-          : paused && hasEngine() ? html`<span className="app-chip">Paused</span>` : null}
-      </span>
-    </div>`;
+  /* ---------------- jump ahead (the one time control, §11.1) ---------------- */
+  function canJump() { return !!(MC.engine && typeof MC.engine.step === 'function'); }
+  function jumpAhead(hours) {
+    try { if (canJump()) MC.engine.step(hours); } catch (e) { report(e); }
   }
 
-  function SpeedControl(p) {
-    var speed = useSpeed();
-    var Seg = ui('Segmented');
-    var engine = hasEngine();
-    return html`<div className="app-speed">
-      ${Seg ? html`<${Seg} id=${p.id || 'app-speed'} label="Simulation speed" size="sm" options=${SPEEDS} value=${speed}
-        onChange=${setSpeed} disabled=${!engine} />` : null}
-      ${speed === 'pause' && engine ? html`<button type="button" id=${(p.id || 'app-speed') + '-step'} className="k-btn k-btn--secondary k-btn--sm" onClick=${stepOnce}>
-        <${Icon} name="step" size=${14} /><span className="k-btn-label">Step 1h</span></button>` : null}
-    </div>`;
+  /* ---------------- agent pulse: one quiet dot that animates only when an agent acts ---------------- */
+  var AGENT_KINDS = { 'agent-applied': 1, 'agent-proposed': 1 };
+  function selAgentTop(w) {
+    var f = w && w.feed ? w.feed : null;
+    if (!f) return null;
+    for (var i = 0; i < f.length && i < 60; i++) if (AGENT_KINDS[f[i].kind]) return f[i].id;
+    return null;
   }
-
-  function PlayPause() {
-    var speed = useSpeed();
-    var paused = speed === 'pause';
-    var IB = ui('IconButton');
-    if (!IB || !hasEngine()) return null;
-    return html`<${IB} id="app-playpause" icon=${paused ? 'play' : 'pause'} label=${paused ? 'Resume simulation' : 'Pause simulation'}
-      onClick=${function () { setSpeed(paused ? '1x' : 'pause'); }} />`;
+  function openActivity() {
+    setUi({ drawer: null });
+    go('home');
+    // After the route change settles, bring the "What changed" feed into view.
+    window.setTimeout(function () {
+      var el = document.getElementById('home-changes');
+      if (!el) return;
+      try { el.scrollIntoView({ block: 'start', behavior: 'smooth' }); } catch (e) { el.scrollIntoView(); }
+      var list = document.getElementById('home-feed-list');
+      if (list && list.focus) { try { list.focus({ preventScroll: true }); } catch (e) { list.focus(); } }
+    }, 120);
+  }
+  function AgentDot(p) {
+    var top = useSel(selAgentTop);
+    var last = useRef(undefined);
+    var st = useState(false), active = st[0], setActive = st[1];
+    useEffect(function () {
+      var before = last.current;
+      last.current = top;
+      if (before === undefined || top === before || !top) return undefined;
+      setActive(true);
+      var timer = window.setTimeout(function () { setActive(false); }, 2400);
+      return function () { window.clearTimeout(timer); };
+    }, [top]);
+    var label = active ? 'An agent just acted. Open recent activity.' : 'Agent activity. Open recent activity.';
+    return html`<button type="button" id=${p.id || 'app-pulse'} className=${cx('app-pulse', active && 'is-active')}
+        aria-label=${label} title="Agent activity" onClick=${openActivity}>
+      <span className="app-pulse-dot" aria-hidden="true"></span>
+      ${p.withLabel ? html`<span className="app-pulse-label">Agent activity</span>` : null}
+    </button>`;
   }
 
   function ThemeControl(p) {
@@ -192,20 +153,17 @@
 
   function NavList(p) {
     var route = useUi(selRoute);
-    var open = useSel(selOpenCount) || 0;
     return html`<nav className="app-nav" aria-label="Main">
       <ul>
         ${NAV.map(function (n) {
           var on = n.route === route;
           var built = !!(MC.views && typeof MC.views[n.route] === 'function');
-          var badge = n.route === 'agents' && open > 0 ? open : 0;
           return html`<li key=${n.route}>
             <a href=${'#' + n.route} id=${(p.idPrefix || 'app-nav') + '-' + n.route} className=${cx('app-nav-link', on && 'is-on')}
                 aria-current=${on ? 'page' : null} title=${n.label}
                 onClick=${function (e) { e.preventDefault(); go(n.route); if (p.onNavigate) p.onNavigate(n.route); }}>
               <span className="app-nav-icon" aria-hidden="true"><${Icon} name=${n.icon} size=${18} /></span>
               <span className="app-nav-label">${n.label}</span>
-              ${badge ? html`<span className="app-nav-badge num" aria-label=${badge + ' pending approvals'}>${badge}</span>` : null}
               ${!built ? html`<span className="app-nav-soon">Soon</span>` : null}
             </a>
           </li>`;
@@ -215,14 +173,13 @@
   }
 
   function Sidebar() {
-    var Badge = ui('SampleDataBadge');
     return html`<aside className="app-sidebar" aria-label="Kestrel">
       <div className="app-sidebar-top"><${Mark} /></div>
       <${NavList} />
       <div className="app-sidebar-foot">
         <div className="app-tenant">
           <span className="app-tenant-name">Fernway Outfitters</span>
-          ${Badge ? html`<${Badge} />` : null}
+          <span className="app-tenant-note">Sample data</span>
         </div>
         <div className="app-theme"><${ThemeControl} id="app-theme" /></div>
       </div>
@@ -249,18 +206,14 @@
     </nav>`;
   }
 
+  // The approvals control is a single count (§11.3): "Approvals 3", quiet when nothing waits.
   function ApprovalsButton(p) {
     var open = useSel(selOpenCount) || 0;
-    var label = open ? 'Approvals, ' + open + ' waiting' : 'Approvals';
-    if (p.compact) {
-      var IB = ui('IconButton');
-      return IB ? html`<${IB} id="app-approvals-btn" icon="inbox" label=${label} badge=${open}
-        onClick=${function () { setUi({ drawer: 'approvals' }); }} />` : null;
-    }
-    return html`<button type="button" id="app-approvals-btn" className="k-btn k-btn--secondary k-btn--md app-approvals-btn" aria-label=${label}
+    var label = open ? 'Approvals, ' + open + ' waiting' : 'Approvals, nothing waiting';
+    return html`<button type="button" id="app-approvals-btn" className=${cx('app-approvals-btn', open > 0 && 'has-items')} aria-label=${label}
         onClick=${function () { setUi({ drawer: 'approvals' }); }}>
-      <${Icon} name="inbox" size=${16} /><span className="k-btn-label">Approvals</span>
-      ${open ? html`<span className="app-count num" aria-hidden="true">${open}</span>` : null}
+      ${p.compact ? null : html`<span className="app-approvals-label">Approvals</span>`}
+      <span className="app-count num" aria-hidden="true">${open}</span>
     </button>`;
   }
 
@@ -272,9 +225,10 @@
     var Pop = ui('Popover'), IC = ui('InlineConfirm');
     var dismissed = useUi(selSample);
     function close() { setOpen(false); setConfirm(false); }
+    function jump(hours) { close(); jumpAhead(hours); }
     function restart() {
       setBusy(true);
-      var done = function () { setBusy(false); close(); MC.uiStore.clearToasts && MC.uiStore.clearToasts(); notifySpeed(); };
+      var done = function () { setBusy(false); close(); if (MC.uiStore.clearToasts) MC.uiStore.clearToasts(); };
       try {
         var r = MC.engine && typeof MC.engine.restart === 'function' ? MC.engine.restart(MC.SEED) : null;
         if (r && typeof r.then === 'function') r.then(done, function (e) { report(e); done(); }); else done();
@@ -287,29 +241,31 @@
       </button>
       ${Pop ? html`<${Pop} anchorRef=${anchor} open=${open} onClose=${close} label="More options" placement="bottom-end" width=${300} id="app-more-menu">
         <div className="app-menu">
+          ${canJump() ? html`<div className="app-menu-row" role="group" aria-label="Jump ahead">
+            <span className="app-menu-row-label">Jump ahead</span>
+            <button type="button" className="app-menu-link" id="app-jump-day" onClick=${function () { jump(24); }}>a day</button>
+            <span className="app-menu-sep" aria-hidden="true">/</span>
+            <button type="button" className="app-menu-link" id="app-jump-week" onClick=${function () { jump(24 * 7); }}>a week</button>
+          </div>` : null}
           ${confirm && IC ? html`<${IC} id="app-restart-confirm" tone="crit" busy=${busy}
-              message="Restart the simulation? This clears every change since Nov 7 · 00:00."
-              confirmLabel="Restart" cancelLabel="Keep going" onConfirm=${restart} onCancel=${function () { setConfirm(false); }} />`
+              message="Reset the sample data? This clears every change you and the agents have made."
+              confirmLabel="Reset" cancelLabel="Cancel" onConfirm=${restart} onCancel=${function () { setConfirm(false); }} />`
             : html`<button type="button" className="app-menu-item" id="app-restart" disabled=${!(MC.engine && MC.engine.restart)}
-                onClick=${function () { setConfirm(true); }}><${Icon} name="refresh" size=${16} /><span>Restart simulation${ELL}</span></button>`}
-          <button type="button" className="app-menu-item" id="app-audit"
-              onClick=${function () { close(); go('agents', { tab: 'audit' }); }}><${Icon} name="shield" size=${16} /><span>Audit & replay</span></button>
+                onClick=${function () { setConfirm(true); }}><span>Reset sample data${ELL}</span></button>`}
           ${dismissed ? html`<button type="button" className="app-menu-item" id="app-sample-note"
-              onClick=${function () { close(); setUi({ sampleDismissed: false }); }}><${Icon} name="info" size=${16} /><span>Show the sample-data note</span></button>` : null}
+              onClick=${function () { close(); setUi({ sampleDismissed: false }); }}><span>Show the sample-data note</span></button>` : null}
         </div>
       <//>` : null}
     </div>`;
   }
 
   function Topbar(p) {
-    var Pulse = ui('AgentPulse');
     if (p.phone) {
       var IB = ui('IconButton');
       return html`<header className="app-topbar app-topbar--phone">
         <${Mark} compact=${true} />
         <div className="app-topbar-title"><${Crumbs} /></div>
-        <${SimClock} compact=${true} />
-        <${PlayPause} />
+        <${AgentDot} />
         <${ApprovalsButton} compact=${true} />
         ${IB ? html`<${IB} id="app-menu-btn" icon="menu" label="Menu" onClick=${function () { setUi({ drawer: 'menu' }); }} />` : null}
       </header>`;
@@ -317,10 +273,8 @@
     return html`<header className="app-topbar">
       <div className="app-topbar-title"><${Crumbs} /></div>
       <div className="app-topbar-tools">
-        <${SimClock} />
-        <${SpeedControl} />
-        ${Pulse ? html`<span className="app-pulse"><${Pulse} compact=${!!p.narrow} /></span>` : null}
-        <${ApprovalsButton} compact=${!!p.narrow} />
+        <${AgentDot} />
+        <${ApprovalsButton} />
         <${OverflowMenu} />
       </div>
     </header>`;
@@ -330,10 +284,8 @@
     var dismissed = useUi(selSample);
     if (dismissed) return null;
     return html`<div className="app-sample" role="note">
-      <${Icon} name="info" size=${16} />
-      <p>You're exploring sample data. Fernway Outfitters is fictional; customers, results and agents run on a deterministic simulator.</p>
-      <button type="button" id="app-sample-ok" className="k-btn k-btn--secondary k-btn--sm" onClick=${function () { setUi({ sampleDismissed: true }); }}>
-        <span className="k-btn-label">Got it</span></button>
+      <p>You're exploring Fernway Outfitters, a fictional outdoor brand with sample data.</p>
+      <button type="button" id="app-sample-ok" className="k-link app-sample-ok" onClick=${function () { setUi({ sampleDismissed: true }); }}>Got it</button>
     </div>`;
   }
 
@@ -371,29 +323,26 @@
   function ApprovalsPanel() {
     var props = useSel(selProposals);
     var tabSt = useState('needs'), tab = tabSt[0], setTab = tabSt[1];
-    var agSt = useState([]), agents = agSt[0], setAgents = agSt[1];
-    var rkSt = useState([]), risks = rkSt[0], setRisks = rkSt[1];
+    var agSt = useState(''), agentF = agSt[0], setAgentF = agSt[1];
+    var rkSt = useState(''), riskF = rkSt[0], setRiskF = rkSt[1];
     var cfSt = useState(false), confirm = cfSt[0], setConfirm = cfSt[1];
     var msgSt = useState(null), msg = msgSt[0], setMsg = msgSt[1];
     var moreSt = useState(30), limit = moreSt[0], setLimit = moreSt[1];
     var holdSt = useState(false), hold = holdSt[0], setHold = holdSt[1];
     var lists = useMemo(function () { return proposalLists(props); }, [props]);
-    var Tabs = ui('Tabs'), Chip = ui('ChipToggle'), PC = ui('ProposalCard'), Empty = ui('EmptyState'), IC = ui('InlineConfirm'), Btn = ui('Button'), NewPill = ui('NewItemsPill');
+    var Tabs = ui('Tabs'), PC = ui('ProposalCard'), Empty = ui('EmptyState'), IC = ui('InlineConfirm'), Btn = ui('Button'), NewPill = ui('NewItemsPill');
 
     var base = lists[tab] || [];
     var agentIds = [];
     base.forEach(function (x) { if (agentIds.indexOf(x.agentId) < 0) agentIds.push(x.agentId); });
     var filtered = base.filter(function (x) {
-      return (!agents.length || agents.indexOf(x.agentId) >= 0) && (!risks.length || risks.indexOf(x.risk) >= 0);
+      return (!agentF || x.agentId === agentF) && (!riskF || x.risk === riskF);
     });
     var frozen = MC.hooks.useFrozen ? MC.hooks.useFrozen(filtered, { key: 'id', freeze: hold }) : { items: filtered, pending: 0, reveal: function () {} };
     var shown = frozen.items.slice(0, limit);
     var lowIds = tab === 'needs' ? filtered.filter(function (x) { return x.risk === 'low'; }).map(function (x) { return x.id; }) : [];
 
-    function toggle(list, setList, v) {
-      setList(list.indexOf(v) >= 0 ? list.filter(function (y) { return y !== v; }) : list.concat([v]));
-    }
-    function switchTab(t) { setTab(t); setConfirm(false); setMsg(null); setLimit(30); setAgents([]); setRisks([]); }
+    function switchTab(t) { setTab(t); setConfirm(false); setMsg(null); setLimit(30); setAgentF(''); setRiskF(''); }
     function approveLow() {
       var n = lowIds.length;
       var r = MC.store.dispatch({ type: 'proposal/approveMany', payload: { ids: lowIds.slice() } });
@@ -411,15 +360,19 @@
     return html`<div className="app-approvals">
       ${Tabs ? html`<${Tabs} id="approvals-tabs" label="Approvals" tabs=${tabs} value=${tab} onChange=${switchTab} panelId="approvals-panel" />` : null}
       <div id="approvals-panel" role="tabpanel" aria-labelledby=${'approvals-tabs-' + tab} className="app-approvals-panel">
-        ${base.length && Chip ? html`<div className="app-filters" role="group" aria-label="Filter proposals">
-          ${agentIds.map(function (a) {
-            return html`<${Chip} key=${a} id=${'approvals-agent-' + a} size="sm" label=${agentName(a)} checked=${agents.indexOf(a) >= 0}
-              onChange=${function () { toggle(agents, setAgents, a); }} />`;
-          })}
-          ${RISKS.map(function (r) {
-            return html`<${Chip} key=${r.value} id=${'approvals-risk-' + r.value} size="sm" label=${r.label} checked=${risks.indexOf(r.value) >= 0}
-              onChange=${function () { toggle(risks, setRisks, r.value); }} />`;
-          })}
+        ${base.length > 1 ? html`<div className="app-filters" role="group" aria-label="Filter proposals">
+          <label className="k-sr" htmlFor="approvals-agent">Agent</label>
+          <span className="k-select-wrap k-select-wrap--sm"><select id="approvals-agent" className="k-select" value=${agentF}
+              onChange=${function (ev) { setAgentF(ev.target.value); }}>
+            <option value="">All agents</option>
+            ${agentIds.map(function (a) { return html`<option key=${a} value=${a}>${agentName(a)}</option>`; })}
+          </select></span>
+          <label className="k-sr" htmlFor="approvals-risk">Risk</label>
+          <span className="k-select-wrap k-select-wrap--sm"><select id="approvals-risk" className="k-select" value=${riskF}
+              onChange=${function (ev) { setRiskF(ev.target.value); }}>
+            <option value="">Any risk</option>
+            ${RISKS.map(function (r) { return html`<option key=${r.value} value=${r.value}>${r.label}</option>`; })}
+          </select></span>
         </div>` : null}
         ${tab === 'needs' && lowIds.length && Btn ? html`<div className="app-bulk">
           ${confirm && IC ? html`<${IC} id="approvals-bulk-confirm" message=${'Approve ' + lowIds.length + ' low-risk change' + (lowIds.length === 1 ? '' : 's') + '? Each can be undone.'}
@@ -444,16 +397,11 @@
 
   /* ---------------- phone menu sheet ---------------- */
   function MenuContent() {
-    var Badge = ui('SampleDataBadge');
-    var Pulse = ui('AgentPulse');
     function closeMenu() { setUi({ drawer: null }); }
     return html`<div className="app-menu-sheet">
       <${NavList} idPrefix="app-menu-nav" onNavigate=${closeMenu} />
-      <section className="app-menu-section" aria-labelledby="app-menu-sim">
-        <h3 id="app-menu-sim" className="app-menu-heading">Simulation</h3>
-        <${SimClock} />
-        <${SpeedControl} id="app-menu-speed" />
-        ${Pulse ? html`<${Pulse} onClick=${function () { closeMenu(); go('agents', { tab: 'roster' }); }} />` : null}
+      <section className="app-menu-section" aria-label="Agent activity">
+        <${AgentDot} id="app-menu-pulse" withLabel=${true} />
       </section>
       <section className="app-menu-section" aria-labelledby="app-menu-theme-h">
         <h3 id="app-menu-theme-h" className="app-menu-heading">Appearance</h3>
@@ -461,7 +409,7 @@
       </section>
       <div className="app-tenant">
         <span className="app-tenant-name">Fernway Outfitters</span>
-        ${Badge ? html`<${Badge} />` : null}
+        <span className="app-tenant-note">Sample data</span>
       </div>
     </div>`;
   }
@@ -481,7 +429,7 @@
     var err = this.state.error;
     return html`<section className="app-fault" role="alert">
       <h1 id="page-title" tabIndex="-1" className="app-fault-title">This view hit an error.</h1>
-      <p>The rest of Kestrel keeps running, and the simulation and agents are unaffected.</p>
+      <p>The rest of Kestrel keeps running, and your agents are unaffected.</p>
       <div className="app-fault-actions">
         <button type="button" className="k-btn k-btn--primary k-btn--md" id="app-reload-view"
           onClick=${function () { self.setState({ error: null }); if (self.props.onReload) self.props.onReload(); }}><span className="k-btn-label">Reload view</span></button>
@@ -516,8 +464,8 @@
 
   /* ---------------- boot ---------------- */
   var PHASES = [
-    { id: 'profiles', label: 'Generating 6,000 customer profiles' },
-    { id: 'history', label: 'Replaying 60 days of campaign history' },
+    { id: 'profiles', label: 'Loading 6,000 customer profiles' },
+    { id: 'history', label: 'Loading 60 days of campaign history' },
     { id: 'scores', label: 'Scoring propensity, churn and lifetime value' },
     { id: 'agents', label: 'Starting the agents' }
   ];
@@ -526,13 +474,13 @@
     PHASES.forEach(function (ph, i) { if (ph.id === p.phase) idx = i; });
     if (p.error) {
       return html`<section className="app-bootcard app-bootcard--error" role="alert">
-        <h1 id="page-title" tabIndex="-1" className="app-page-h1">Kestrel couldn't start the simulation.</h1>
+        <h1 id="page-title" tabIndex="-1" className="app-page-h1">Kestrel couldn't load the sample workspace.</h1>
         <p>${p.error}</p>
         <button type="button" className="k-btn k-btn--primary k-btn--md" id="app-boot-retry" onClick=${p.onRetry}><span className="k-btn-label">Try again</span></button>
       </section>`;
     }
-    return html`<section className="app-bootcard" role="status" aria-label="Loading the sample world">
-      <p className="app-bootcard-title">Generating the Fernway sample world${ELL}</p>
+    return html`<section className="app-bootcard" role="status" aria-label="Loading Fernway Outfitters">
+      <p className="app-bootcard-title">Loading Fernway Outfitters${ELL}</p>
       <ol className="app-phases">
         ${PHASES.map(function (ph, i) {
           var state = i < idx ? 'done' : (i === idx ? 'now' : 'todo');
@@ -554,8 +502,8 @@
   function bootError(e) {
     var m = String((e && e.message) || e || '');
     var miss = /^(MC\.[A-Za-z0-9_.]+) missing/.exec(m);
-    if (miss) return 'Part of the simulator (' + miss[1] + ") isn't included in this deployment yet, so the sample world can't be generated. Reload once every file has been published.";
-    return 'Something went wrong while generating the sample world: ' + m;
+    if (miss) return 'Part of the app (' + miss[1] + ") isn't included in this deployment yet, so the sample data can't load. Reload once every file has been published.";
+    return 'Something went wrong while loading the sample data: ' + m;
   }
   function startBoot() {
     setBoot({ started: true, error: null, phase: 'profiles' });
@@ -563,20 +511,20 @@
       if (MC.engine && typeof MC.engine.boot === 'function') {
         var r = MC.engine.boot({ seed: MC.SEED, onPhase: function (ph) { setBoot({ phase: typeof ph === 'string' ? ph : (ph && ph.phase) || bootState.phase }); } });
         if (r && typeof r.then === 'function') {
-          r.then(function () { setBoot({ phase: 'done' }); notifySpeed(); },
+          r.then(function () { setBoot({ phase: 'done' }); },
             function (e) { report(e); setBoot({ error: bootError(e) }); });
-        } else { setBoot({ phase: 'done' }); notifySpeed(); }
+        } else { setBoot({ phase: 'done' }); }
         return;
       }
       if (MC.data && typeof MC.data.generate === 'function') {
-        // Engine not available: show a still snapshot of the generated world (no clock, no agents).
+        // Engine not available: show a still snapshot of the sample data (no agents).
         window.setTimeout(function () {
           try { MC.store.init(MC.data.generate(MC.SEED)); setBoot({ phase: 'done' }); }
           catch (e) { report(e); setBoot({ error: bootError(e) }); }
         }, 0);
         return;
       }
-      setBoot({ error: 'The simulation engine for this deployment is missing, so there is no sample world to show yet.' });
+      setBoot({ error: 'Part of this deployment is missing, so there is no sample data to show yet.' });
     } catch (e) {
       report(e);
       setBoot({ error: bootError(e) });
@@ -592,7 +540,7 @@
     return st[0];
   }
 
-  /* ---------------- toasts from agent activity (one per tick, coalesced) ---------------- */
+  /* ---------------- toasts: autopilot actions only, batched (§11.3) ---------------- */
   function viewFor(item) {
     var e = item.entity;
     if (e && e.kind === 'campaign') return { route: 'campaigns', focus: { mode: 'detail', id: e.id, tab: 'overview' } };
@@ -600,54 +548,77 @@
     if (e && e.kind === 'segment') return { route: 'audiences', focus: { tab: 'segments', segmentId: e.id } };
     return { route: 'agents', focus: { tab: 'activity', agentId: item.agentId || 'optimizer' } };
   }
+  // "Send-Time Tuner adjusted 3 campaigns": verb per agent, counted over distinct targets.
+  var AGENT_VERB = {
+    optimizer: 'rebalanced variants in', sendtime: 'adjusted send times for', pacer: 'repaced budgets for',
+    guard: 'eased message frequency in', copy: 'added drafts to', scout: 'refined', analyst: 'flagged', planner: 'drafted'
+  };
+  function targetKey(it) {
+    var e = it.entity;
+    return e && e.id ? e.kind + ':' + e.id : (it.proposalId || it.id);
+  }
+  function batchToast(items) {
+    if (items.length === 1) {
+      var it = items[0], v = viewFor(it), actions = [];
+      if (it.proposalId) actions.push({ label: 'Undo', kind: 'undo', proposalId: it.proposalId });
+      actions.push({ label: 'View', kind: 'view', route: v.route, focus: v.focus });
+      return { text: it.text, tone: 'agent', actions: actions };
+    }
+    var byAgent = {}, agents = [];
+    items.forEach(function (it) {
+      var a = it.agentId || 'agent';
+      if (!byAgent[a]) { byAgent[a] = { targets: {}, kinds: {}, n: 0 }; agents.push(a); }
+      byAgent[a].targets[targetKey(it)] = 1;
+      byAgent[a].kinds[it.entity && it.entity.kind ? it.entity.kind : 'item'] = 1;
+      byAgent[a].n++;
+    });
+    var review = [{ label: 'Review', kind: 'review' }];
+    if (agents.length === 1) {
+      var a = agents[0], g = byAgent[a], kinds = Object.keys(g.kinds), nT = Object.keys(g.targets).length;
+      var noun = kinds.length === 1 && kinds[0] === 'campaign' ? (nT === 1 ? 'campaign' : 'campaigns')
+        : kinds.length === 1 && kinds[0] === 'segment' ? (nT === 1 ? 'segment' : 'segments') : null;
+      var text = noun && AGENT_VERB[a] ? agentName(a) + ' ' + AGENT_VERB[a] + ' ' + nT + ' ' + noun
+        : agentName(a) + ' made ' + g.n + ' changes';
+      return { text: text, tone: 'agent', actions: review };
+    }
+    var names = agents.map(agentName);
+    var who = names.length === 2 ? names[0] + ' and ' + names[1] : names.slice(0, 2).join(', ') + ' and ' + (names.length - 2) + ' more';
+    return { text: who + ' made ' + items.length + ' changes on Autopilot', tone: 'agent', actions: review };
+  }
+  var TOAST_WINDOW_MS = 6000;
   function watchToasts() {
-    var lastTick = null, seenTop = null;
+    var lastTick = null, seenTop = null, pending = [], timer = null;
     function topId(w) { return w.feed && w.feed.length ? w.feed[0].id : null; }
+    function flush() {
+      timer = null;
+      var items = pending; pending = [];
+      if (items.length) MC.uiStore.addToast(batchToast(items));
+    }
     MC.store.subscribe(function () {
       var w = MC.store.getState();
       if (!w || !w.meta) return;
       var t = w.meta.tick;
-      if (lastTick === null || t < lastTick) { lastTick = t; seenTop = topId(w); return; }   // first world or restart
+      if (lastTick === null || t < lastTick) {   // first world or a reset
+        lastTick = t; seenTop = topId(w); pending = [];
+        if (timer !== null) { window.clearTimeout(timer); timer = null; }
+        return;
+      }
       if (t === lastTick) return;
       lastTick = t;
       var feed = w.feed || [];
       var fresh = [];
-      for (var i = 0; i < feed.length && i < 200; i++) {
+      for (var i = 0; i < feed.length && i < 400; i++) {
         if (feed[i].id === seenTop) break;
         fresh.push(feed[i]);
       }
       seenTop = topId(w);
       var notify = MC.uiStore.getState().notify || {};
-      var applied = [], proposed = [];
       fresh.forEach(function (it) {
-        var lvl = notify[it.agentId] || 'changes';
-        if (lvl === 'silent') return;
-        if (it.kind === 'agent-applied') applied.push(it);
-        else if (it.kind === 'agent-proposed' && lvl === 'all') proposed.push(it);
+        if (it.kind !== 'agent-applied') return;
+        if ((notify[it.agentId] || 'changes') === 'silent') return;
+        pending.push(it);
       });
-      if (!applied.length && !proposed.length) return;
-      var newPending = 0;
-      if (proposed.length && w.proposals && w.proposals.open) {
-        var ok = {};
-        proposed.forEach(function (it) { ok[it.agentId] = true; });
-        w.proposals.open.forEach(function (id) { var x = w.proposals.byId[id]; if (x && ok[x.agentId] && x.tick >= t - 1) newPending++; });
-      }
-      newPending = Math.max(newPending, proposed.length);
-      var toast;
-      if (applied.length === 1 && !proposed.length) {
-        var it = applied[0], v = viewFor(it), actions = [];
-        if (it.proposalId) actions.push({ label: 'Undo', kind: 'undo', proposalId: it.proposalId });
-        actions.push({ label: 'View', kind: 'view', route: v.route, focus: v.focus });
-        toast = { text: it.text, tone: 'agent', actions: actions };
-      } else if (applied.length && proposed.length) {
-        toast = { text: 'Agents made ' + applied.length + ' change' + (applied.length === 1 ? '' : 's') + ' and ' + newPending + ' new item' + (newPending === 1 ? ' needs' : 's need') + ' you',
-          tone: 'agent', actions: [{ label: 'Review', kind: 'review' }] };
-      } else if (applied.length) {
-        toast = { text: 'Agents made ' + applied.length + ' changes', tone: 'agent', actions: [{ label: 'Review', kind: 'review' }] };
-      } else {
-        toast = { text: newPending + ' new item' + (newPending === 1 ? ' needs' : 's need') + ' you', tone: 'agent', actions: [{ label: 'Review', kind: 'review' }] };
-      }
-      MC.uiStore.addToast(toast);
+      if (pending.length && timer === null) timer = window.setTimeout(flush, TOAST_WINDOW_MS);
     });
   }
 

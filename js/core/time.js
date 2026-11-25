@@ -1,6 +1,8 @@
-/* Kestrel Marketing Cloud - MC.time: simulated clock arithmetic.
-   tick 0 = Sat 2026-11-07 00:00; 1 tick = 1 simulated hour; history days are negative.
-   Pure integer calendar math (proleptic Gregorian), never the Date object. */
+/* Kestrel Marketing Cloud - MC.time: clock arithmetic.
+   tick 0 = Sat 2026-11-07 00:00 on the internal calendar; 1 tick = 1 hour; history days are negative.
+   Pure integer calendar math (proleptic Gregorian). The only Date read is the display anchor:
+   display dates shift the internal calendar so the boot day shows as the real current date (§11.1).
+   Tick arithmetic and the internal calendar (calendar, ymd, monthOf, ...) are unchanged. */
 (function () {
   'use strict';
   var MC = window.MC = window.MC || {};
@@ -94,6 +96,97 @@
     var s = quiet.start, e = quiet.end;
     if (s === e) return false;
     return s > e ? (h >= s || h < e) : (h >= s && h < e);
+  };
+
+  /* ======================= display mapping (§11.1) ======================= */
+  // Display day = internal day + offset, where the anchor internal day (0 = the boot day) shows as
+  // the real local date the first time any display helper (or anchorDisplay) runs.
+  var anchorCivil = null, anchorSimDay = 0;
+  function todayCivilDays() {
+    try { var d = new Date(); return daysFromCivil(d.getFullYear(), d.getMonth() + 1, d.getDate()); }
+    catch (e) { return EPOCH; }
+  }
+  function off() {
+    if (anchorCivil === null) anchorCivil = todayCivilDays();
+    return anchorCivil - EPOCH - anchorSimDay;
+  }
+  // Freezes the anchor now (engine.boot calls it). ymd ('2026-11-07' = identity) pins it for dev/tests.
+  T.anchorDisplay = function (ymd, simDay) {
+    var m = ymd ? /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(ymd)) : null;
+    anchorCivil = m ? daysFromCivil(+m[1], +m[2], +m[3]) : (anchorCivil === null || ymd === null ? todayCivilDays() : anchorCivil);
+    if (typeof simDay === 'number' && isFinite(simDay)) anchorSimDay = Math.floor(simDay);
+    return off();
+  };
+  T.displayOffset = function () { return off(); };
+
+  // Display calendar of an internal day: { y, m, d, dow, label:'Wed, Nov 25', ymd }.
+  T.displayCalendar = function (day) {
+    var z = EPOCH + day + off(), c = civilFromDays(z);
+    var dw = (((z + 4) % 7) + 7) % 7;
+    return { y: c.y, m: c.m, d: c.d, dow: dw, label: DOWS[dw] + ', ' + MONTHS[c.m - 1] + ' ' + c.d,
+      ymd: String(c.y) + '-' + pad2(c.m) + '-' + pad2(c.d) };
+  };
+  T.displayYmd = function (day) { return T.displayCalendar(day).ymd; };
+  // '2026-11-25' as shown in a date input -> internal day (null if malformed).
+  T.dayOfDisplayYmd = function (s) { var d = T.dayOfYmd(s); return d === null ? null : d - off(); };
+  // Display month containing an internal day, bounds in internal days.
+  T.displayMonthOf = function (day) {
+    var o = off(), m = T.monthOf(day + o);
+    return { y: m.y, m: m.m, label: m.label, name: m.name, fromDay: m.fromDay - o, toDay: m.toDay - o, days: m.days };
+  };
+
+  var DOW_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  function finite(x) { return typeof x === 'number' && isFinite(x); }
+  // opts.style: 'short' "Nov 25" | 'medium' (default) "Wed, Nov 25" | 'long' "Wednesday, November 25"; opts.year adds ", 2026".
+  T.dayLabel = function (day, opts) {
+    if (!finite(day)) return '—';
+    var c = T.displayCalendar(day), st = (opts && opts.style) || 'medium', s;
+    if (st === 'short') s = MONTHS[c.m - 1] + ' ' + c.d;
+    else if (st === 'long') s = DOW_NAMES[c.dow] + ', ' + MONTH_NAMES[c.m - 1] + ' ' + c.d;
+    else s = c.label;
+    return opts && opts.year ? s + ', ' + c.y : s;
+  };
+  T.dateLabel = function (tick, opts) { return finite(tick) ? T.dayLabel(T.dayOf(tick), opts) : '—'; };
+  // "2 pm", "12 am".
+  T.timeLabel = function (tick) {
+    if (!finite(tick)) return '—';
+    var h = T.hourOf(tick), h12 = h % 12 === 0 ? 12 : h % 12;
+    return h12 + (h < 12 ? ' am' : ' pm');
+  };
+  // "Nov 25, 2 pm".
+  T.stampLabel = function (tick) { return finite(tick) ? T.dayLabel(T.dayOf(tick), { style: 'short' }) + ', ' + T.timeLabel(tick) : '—'; };
+
+  // Relative time of a tick seen from nowTick: "just now", "3h ago", "yesterday", "4 days ago", "Nov 12";
+  // future: "in 3h", "tomorrow", "in 4 days", "Dec 2".
+  T.relative = function (tick, nowTick) {
+    if (!finite(tick) || !finite(nowTick)) return '—';
+    var d = nowTick - tick, a = Math.abs(d);
+    var dd = Math.abs(T.dayOf(nowTick) - T.dayOf(tick));
+    if (a < 1) return 'just now';
+    if (dd === 0 || a < 6) return d > 0 ? a + 'h ago' : 'in ' + a + 'h';
+    if (dd === 1) return d > 0 ? 'yesterday' : 'tomorrow';
+    if (dd < 7) return d > 0 ? dd + ' days ago' : 'in ' + dd + ' days';
+    return T.dayLabel(T.dayOf(tick), { style: 'short' });
+  };
+  // Day heading relative to today: "Today", "Yesterday", "Tomorrow", else "Wed, Nov 25".
+  T.relativeDay = function (day, today) {
+    if (!finite(day)) return '—';
+    if (finite(today)) {
+      if (day === today) return 'Today';
+      if (day === today - 1) return 'Yesterday';
+      if (day === today + 1) return 'Tomorrow';
+    }
+    return T.dayLabel(day);
+  };
+  // Worded cadence from hours: "every hour", "every 6 hours", "daily", "every 2 days", "weekly".
+  T.cadence = function (hours) {
+    if (!finite(hours) || hours <= 0) return '—';
+    if (hours === 1) return 'every hour';
+    if (hours < 24 || hours % 24) return 'every ' + hours + ' hours';
+    var days = hours / 24;
+    if (days === 1) return 'daily';
+    if (days === 7) return 'weekly';
+    return 'every ' + days + ' days';
   };
 
   T.EVENTS = [

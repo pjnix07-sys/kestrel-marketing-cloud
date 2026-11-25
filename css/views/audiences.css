@@ -9,14 +9,16 @@
 .v-audiences .aud-header > div { min-width: 0; }
 .v-audiences .aud-title { font-family: var(--font-display); font-size: 28px; font-weight: 700; line-height: 1.15; margin: 0; }
 .v-audiences .aud-sub { margin: 4px 0 0; color: var(--ink-2); font-size: 14px; }
-.v-audiences .aud-scout-flag { font: inherit; font-size: 13px; font-weight: 600; min-height: 40px; padding: 6px 12px; border-radius: 6px;
-  border: 1px solid var(--agent); background: var(--agent-soft); color: var(--agent); cursor: pointer; }
+.v-audiences .aud-scout-flag { font: inherit; font-size: 13px; font-weight: 500; min-height: 40px; padding: 6px 4px; border: 0;
+  background: none; color: var(--ink-2); cursor: pointer; display: inline-flex; align-items: center; gap: 8px; }
+.v-audiences .aud-scout-flag::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--agent); flex: none; }
+.v-audiences .aud-scout-flag:hover { color: var(--ink); text-decoration: underline; }
 .v-audiences .aud-h2 { font-family: var(--font-display); font-size: 18px; font-weight: 700; margin: 0; overflow-wrap: anywhere; }
 .v-audiences .aud-h3 { font-size: 14px; font-weight: 600; margin: 16px 0 6px; }
 .v-audiences .aud-muted { color: var(--ink-3); }
 .v-audiences .aud-small { font-size: 12px; }
 .v-audiences .aud-mono { font-family: var(--font-mono); font-size: 12px; color: var(--ink-2); }
-.v-audiences .aud-empty { color: var(--ink-2); padding: 16px; border: 1px dashed var(--line-strong); border-radius: 6px; margin: 8px 0; background: var(--surface-2); }
+.v-audiences .aud-empty { color: var(--ink-2); padding: 8px 0; margin: 8px 0; }
 
 /* cards */
 .v-audiences .aud-card { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 16px; min-width: 0; }
@@ -77,6 +79,7 @@
 .v-audiences .aud-parsed-foot { display: flex; gap: 4px; align-items: center; flex-wrap: wrap; font-size: 13px; }
 .v-audiences .aud-chips { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
 .v-audiences .aud-chip { font-size: 13px; padding: 4px 10px; border-radius: 999px; background: var(--accent-soft); color: var(--ink); overflow-wrap: anywhere; }
+.v-audiences .aud-plainlist { list-style: none; margin: 0; padding: 4px 0 0; display: flex; flex-direction: column; gap: 2px; font-size: 14px; }
 .v-audiences .aud-chip-phrase { font-weight: 600; }
 .v-audiences .aud-chip-ign { background: var(--surface-2); color: var(--ink-3); border: 1px dashed var(--line-strong); }
 
@@ -86,8 +89,8 @@
 .v-audiences .aud-live { position: sticky; top: 72px; max-height: calc(100vh - 88px); overflow-y: auto; }
 .v-audiences .aud-group { border: 1px solid var(--line); border-radius: 6px; padding: 12px; background: var(--surface); }
 .v-audiences .aud-depth-1 { border: 0; padding: 0; }
-.v-audiences .aud-depth-2 { background: var(--surface-2); border-left: 3px solid var(--accent); }
-.v-audiences .aud-depth-3 { background: var(--surface); border-left: 3px solid var(--chart-4); }
+.v-audiences .aud-depth-2 { background: var(--surface-2); border-color: transparent; }
+.v-audiences .aud-depth-3 { background: var(--surface); }
 .v-audiences .aud-group-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
 .v-audiences .aud-group-label { font-size: 13px; font-weight: 600; color: var(--ink-2); }
 .v-audiences .aud-group-x { margin-left: auto; }
@@ -138,7 +141,7 @@
 
 /* scout */
 .v-audiences .aud-segments { display: flex; flex-direction: column; gap: 16px; }
-.v-audiences .aud-scout { background: var(--agent-soft); border: 1px solid var(--line); border-left: 3px solid var(--agent); border-radius: 10px; padding: 16px; }
+.v-audiences .aud-scout { padding: 0; }
 .v-audiences .aud-scout-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
 .v-audiences .aud-scout-card { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 12px; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
 .v-audiences .aud-scout-card .aud-h3 { margin: 4px 0 0; }
@@ -195,7 +198,7 @@
 .aud-facts dt { font-size: 12px; color: var(--ink-3); }
 .aud-facts dd { margin: 0; font-weight: 600; }
 .aud-preds { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
-.aud-preds > li { border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; }
+.aud-preds > li { border-bottom: 1px solid var(--line); padding: 8px 0; }
 .aud-pred-row { display: flex; justify-content: space-between; gap: 8px; align-items: center; flex-wrap: wrap; }
 .aud-profile .aud-pred-badge { font-size: 11px; font-weight: 600; padding: 1px 6px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); }
 .aud-profile .aud-link { font: inherit; font-size: 13px; background: none; border: 0; padding: 4px 0; color: var(--accent); cursor: pointer; text-decoration: underline; min-height: 32px; }
@@ -210,7 +213,8 @@
 .aud-badges, .aud-sups, .aud-timeline { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 .aud-badges { flex-direction: row; flex-wrap: wrap; }
 .aud-sups li { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
-.aud-timeline li { display: flex; flex-direction: column; padding-left: 12px; border-left: 2px solid var(--line-strong); }
+.aud-timeline li { display: flex; flex-direction: column; }
+.aud-consent-line { margin: 0; }
 .aud-profile .aud-meter { height: 8px; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--line); overflow: hidden; margin-top: 6px; }
 .aud-profile .aud-meter > span { display: block; height: 100%; }
 .aud-profile .aud-meter > .is-good { background: var(--good); }
@@ -243,7 +247,7 @@
   .v-audiences .aud-live { position: static; max-height: none; overflow: visible; }
 }
 @media (max-width: 639px) {
-  .v-audiences .aud-card, .v-audiences .aud-describe, .v-audiences .aud-scout { padding: 12px; }
+  .v-audiences .aud-card, .v-audiences .aud-describe { padding: 12px; }
   .v-audiences .aud-title { font-size: 24px; }
   .v-audiences .aud-num { width: 80px; }
   .v-audiences .aud-attr, .v-audiences .aud-op, .v-audiences .aud-cat { flex-basis: 100%; }

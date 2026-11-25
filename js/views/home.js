@@ -48,28 +48,22 @@
     if (!fin(x)) return DASH;
     return tryFmt('ratio', x) || (x.toFixed(1) + '×');
   }
-  function hhmm(t) {
+  // Display dates and relative times come from MC.time's display mapping (§11.1); never ticks.
+  function tm(name) { return MC.time && typeof MC.time[name] === 'function' ? MC.time[name] : null; }
+  function timeLabel(t) {
     if (!fin(t)) return DASH;
-    var r = tryFmt('time', t);
-    if (r) return r;
+    var f = tm('timeLabel');
+    if (f) return f(t);
     var h = ((t % 24) + 24) % 24;
-    return (h < 10 ? '0' : '') + h + ':00';
+    return (h % 12 === 0 ? 12 : h % 12) + (h < 12 ? ' am' : ' pm');
   }
-  function clock(t) { return tryFmt('clock', t) || ('Day ' + (Math.floor(t / 24) + 1) + MID + hhmm(t)); }
-  function dayLabel(d) { return tryFmt('dayLabel', d) || ('Day ' + (d + 1)); }
-  function dayShort(d) { return tryFmt('dayShort', d) || ('Day ' + (d + 1)); }
+  function dayLabel(d, style) { var f = tm('dayLabel'); return f ? f(d, style ? { style: style } : undefined) : (tryFmt(style === 'short' ? 'dayShort' : 'dayLabel', d) || DASH); }
+  function dayShort(d) { return dayLabel(d, 'short'); }
   function rel(from, now) {
     if (!fin(from) || !fin(now)) return '';
-    var r = tryFmt('rel', from, now);
-    if (r) return r;
-    var d = now - from, a = Math.abs(d);
-    if (a < 1) return 'just now';
-    var s = a < 48 ? a + 'h' : Math.round(a / 24) + 'd';
-    return d >= 0 ? s + ' ago' : 'in ' + s;
-  }
-  function simDay(t) {
-    try { if (MC.time && typeof MC.time.simDay === 'function') return MC.time.simDay(t); } catch (e) { /* fallback */ }
-    return Math.floor(t / 24) + 1;
+    var f = tm('relative');
+    if (f) return f(from, now);
+    return tryFmt('rel', from, now) || '';
   }
   // Formats a value of a campaign goal metric (revenue in $, everything else as a count).
   function goalFmt(type, v, compact) { return type === 'revenue' ? money(v, compact) : num(v, compact); }
@@ -309,7 +303,7 @@
         status: un.status, deltaText: ud.text, deltaTone: ud.tone, spark: un.spark14, sparkColor: 'chart-4', metric: 'unsubRate'
       }
     ];
-    return html`<div className="hm-kpis" role="group" aria-label="Month to date against goals">
+    return html`<div className="hm-kpis is-live" role="group" aria-label="Month to date against goals">
       ${tiles.map(function (t) {
         return html`<${KpiTile} key=${t.id} ...${t} agentNow=${agentNow} onClick=${function () { go('analytics', { metric: t.metric }); }} />`;
       })}
@@ -500,12 +494,12 @@
     var actor;
     if (it.agentId) actor = Chip ? html`<${Chip} agentId=${it.agentId} />` : html`<span className="hm-agent-name">${agentName(it.agentId)}</span>`;
     else if (USER_KINDS[it.kind]) actor = Chip ? html`<${Chip} agentId="user" />` : html`<span className="hm-agent-name">You</span>`;
-    else if (it.kind === 'anomaly' || it.kind === 'insight') actor = html`<span className=${cx('hm-tag', it.tone === 'crit' ? 'is-crit' : 'is-warn')}>${it.kind === 'anomaly' ? 'Anomaly' : 'Insight'}</span>`;
-    else actor = html`<span className="hm-tag">Campaign</span>`;
+    else if (it.kind === 'anomaly' || it.kind === 'insight') actor = html`<span className=${cx('hm-actor', it.tone === 'crit' ? 'is-crit' : 'is-warn')}>${it.kind === 'anomaly' ? 'Anomaly' : 'Insight'}</span>`;
+    else actor = html`<span className="hm-actor">Campaign</span>`;
     var canUndo = pr && (pr.status === 'applied' || pr.status === 'auto') && (it.kind === 'agent-applied' || it.kind === 'approved');
     var undone = pr && pr.status === 'undone' && (it.kind === 'agent-applied' || it.kind === 'approved');
     return html`<li className=${cx('hm-feed-row', it.tone && 'tone-' + it.tone)}>
-      <span className="hm-feed-time num">${hhmm(it.tick)}</span>
+      <span className="hm-feed-time num" title=${dayShort(Math.floor(it.tick / 24)) + ', ' + timeLabel(it.tick)}>${p.today ? rel(it.tick, p.now) : timeLabel(it.tick)}</span>
       <span className="hm-feed-actor">${actor}</span>
       <span className="hm-feed-text">${it.text}</span>
       <span className="hm-feed-acts">
@@ -554,10 +548,10 @@
       if (!cur || cur.day !== d) { cur = { day: d, items: [] }; groups.push(cur); }
       cur.items.push(it);
     });
-    function heading(d) { return d === today ? 'Today' : (d === today - 1 ? 'Yesterday' : dayLabel(d)); }
+    function heading(d) { var f = tm('relativeDay'); return f ? f(d, today) : (d === today ? 'Today' : (d === today - 1 ? 'Yesterday' : dayLabel(d))); }
 
     var body;
-    if (!feed.length) body = html`<${Empty} title="Agents start their first runs within the hour. Changes will appear here." />`;
+    if (!feed.length) body = html`<${Empty} title="Nothing yet. Agent changes and campaign updates will appear here." />`;
     else if (!items.length) body = html`<${Empty} title="Nothing in this filter yet." body="Switch to All to see every update." />`;
     else body = groups.map(function (g) {
       var hid = 'home-feed-day-' + (g.day < 0 ? 'm' + (-g.day) : g.day) + '-' + p.filter.id;
@@ -566,7 +560,7 @@
         <ul className="hm-feed-list">
           ${g.items.map(function (it) {
             var pr = it.proposalId && proposals && proposals.byId ? proposals.byId[it.proposalId] : null;
-            return html`<${FeedRow} key=${it.id} item=${it} proposal=${pr} onUndo=${onUndo} error=${errs[it.id]} />`;
+            return html`<${FeedRow} key=${it.id} item=${it} proposal=${pr} onUndo=${onUndo} error=${errs[it.id]} today=${g.day === today} now=${tick} />`;
           })}
         </ul>
       </div>`;
@@ -585,14 +579,13 @@
     var React = R();
     var fs = React.useState('all'), fid = fs[0], setFid = fs[1];
     var filter = FILTERS.filter(function (f) { return f.id === fid; })[0] || FILTERS[0];
-    var chips = html`<div className="hm-chips" role="group" aria-label="Filter updates">
+    var filters = html`<div className="hm-filters" role="group" aria-label="Show">
       ${FILTERS.map(function (f) {
-        return html`<button key=${f.id} id=${'home-feed-filter-' + f.id} type="button" className=${cx('hm-chip', f.id === fid && 'is-on')}
+        return html`<button key=${f.id} id=${'home-feed-filter-' + f.id} type="button" className=${cx('hm-filter', f.id === fid && 'is-on')}
           aria-pressed=${f.id === fid ? 'true' : 'false'} onClick=${function () { setFid(f.id); }}>${f.label}</button>`;
       })}
     </div>`;
-    return html`<${Panel} id="home-changes" className="hm-area-feed" title="What changed">
-      ${chips}
+    return html`<${Panel} id="home-changes" className="hm-area-feed" title="What changed" actions=${filters}>
       <${FeedList} key=${filter.id} filter=${filter} />
     <//>`;
   }
@@ -603,7 +596,7 @@
     suggest: { label: 'Suggest', tone: 'accent' },
     autopilot: { label: 'Autopilot', tone: 'agent' }
   };
-  var STATE_TEXT = { running: 'Running', paused: 'Paused', off: 'Off', queued: 'Queued for next tick' };
+  var STATE_TEXT = { running: 'Running', paused: 'Paused', off: 'Off', queued: 'Starting shortly' };
 
   function Dot(p) {
     var K = kit('StatusDot', null);
@@ -614,15 +607,13 @@
   function AgentsPanel() {
     var roster = useSel(selRoster) || EMPTY;
     var tick = useSel(selTick) || 0;
-    var Pulse = kit('AgentPulse', null);
     return html`<${Panel} id="home-agents" className="hm-area-agents" title="Agents"
         footer=${html`<${Btn} kind="ghost" size="sm" onClick=${function () { go('agents', { tab: 'roster' }); }}>Manage agents<//>`}>
-      ${Pulse ? html`<div className="hm-pulse"><${Pulse} /></div>` : null}
       ${roster.length ? html`<ul className="hm-agents">
         ${roster.map(function (a) {
           var au = AUTONOMY[a.autonomy] || AUTONOMY.suggest;
           var ran = fin(a.lastRun) && a.lastRun >= 0 ? 'ran ' + rel(a.lastRun, tick) : 'first run pending';
-          var next = a.status === 'running' || a.status === 'queued' ? (fin(a.nextRun) ? 'next ' + rel(a.nextRun, tick) : (a.status === 'queued' ? 'next tick' : '')) : '';
+          var next = a.status === 'running' || a.status === 'queued' ? (fin(a.nextRun) ? 'next ' + rel(a.nextRun, tick) : (a.status === 'queued' ? 'next within the hour' : '')) : '';
           var changes = fin(a.changes24h) ? a.changes24h : 0;
           return html`<li key=${a.id}>
             <button type="button" id=${'home-agent-' + a.id} className="hm-agent" onClick=${function () { go('agents', { tab: 'roster', agentId: a.id }); }}
@@ -630,17 +621,17 @@
               <span className="hm-agent-main">
                 <${Dot} state=${a.status} pulse=${a.ranThisTick} />
                 <span className="hm-agent-name">${a.name || agentName(a.id)}</span>
-                <${Pill} tone=${au.tone}>${au.label}<//>
+                <span className="hm-agent-mode">${au.label}</span>
               </span>
               <span className="hm-agent-meta num">
-                <span>${ran + (next ? MID + next : '')}</span>
-                <span className=${cx('hm-agent-changes', changes > 0 && 'is-active')}>${'24h: ' + changes + (changes === 1 ? ' change' : ' changes')}</span>
-                ${a.pending ? html`<span className="hm-agent-pending">${a.pending + ' waiting'}</span>` : null}
+                <span>${a.status === 'off' ? 'Off' : a.status === 'paused' ? 'Paused' + MID + ran : ran}</span>
+                ${changes > 0 ? html`<span>${changes + (changes === 1 ? ' change' : ' changes') + ' in the last day'}</span>` : null}
+                ${a.pending ? html`<span className="hm-agent-pending">${a.pending + ' waiting for you'}</span>` : null}
               </span>
             </button>
           </li>`;
         })}
-      </ul>` : html`<${Empty} title="Agents are loading." body="The roster appears once the simulation starts." />`}
+      </ul>` : html`<${Empty} title="Agents are getting ready." />`}
     <//>`;
   }
 
@@ -668,7 +659,7 @@
             <th scope="col">Spend / budget</th>
             <th scope="col">Goal progress</th>
             <th scope="col">Outlook</th>
-            <th scope="col" className="is-num">Agent changes 24h</th>
+            <th scope="col" className="is-num">Agent changes, 24h</th>
           </tr></thead>
           <tbody>
             ${rows.map(function (r) {
@@ -677,11 +668,9 @@
               return html`<tr key=${r.id} className="hm-row" onClick=${function () { openCampaign(r.id); }}>
                 <th scope="row">
                   <button type="button" id=${'home-live-' + r.id} className="hm-row-link" onClick=${function (e) { e.stopPropagation(); openCampaign(r.id); }}>${r.name}</button>
-                  ${r.status === 'paused' ? html` <${Pill} tone="warn">Paused<//>` : null}
+                  ${r.status === 'paused' ? html`<span className="hm-row-state">Paused</span>` : null}
                 </th>
-                <td><span className="hm-chans">${(r.channels || EMPTY).map(function (ch) {
-                  return html`<span key=${ch} className="hm-chan">${CH_SHORT[ch] || ch}</span>`;
-                })}</span></td>
+                <td className="hm-chans">${(r.channels || EMPTY).map(function (ch) { return CH_SHORT[ch] || ch; }).join(', ')}</td>
                 <td>
                   <span className="hm-cell-stack num">
                     <span>${money(r.spend, true) + ' / ' + money(r.budget, true)}</span>
@@ -691,7 +680,7 @@
                 </td>
                 <td className="num">${goalFmt(g.type, g.value, true) + ' of ' + goalFmt(g.type, g.target, true) + ' ' + (GOAL_NOUN[g.type] || '')}</td>
                 <td><${Pill} tone=${o.tone} title=${fin(g.p) ? Math.round(g.p * 100) + '% chance of reaching the goal' : 'Outlook appears after the first full day'}>${o.text}<//></td>
-                <td className="is-num num">${r.agentChanges24h > 0 ? html`<span className="hm-agent-count">${r.agentChanges24h}</span>` : '0'}</td>
+                <td className="is-num num">${r.agentChanges24h > 0 ? html`<span className="hm-agent-count" title="Changes made by agents in the last 24 hours">${r.agentChanges24h}</span>` : html`<span className="hm-muted">0</span>`}</td>
               </tr>`;
             })}
           </tbody>
@@ -701,55 +690,34 @@
   }
 
   /* ================= View ================= */
-  function selOpenCount(w) { return w.proposals && w.proposals.open ? w.proposals.open.length : 0; }
-
-  var QUICK = [
-    { id: 'home-quick-content', label: 'Write content', route: 'content', patch: null },
-    { id: 'home-quick-audience', label: 'Describe an audience', route: 'audiences', patch: { tab: 'segments' } },
-    { id: 'home-quick-analytics', label: 'Explore analytics', route: 'analytics', patch: { metric: 'revenue' } },
-    { id: 'home-quick-agents', label: 'Tune agents', route: 'agents', patch: { tab: 'roster' } }
-  ];
 
   function Home() {
     var ready = useSel(selReady);
     var tick = useSel(selTick);
     var kpis = useSel(selKpis);
     var agentNow = useSel(selAgentNow);
-    var openCount = useSel(selOpenCount) || 0;
     var tenant = useSel(selTenant) || 'Fernway Outfitters';
+    var today = ready && fin(tick) ? dayLabel(Math.floor(tick / 24), 'long') : null;
 
     var head = html`<header className="hm-head">
       <div className="hm-head-text">
+        <p className="hm-date">${today ? today + MID + tenant : tenant}</p>
         <h1 id="page-title" tabIndex="-1">Command Center</h1>
-        <p className="hm-clock num">
-          ${ready && fin(tick) ? clock(tick) + MID + 'Sim day ' + simDay(tick) : 'Starting the simulation'}
-          <span className="hm-tenant">${tenant}</span>
-          <span className="hm-sample">Sample data</span>
-        </p>
       </div>
       <div className="hm-head-actions">
         <${Btn} kind="primary" onClick=${function () { go('campaigns', { mode: 'planner' }); }}>Plan a campaign<//>
       </div>
     </header>`;
-    var quick = html`<nav className="hm-quick" aria-label="Quick actions">
-      <button type="button" id="home-quick-approvals" className=${cx('hm-quick-btn', openCount > 0 && 'is-agent')} onClick=${openApprovals}>
-        Review approvals${openCount > 0 ? html` <span className="hm-count num">${openCount}</span>` : null}
-      </button>
-      ${QUICK.map(function (q) {
-        return html`<button key=${q.id} id=${q.id} type="button" className="hm-quick-btn" onClick=${function () { go(q.route, q.patch); }}>${q.label}</button>`;
-      })}
-    </nav>`;
 
     if (!ready) {
       return html`<section className="v-home">
         ${head}
-        <p className="hm-note" role="status">Generating the Fernway sample world${'…'}</p>
+        <p className="hm-note" role="status">Loading Fernway Outfitters${'…'}</p>
         <${KpiStrip} kpis=${null} />
       </section>`;
     }
     return html`<section className="v-home">
       ${head}
-      ${quick}
       <div className="hm-grid">
         <div className="hm-area-kpi"><${KpiStrip} kpis=${kpis} agentNow=${agentNow} /></div>
         <${NeedsYou} />

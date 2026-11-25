@@ -28,7 +28,6 @@
   function selTick(w) { return w.meta.tick; }
   function selCampaigns(w) { return w.campaigns; }
   function selProposals(w) { return w.proposals; }
-  function selSeed(w) { return w.meta.seed; }
 
   /* ---------------- formatting ---------------- */
   function fmtCall(name, a, b) {
@@ -60,14 +59,22 @@
     var r = fmtCall('ratio', x);
     return r != null ? r : x.toFixed(1) + TIMES;
   }
+  // Calendar labels come from MC.time's display mapping (§11.1); never ticks.
+  function tm(name) { return MC.time && typeof MC.time[name] === 'function' ? MC.time[name] : null; }
   function dayShort(d) {
+    if (!fin(d)) return DASH;
+    var f = tm('dayLabel');
+    if (f) return f(d, { style: 'short' });
     var r = fmtCall('dayShort', d);
-    if (r != null) return r;
-    var u = MC.charts && MC.charts.util;
-    return u && u.shortDay ? u.shortDay(d) : 'Day ' + d;
+    return r != null ? r : DASH;
   }
-  function stamp(t) { var r = fmtCall('stamp', t); return r != null ? r : 'Tick ' + t; }
-  function clock(t) { var r = fmtCall('clock', t); return r != null ? r : stamp(t); }
+  function stamp(t) {
+    if (!fin(t)) return DASH;
+    var f = tm('stampLabel');
+    if (f) return f(t);
+    var r = fmtCall('stamp', t);
+    return r != null ? r : DASH;
+  }
 
   /* ---------------- metrics ---------------- */
   var METRICS = [
@@ -99,10 +106,10 @@
 
   var RANGES = [
     { value: '14', label: 'Last 14 days' }, { value: '30', label: '30 days' },
-    { value: '60', label: '60 days' }, { value: 'all', label: 'Since sim start' }
+    { value: '60', label: '60 days' }, { value: 'all', label: 'All history' }
   ];
   function rangeValue(v) { return v === 'all' ? 'all' : (Number(v) || 30); }
-  function rangeLabel(r) { return r === 'all' ? 'since the sim started' : 'over the last ' + r + ' days'; }
+  function rangeLabel(r) { return r === 'all' ? 'across all history' : 'over the last ' + r + ' days'; }
 
   function CH() { return MC.CH || { ALL: ['email', 'sms', 'push', 'social', 'web'], OWNED: ['email', 'sms', 'push'], PAID: ['social', 'web'], IDX: { email: 0, sms: 1, push: 2, social: 3, web: 4 }, LABEL: { email: 'Email', sms: 'SMS', push: 'Push', social: 'Social ads', web: 'Web ads' } }; }
   function chLabel(ch) { return CH().LABEL[ch] || ch; }
@@ -352,14 +359,7 @@
   /* ---------------- filter bar ---------------- */
   function FilterBar(p) {
     var fo = p.focus, ids = fo.campaignIds || [];
-    var ChipT = kit('ChipToggle');
     function set(patch) { if (MC.uiStore && MC.uiStore.setFocus) MC.uiStore.setFocus('analytics', patch); }
-    function toggle(cid) {
-      var next = ids.indexOf(cid) >= 0 ? ids.filter(function (x) { return x !== cid; }) : ids.concat([cid]);
-      var order = p.campaigns.map(function (c) { return c.id; });
-      next.sort(function (a, b) { return order.indexOf(a) - order.indexOf(b); });
-      set({ campaignIds: next });
-    }
     var metricOpts = METRICS.slice();
     if (!METRICS.some(function (m) { return m.value === fo.metric; }) && EXTRA_METRICS[fo.metric]) metricOpts.push({ value: fo.metric, label: EXTRA_METRICS[fo.metric] });
     return html`<div className="an-filters" role="group" aria-label="Analytics filters">
@@ -369,17 +369,13 @@
           onChange=${function (v) { set({ range: rangeValue(v) }); }} />
       </div>
       <div className="an-filter an-filter-camps">
-        <span className="an-filter-label" id="analytics-campaigns-label">Campaigns</span>
-        <div id="analytics-campaigns" className="an-chips" role="group" aria-labelledby="analytics-campaigns-label">
-          <button type="button" className=${'an-chip' + (ids.length ? '' : ' is-on')} aria-pressed=${ids.length ? 'false' : 'true'}
-            onClick=${function () { set({ campaignIds: [] }); }}>All campaigns</button>
-          ${p.campaigns.map(function (c) {
-            var on = ids.indexOf(c.id) >= 0;
-            if (ChipT) return html`<${ChipT} key=${c.id} id=${'analytics-campaign-' + c.id} label=${c.name} checked=${on} onChange=${function () { toggle(c.id); }} />`;
-            return html`<button key=${c.id} id=${'analytics-campaign-' + c.id} type="button" className=${'an-chip' + (on ? ' is-on' : '')}
-              aria-pressed=${on ? 'true' : 'false'} onClick=${function () { toggle(c.id); }}>${c.name}</button>`;
-          })}
-        </div>
+        <label className="an-filter-label" htmlFor="analytics-campaigns">Campaign</label>
+        <select id="analytics-campaigns" className="an-select" value=${ids.length === 1 ? ids[0] : (ids.length ? '__many' : '')}
+            onChange=${function (e) { var v = e.target.value; if (v !== '__many') set({ campaignIds: v ? [v] : [] }); }}>
+          <option value="">All campaigns</option>
+          ${ids.length > 1 ? html`<option value="__many">${ids.length + ' campaigns'}</option>` : null}
+          ${p.campaigns.map(function (c) { return html`<option key=${c.id} value=${c.id}>${c.name}</option>`; })}
+        </select>
       </div>
       <div className="an-filter">
         <label className="an-filter-label" htmlFor="analytics-channel">Channel</label>
@@ -981,7 +977,7 @@
             <select id="analytics-whatif-campaign" className="an-select" value=${cid || ''} onChange=${function (e) { setLocalCid(e.target.value); }}>
               ${candidates.map(function (id) { return html`<option key=${id} value=${id}>${campaigns.byId[id].name}</option>`; })}
             </select></div>` : null}>
-      ${!cid ? html`<${Empty} title="Nothing is live right now." body="The simulator works on live or paused campaigns with spend history." />`
+      ${!cid ? html`<${Empty} title="Nothing is live right now." body="What-if works on live or paused campaigns with spend history." />`
         : data ? html`<${WhatIfBody} key=${cid} data=${data} />` : null}
     <//>`;
   }
@@ -1026,16 +1022,16 @@
     }
     function askPacer() {
       var r = dispatch({ type: 'agent/runNow', payload: { id: 'pacer' } });
-      setMsg(r.ok ? { tone: 'agent', text: 'Queued for next tick. Budget Pacer will evaluate ' + data.name + ' and post any proposal to Approvals.' }
+      setMsg(r.ok ? { tone: 'agent', text: 'Budget Pacer will review ' + data.name + ' shortly and post any proposal to Approvals.' }
         : { tone: 'crit', text: r.error || 'Could not queue Budget Pacer.' });
     }
-    if (L <= 0) return html`<${Empty} title="This campaign has no days left to simulate." />`;
+    if (L <= 0) return html`<${Empty} title="This campaign has no days left to plan." />`;
     if (!sim.fitted) return html`<${Empty} title="Not enough spend history to fit response curves yet." body="Curves need at least one complete day of spend on a channel." />`;
     var dSpend = (sim.newSpend - sim.nowSpend) / L;
     var nowRoas = sim.nowSpend > 0 ? sim.nowRev / sim.nowSpend : null, newRoas = sim.newSpend > 0 ? sim.newRev / sim.newSpend : null;
     var summary = 'Predicted revenue ' + moneyC(sim.newRev) + ' (' + moneyC(sim.lo) + EN + moneyC(sim.hi) + ') vs ' + moneyC(sim.nowRev) + ' now';
     var bc = byChannel();
-    var confirmText = 'Set ' + data.name + ' budgets to ' + data.channels.map(function (c) { return chLabel(c.ch) + ' ' + money(bc[c.ch]); }).join(MID) + '? Agents see the new totals at the next tick.';
+    var confirmText = 'Set ' + data.name + ' budgets to ' + data.channels.map(function (c) { return chLabel(c.ch) + ' ' + money(bc[c.ch]); }).join(MID) + '? Agents work from the new totals at their next run.';
     return html`<div className="an-whatif">
       <div className="an-whatif-summary">
         <p className="an-headline"><span className="num">${summary}</span>${MID}Return <span className="num">${ratio(nowRoas) + ARROW + ratio(newRoas)}</span></p>
@@ -1080,7 +1076,9 @@
   var MONTH_ARGS = { metric: 'revenue', month: true };
   var ANALYST_KINDS = { kinds: ['goal-risk', 'roi', 'pacing'] };
   function goEvidence(patch, target) {
-    if (MC.uiStore && MC.uiStore.setFocus) MC.uiStore.setFocus('analytics', patch || {});
+    var sec = SECTION_OF[target];
+    patch = Object.assign({}, patch || {}, sec ? { section: sec } : {});
+    if (MC.uiStore && MC.uiStore.setFocus) MC.uiStore.setFocus('analytics', patch);
     var id = (target || 'analytics-performance') + '-title';
     setTimeout(function () {
       var el = document.getElementById(id);
@@ -1122,7 +1120,7 @@
     if (spendCh.length >= 2) {
       var hi = spendCh[0], lo = spendCh[spendCh.length - 1];
       cards.push({ id: 'n-channel', tone: 'neutral', label: 'Channels',
-        text: (hi.label || chLabel(hi.ch)) + ' returned ' + ratio(hi.roas) + ' on ' + moneyC(hi.cost) + ' of spend ' + rangeLabel(f.range) + ', vs ' + ratio(lo.roas) + ' on ' + (lo.label || chLabel(lo.ch)) + '. Try the what-if simulator before moving budget.',
+        text: (hi.label || chLabel(hi.ch)) + ' returned ' + ratio(hi.roas) + ' on ' + moneyC(hi.cost) + ' of spend ' + rangeLabel(f.range) + ', vs ' + ratio(lo.roas) + ' on ' + (lo.label || chLabel(lo.ch)) + '. Try the what-if planner before moving budget.',
         evidence: { label: 'Compare channels', patch: {}, target: 'analytics-channels' } });
     }
     var rs = segs.filter(function (s) { return fin(s.roas); }).slice().sort(function (x, y) { return (y.roas - x.roas) || (x.id < y.id ? -1 : 1); });
@@ -1148,7 +1146,7 @@
     });
 
     function dismiss(id) { dispatch({ type: 'insight/dismiss', payload: { id: id } }); }
-    return html`<${Card} id="analytics-insights" title="Insights" sub="Plain-language readouts of the numbers below, refreshed as the simulation runs.">
+    return html`<${Card} id="analytics-insights" title="Insights" sub="Plain-language readouts of the numbers below, refreshed as results come in.">
       ${cards.length ? html`<ul className="an-insights">
           ${cards.map(function (c) {
             return html`<li key=${c.id} className=${'an-insight an-tone-' + c.tone}>
@@ -1165,12 +1163,50 @@
   }
 
   /* ---------------- the view ---------------- */
+  // §11.4: the view opens on the performance overview and insights; deeper analysis sits behind tabs.
+  var SECTIONS = [
+    { id: 'channels', label: 'Channels' },
+    { id: 'impact', label: 'Agent impact' },
+    { id: 'anomalies', label: 'Anomalies' },
+    { id: 'attribution', label: 'Attribution' },
+    { id: 'audiences', label: 'Audiences' },
+    { id: 'whatif', label: 'What-if budget' }
+  ];
+  var SECTION_OF = { 'analytics-channels': 'channels', 'analytics-funnel': 'channels', 'analytics-agent-impact': 'impact',
+    'analytics-anomalies': 'anomalies', 'analytics-attribution': 'attribution', 'analytics-audiences': 'audiences', 'analytics-whatif': 'whatif' };
+  function sectionBody(id, f) {
+    if (id === 'impact') return html`<${AgentImpact} f=${f} />`;
+    if (id === 'anomalies') return html`<${AnomaliesSection} f=${f} />`;
+    if (id === 'attribution') return html`<${AttributionSection} f=${f} />`;
+    if (id === 'audiences') return html`<${AudienceSection} />`;
+    if (id === 'whatif') return html`<${WhatIf} f=${f} />`;
+    return html`<div className="an-grid an-grid-inner">
+      <div className="an-cell an-span-7"><${ChannelsSection} f=${f} /></div>
+      <div className="an-cell an-span-5"><${FunnelSection} f=${f} /></div>
+    </div>`;
+  }
+  function MoreAnalysis(p) {
+    var Tabs = MC.ui && typeof MC.ui.Tabs === 'function' ? MC.ui.Tabs : null;
+    var cur = SECTIONS.some(function (x) { return x.id === p.section; }) ? p.section : 'channels';
+    function pick(id) { if (MC.uiStore && MC.uiStore.setFocus) MC.uiStore.setFocus('analytics', { section: id }); }
+    return html`<section className="an-more" aria-labelledby="analytics-more-title">
+      <h2 id="analytics-more-title" className="an-more-title">Deeper analysis</h2>
+      ${Tabs ? html`<${Tabs} id="analytics-sections" label="Deeper analysis" tabs=${SECTIONS} value=${cur} onChange=${pick} panelId="analytics-section-panel" />`
+        : html`<div className="an-more-tabs" role="group" aria-label="Deeper analysis">${SECTIONS.map(function (x) {
+            return html`<button key=${x.id} type="button" className=${'an-link' + (x.id === cur ? ' is-on' : '')} aria-pressed=${x.id === cur ? 'true' : 'false'}
+              onClick=${function () { pick(x.id); }}>${x.label}</button>`;
+          })}</div>`}
+      <div id="analytics-section-panel" role="tabpanel" aria-labelledby=${'analytics-sections-' + cur} className="an-more-panel">${sectionBody(cur, p.f)}</div>
+    </section>`;
+  }
   var DEFAULT_FOCUS = { range: 30, campaignIds: [], channel: 'all', metric: 'revenue', showAgents: true };
   function selFocus(s) { return s && s.focus ? s.focus.analytics : undefined; }
   function selReady(w) { return !!(w && w.meta); }
   function AsOf() {
     var tick = hooks().useSelect(selTick);
-    return html`<p className="an-asof"><span>Fernway Outfitters</span>${MID}<span className="an-pill an-tone-neutral">Sample data</span>${MID}<span className="num">through ${clock(tick)}</span></p>`;
+    var f = tm('dateLabel'), tl = tm('timeLabel');
+    var when = fin(tick) && f && tl ? f(tick) + ', ' + tl(tick) : stamp(tick);
+    return html`<p className="an-asof">Fernway Outfitters${MID}<span className="num">through ${when}</span></p>`;
   }
   function AnalyticsView() {
     var React = R(), H = hooks();
@@ -1182,7 +1218,7 @@
       var ids = (raw.campaignIds || EMPTY).filter(function (id) { return campaigns && campaigns.byId[id]; });
       var metric = raw.metric && (METRICS.some(function (m) { return m.value === raw.metric; }) || EXTRA_METRICS[raw.metric]) ? raw.metric : 'revenue';
       var ch = raw.channel && (raw.channel === 'all' || CH().ALL.indexOf(raw.channel) >= 0) ? raw.channel : 'all';
-      return { range: r, campaignIds: ids, channel: ch, metric: metric, showAgents: raw.showAgents !== false };
+      return { range: r, campaignIds: ids, channel: ch, metric: metric, showAgents: raw.showAgents !== false, section: raw.section || 'channels' };
     }, [raw, campaigns]);
     var idsKey = focus.campaignIds.join(',');
     var f = React.useMemo(function () {
@@ -1196,7 +1232,7 @@
     }, [campaigns]);
     if (!ready) {
       return html`<section className="v-analytics"><h1 id="page-title" tabIndex="-1" className="an-h1">Analytics</h1>
-        <p className="an-muted">Generating the Fernway sample world${ELL}</p></section>`;
+        <p className="an-muted">Loading Fernway Outfitters${ELL}</p></section>`;
     }
     return html`<section className="v-analytics">
       <header className="an-pagehead">
@@ -1207,14 +1243,8 @@
       <div className="an-grid">
         <div className="an-cell an-span-12"><${Performance} f=${f} showAgents=${focus.showAgents} /></div>
         <div className="an-cell an-span-12"><${Narratives} f=${f} /></div>
-        <div className="an-cell an-span-7"><${AgentImpact} f=${f} /></div>
-        <div className="an-cell an-span-5"><${AnomaliesSection} f=${f} /></div>
-        <div className="an-cell an-span-5"><${FunnelSection} f=${f} /></div>
-        <div className="an-cell an-span-7"><${ChannelsSection} f=${f} /></div>
-        <div className="an-cell an-span-6"><${AttributionSection} f=${f} /></div>
-        <div className="an-cell an-span-6"><${AudienceSection} /></div>
-        <div className="an-cell an-span-12"><${WhatIf} f=${f} /></div>
       </div>
+      <${MoreAnalysis} section=${focus.section} f=${f} />
     </section>`;
   }
 
