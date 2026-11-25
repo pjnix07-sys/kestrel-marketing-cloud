@@ -2,7 +2,10 @@
    tick 0 = Sat 2026-11-07 00:00 on the internal calendar; 1 tick = 1 hour; history days are negative.
    Pure integer calendar math (proleptic Gregorian). The only Date read is the display anchor:
    display dates shift the internal calendar so the boot day shows as the real current date (§11.1).
-   Tick arithmetic and the internal calendar (calendar, ymd, monthOf, ...) are unchanged. */
+   Tick arithmetic (dayOf, hourOf, tickOf, dow, ...) is unchanged. The calendar-facing functions
+   (calendar, ymd, dayOfYmd, monthOf) return DISPLAY dates so every label, date input and month
+   boundary agrees with what the marketer sees; sim* twins keep the fixed internal calendar
+   (tick 0 = Sat 2026-11-07), which is also what anchorDisplay('2026-11-07') makes the display. */
 (function () {
   'use strict';
   var MC = window.MC = window.MC || {};
@@ -56,7 +59,7 @@
   // Day of week of a tick (0 = Sun); dow(0) === 6.
   T.dow = function (t) { return T.dowOfDay(T.dayOf(t)); };
 
-  T.calendar = function (day) {
+  T.simCalendar = function (day) {
     var c = civilFromDays(EPOCH + day);
     var dw = T.dowOfDay(day);
     return { y: c.y, m: c.m, d: c.d, dow: dw, label: DOWS[dw] + ', ' + MONTHS[c.m - 1] + ' ' + c.d };
@@ -64,7 +67,7 @@
 
   function pad2(n) { return n < 10 ? '0' + n : String(n); }
 
-  T.ymd = function (day) {
+  T.simYmd = function (day) {
     var c = civilFromDays(EPOCH + day);
     var ys = String(c.y);
     while (ys.length < 4) ys = '0' + ys;
@@ -72,7 +75,7 @@
   };
 
   // '2026-11-07' -> 0. Returns null for malformed input.
-  T.dayOfYmd = function (s) {
+  T.simDayOfYmd = function (s) {
     var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(s || ''));
     if (!m) return null;
     var y = +m[1], mo = +m[2], d = +m[3];
@@ -81,7 +84,7 @@
   };
 
   // Calendar month containing `day`: Nov 2026 = { y:2026, m:11, label:'Nov', fromDay:-6, toDay:23 }.
-  T.monthOf = function (day) {
+  T.simMonthOf = function (day) {
     var c = civilFromDays(EPOCH + day);
     var ny = c.m === 12 ? c.y + 1 : c.y;
     var nm = c.m === 12 ? 1 : c.m + 1;
@@ -128,10 +131,10 @@
   };
   T.displayYmd = function (day) { return T.displayCalendar(day).ymd; };
   // '2026-11-25' as shown in a date input -> internal day (null if malformed).
-  T.dayOfDisplayYmd = function (s) { var d = T.dayOfYmd(s); return d === null ? null : d - off(); };
+  T.dayOfDisplayYmd = function (s) { var d = T.simDayOfYmd(s); return d === null ? null : d - off(); };
   // Display month containing an internal day, bounds in internal days.
   T.displayMonthOf = function (day) {
-    var o = off(), m = T.monthOf(day + o);
+    var o = off(), m = T.simMonthOf(day + o);
     return { y: m.y, m: m.m, label: m.label, name: m.name, fromDay: m.fromDay - o, toDay: m.toDay - o, days: m.days };
   };
 
@@ -179,6 +182,12 @@
     return T.dayLabel(day);
   };
   // Worded cadence from hours: "every hour", "every 6 hours", "daily", "every 2 days", "weekly".
+  // Calendar-facing API (display dates). Internal-calendar twins: simCalendar, simYmd, simDayOfYmd, simMonthOf.
+  T.calendar = function (day) { var c = T.displayCalendar(day); return { y: c.y, m: c.m, d: c.d, dow: c.dow, label: c.label }; };
+  T.ymd = function (day) { return T.displayYmd(day); };
+  T.dayOfYmd = function (s) { return T.dayOfDisplayYmd(s); };
+  T.monthOf = function (day) { return T.displayMonthOf(day); };
+
   T.cadence = function (hours) {
     if (!finite(hours) || hours <= 0) return '—';
     if (hours === 1) return 'every hour';

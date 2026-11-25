@@ -160,6 +160,7 @@
       if (!kept.length) { row.result = 'No draft passed the brand checks'; return; }
       kept.sort(function (a, b) { return (b.predicted.score - a.predicted.score) || (a.tmpId < b.tmpId ? -1 : 1); });
       var best = kept[0];
+      if (best.predicted.score < L.score - 10) { row.result = 'No draft scored close to the leader'; return; }
 
       // Expected value of giving it `share` of traffic for the horizon.
       var reward = function (x) { return clicksGoal ? x.clicks : x.conv; };

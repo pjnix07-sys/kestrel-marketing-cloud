@@ -495,7 +495,9 @@
       }
       var lo = actual.length ? actual[0].day : 0;
       var hi = points.length ? points[points.length - 1].day : (actual.length ? actual[actual.length - 1].day : 0);
-      ((MC.time && MC.time.EVENTS) || EMPTY).forEach(function (ev) {
+      // Sale-event markers sit on the internal calendar; show them only when display dates match it.
+      var evOk = !(MC.time && typeof MC.time.displayOffset === 'function' && MC.time.displayOffset() !== 0);
+      (evOk && MC.time && MC.time.EVENTS || EMPTY).forEach(function (ev) {
         if (ev.day >= lo && ev.day <= hi) out.push({ x: ev.day, kind: 'event', label: ev.label });
       });
       (markersRaw || EMPTY).forEach(function (m) {

@@ -475,7 +475,7 @@
       ${fz.pending > 0 && NP ? html`<${NP} count=${fz.pending} onClick=${fz.reveal} />` : null}
       ${fz.items.length ? html`<ul className="cn-feed" ...${use.props}>${fz.items.map(function (it) {
         return html`<${FeedRow} key=${it.id} item=${it} tick=${p.tick} proposals=${proposals} />`;
-      })}</ul>` : html`<p className="cn-muted">Agents haven't done anything yet. Their first runs show up here.</p>`}
+      })}</ul>` : html`<p className="cn-muted">No agent changes or insights yet. They show up here as agents act.</p>`}
     </section>`;
   }
   function React_useMemoSafe(fn, deps) { return R().useMemo(fn, deps); }
@@ -704,16 +704,16 @@
     var entries = useSel(selAudit) || EMPTY;
     var impact = useSel(selImpact);
     return html`<div className="cn-roster-grid">
-      <div className="cn-roster-col">
-        <section aria-labelledby="agents-roster-title">
-          <h2 id="agents-roster-title" className="cn-sr">Roster</h2>
-          <ul className="cn-roster" id="agents-roster">
-            ${roster.map(function (r) { return html`<${RosterRow} key=${r.id} row=${r} tick=${p.tick} selected=${sel && r.id === sel.id} />`; })}
-          </ul>
-        </section>
-        <${RecentActivity} tick=${p.tick} />
+      <section className="cn-area-roster" aria-labelledby="agents-roster-title">
+        <h2 id="agents-roster-title" className="cn-sr">Roster</h2>
+        <ul className="cn-roster" id="agents-roster">
+          ${roster.map(function (r) { return html`<${RosterRow} key=${r.id} row=${r} tick=${p.tick} selected=${sel && r.id === sel.id} />`; })}
+        </ul>
+      </section>
+      <div className="cn-area-detail">
+        ${sel ? html`<${AgentDetail} key=${sel.id} row=${sel} tick=${p.tick} auditId=${sel.id === p.agentId ? p.auditId : null} entries=${entries} impact=${impact} />` : null}
       </div>
-      ${sel ? html`<${AgentDetail} key=${sel.id} row=${sel} tick=${p.tick} auditId=${sel.id === p.agentId ? p.auditId : null} entries=${entries} impact=${impact} />` : null}
+      <div className="cn-area-recent"><${RecentActivity} tick=${p.tick} /></div>
     </div>`;
   }
 
@@ -916,9 +916,9 @@
       setMsg(r && r.ok === false ? { tone: 'crit', text: r.error || "Couldn't save guardrails." } : { tone: 'good', text: 'Guardrails saved. Agents check against them from their next run.' });
     }
     var locked = [
-      { id: 'consent', label: 'Consent is always enforced', status: 'pass', locked: true },
-      { id: 'protectDrafts', label: 'Agents never change draft campaigns', status: 'pass', locked: true },
-      { id: 'smsOptOut', label: 'SMS always ends with an opt-out line', status: 'pass', locked: true }
+      { id: 'consent', label: 'Consent respected', detail: 'Agents never message a channel someone has not opted into', status: 'pass', locked: true },
+      { id: 'protectDrafts', label: "Doesn't touch drafts", detail: 'Agents never change draft campaigns', status: 'pass', locked: true },
+      { id: 'smsOptOut', label: 'SMS opt-out', detail: 'Every text ends with how to opt out', status: 'pass', locked: true }
     ];
     return html`<div className="cn-guards">
       <p className="cn-lede">Every agent change is checked against these limits. Anything that fails waits for you instead of applying.</p>
@@ -960,7 +960,7 @@
         <h2 id="agents-guard-locked" className="cn-h2">Always on</h2>
         ${GL ? html`<${GL} items=${locked} ariaLabel="Locked guardrails" />` : null}
       </section>
-      <div className="cn-form-actions cn-sticky-actions">
+      <div className=${cx('cn-form-actions', draft.dirty && 'cn-sticky-actions')}>
         <${Btn} kind="primary" size="md" id="agents-guard-save" onClick=${save} disabled=${!draft.dirty || bad}>Save guardrails<//>
         ${draft.dirty ? html`<${Link} onClick=${function () { draft.reset(); setMsg(null); }}>Discard changes<//>` : html`<span className="cn-muted">No unsaved changes</span>`}
         ${msg ? html`<span className=${msg.tone === 'crit' ? 'cn-error' : 'cn-ok'} role="status">${msg.text}</span>` : null}

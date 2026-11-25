@@ -32,7 +32,8 @@
 .v-agents .cn-link:disabled { color: var(--ink-3); cursor: not-allowed; text-decoration: none; }
 .v-agents .cn-section-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px 16px; }
 .v-agents .cn-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; min-width: 0; }
-.v-agents .cn-toolbar > * { min-width: 0; }
+.v-agents .cn-toolbar > * { min-width: 0; max-width: 100%; }
+.v-agents .cn-toolbar .k-seg, .v-agents .cn-toolbar .cn-seg { max-width: 100%; overflow-x: auto; }
 .v-agents .cn-form-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 20px; }
 .v-agents .cn-conflict { margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 16px; font-size: 13px; color: var(--warn); padding: 8px 12px; border-radius: 6px; background: var(--warn-soft); }
 
@@ -61,11 +62,16 @@
 .v-agents .cn-confirm { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 
 /* ---------- roster layout ---------- */
-.v-agents .cn-roster-grid { display: grid; gap: 24px; grid-template-columns: minmax(0, 1fr); align-items: start; }
-.v-agents .cn-roster-col { display: grid; gap: 28px; min-width: 0; }
+.v-agents .cn-roster-grid {
+  display: grid; gap: 24px 24px; align-items: start;
+  grid-template-columns: minmax(0, 1fr); grid-template-areas: "roster" "detail" "recent";
+}
+.v-agents .cn-roster-grid > * { min-width: 0; }
+.v-agents .cn-area-roster { grid-area: roster; }
+.v-agents .cn-area-detail { grid-area: detail; }
+.v-agents .cn-area-recent { grid-area: recent; padding-top: 8px; }
 @media (min-width: 1100px) {
-  .v-agents .cn-roster-grid { grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); }
-  .v-agents .cn-detail { position: sticky; top: calc(var(--app-topbar-h, 60px) + 16px); }
+  .v-agents .cn-roster-grid { grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); grid-template-areas: "roster detail" "recent detail"; grid-template-rows: auto 1fr; }
 }
 
 .v-agents .cn-roster { list-style: none; margin: 0; padding: 0; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
@@ -158,6 +164,8 @@
 .v-agents .cn-rows-table { border-collapse: collapse; font-size: 13px; }
 .v-agents .cn-rows-table td { padding: 3px 16px 3px 0; border-bottom: 1px solid var(--line); color: var(--ink); white-space: nowrap; }
 .v-agents .cn-rows-table td:first-child { color: var(--ink-2); }
+.v-agents .cn-rows-table td:last-child { white-space: normal; min-width: 18ch; }
+.v-agents .cn-story-list > li, .v-agents .cn-story-text, .v-agents .cn-run-body, .v-agents .cn-detail-body, .v-agents .cn-story > * { min-width: 0; }
 .v-agents .cn-changes, .v-agents .cn-insights { list-style: none; margin: 0; padding: 0; display: grid; gap: 0; }
 .v-agents .cn-change { padding: 10px 0; display: grid; gap: 6px; min-width: 0; }
 .v-agents .cn-change + .cn-change { border-top: 1px solid var(--line); }
@@ -182,9 +190,9 @@
 /* ---------- guardrails ---------- */
 .v-agents .cn-guards { display: grid; gap: 28px; max-width: 880px; min-width: 0; }
 .v-agents .cn-guard-sec { display: grid; gap: 14px; padding-top: 20px; border-top: 1px solid var(--line); min-width: 0; }
-.v-agents .cn-grid3 { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); align-items: start; }
-.v-agents .cn-grid2 { display: grid; gap: 16px 20px; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); align-items: start; }
-.v-agents .cn-quiet-note { align-self: center; }
+.v-agents .cn-grid3 { display: grid; gap: 16px 20px; grid-template-columns: repeat(auto-fill, minmax(160px, 220px)); align-items: start; }
+.v-agents .cn-grid2 { display: grid; gap: 16px 20px; grid-template-columns: repeat(auto-fill, minmax(200px, 300px)); align-items: start; }
+.v-agents .cn-quiet-note { align-self: center; grid-column: 1 / -1; }
 .v-agents .cn-chips { list-style: none; margin: 0 0 8px; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
 .v-agents .cn-chip { display: inline-flex; align-items: center; gap: 2px; font-size: 13px; padding: 0 2px 0 10px; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--line); max-width: 100%; overflow-wrap: anywhere; }
 .v-agents .cn-chip-x { font: inherit; font-size: 15px; line-height: 1; width: 32px; height: 32px; border: 0; background: transparent; color: var(--ink-3); cursor: pointer; border-radius: 999px; }

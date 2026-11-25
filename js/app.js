@@ -187,7 +187,7 @@
   }
 
   /* ---------------- top bar ---------------- */
-  function Crumbs() {
+  function Crumbs(p) {
     var route = useUi(selRoute);
     var cf = useUi(selCampFocus);
     var campaigns = useSel(selCampaigns);
@@ -197,7 +197,8 @@
       if (cf.mode === 'detail' && cf.id && campaigns && campaigns.byId && campaigns.byId[cf.id]) leaf = campaigns.byId[cf.id].name;
       else if (cf.mode === 'planner') leaf = 'New campaign plan';
     }
-    if (!leaf) return html`<div className="app-title">${title}</div>`;
+    // On wider screens each view's own h1 names the page; the bar only carries breadcrumbs.
+    if (!leaf) return p.showTitle ? html`<div className="app-title">${title}</div>` : null;
     return html`<nav className="app-crumbs" aria-label="Breadcrumb">
       <ol>
         <li><a href="#campaigns" onClick=${function (e) { e.preventDefault(); go('campaigns', { mode: 'board' }); }}>Campaigns</a></li>
@@ -264,7 +265,7 @@
       var IB = ui('IconButton');
       return html`<header className="app-topbar app-topbar--phone">
         <${Mark} compact=${true} />
-        <div className="app-topbar-title"><${Crumbs} /></div>
+        <div className="app-topbar-title"><${Crumbs} showTitle=${true} /></div>
         <${AgentDot} />
         <${ApprovalsButton} compact=${true} />
         ${IB ? html`<${IB} id="app-menu-btn" icon="menu" label="Menu" onClick=${function () { setUi({ drawer: 'menu' }); }} />` : null}

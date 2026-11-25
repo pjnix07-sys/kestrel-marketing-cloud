@@ -23,6 +23,15 @@ Files: `js/core/namespace.js`, `util.js`, `time.js`, `rng.js`, `catalog.js`, `st
 - `calendar(day) -> {y,m(1-12),d,dow,label}`, `ymd(day)`, `dayOfYmd(str)` (null if invalid).
 - `monthOf(day) -> {y,m,label:'Nov',name:'November',fromDay,toDay,days}`.
 - `inQuiet(h,quiet)`, `EVENTS`, `eventOn(day)`, plus `MONTHS`, `MONTH_NAMES` and `DOWS`.
+- **Display mapping (§11.1).** Views show these, never ticks or the internal calendar. Display day = internal day + `displayOffset()`; the boot day shows as the real local date (read once, frozen by `engine.boot`). Tick math and the functions above are unchanged.
+  - `anchorDisplay(ymd?, simDay?)`: freezes the anchor (default: today). `anchorDisplay('2026-11-07')` is the identity mapping for dev/tests. `displayOffset()` returns the day offset.
+  - `displayCalendar(day) -> {y,m,d,dow,label:'Wed, Nov 25',ymd}`, `displayYmd(day)`, `dayOfDisplayYmd(str)` (for date inputs), `displayMonthOf(day)` (bounds in internal days).
+  - `dayLabel(day, {style:'short'|'medium'|'long', year})` gives "Nov 25", "Wed, Nov 25" or "Wednesday, November 25". `dateLabel(tick, opts)` is the same from a tick.
+  - `timeLabel(tick)` "2 pm"; `stampLabel(tick)` "Nov 25, 2 pm".
+  - `relative(tick, nowTick)`: "just now", "3h ago", "yesterday", "4 days ago", then "Nov 12"; future "in 3h", "tomorrow", "in 4 days".
+  - `relativeDay(day, today)`: "Today", "Yesterday", "Tomorrow", else `dayLabel(day)`.
+  - `cadence(hours)`: "every hour", "every 6 hours", "daily", "every 2 days", "weekly".
+- `MC.engine` pacing: one default pace (`PACE_MS`, `DEFAULT_SPEED`), never exposed in the UI. `setSpeed/getSpeed/step(n≤168)` remain for internal and dev use; `boot({seed, onPhase, speed?})` is unchanged.
 
 ## rng.js
 - `MC.rng.create(seed)` and `fork(seed,...keys)` follow §10.3. `MC.rng.Rng` is the class.

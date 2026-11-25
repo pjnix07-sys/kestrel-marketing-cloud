@@ -11,7 +11,9 @@
   var EXPAND_TOP = 8;
   var MIN_CELL = 30;            // smallest labelled group worth scoring while searching
   var JACCARD_MAX = 0.8;
-  var DECILE_ATTRS = ['age', 'tenureDays', 'lastOrderDays', 'prop', 'churn', 'ltv'];
+  // Recency, propensity and churn are rescored from the very orders the label counts, so they would
+  // only rediscover "people who just ordered"; the search uses attributes that don't move with an order.
+  var DECILE_ATTRS = ['age', 'tenureDays', 'ltv'];
   var CAT_ATTRS = ['region', 'tier', 'topCategory'];
   var HOUR_BANDS = [[6, 11, 'morning'], [12, 17, 'afternoon'], [18, 23, 'evening']];
 
@@ -245,6 +247,10 @@
     (world.segments.order || []).forEach(function (id) { var s = world.segments.byId[id]; if (s) names[s.name.toLowerCase()] = true; });
     picks.forEach(function (x, idx) {
       var rule = ruleOf(x.conds), name = S().nameFor(rule);
+      for (var c2 = x.conds.length - 1; c2 >= 0 && names[name.toLowerCase()]; c2--) {
+        var lbl = S().condLabel(x.conds[c2]);
+        name = (name + ', ' + lbl.charAt(0).toLowerCase() + lbl.slice(1)).slice(0, 60);
+      }
       if (names[name.toLowerCase()]) name = (name + ' (new)').slice(0, 60);
       names[name.toLowerCase()] = true;
       var size = count(x.bits), desc = S().describe(rule);

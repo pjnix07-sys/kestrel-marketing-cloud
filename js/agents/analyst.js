@@ -20,6 +20,8 @@
   function num(x) { return MC.fmt.num(Math.round(x)); }
   function pct(x, dp) { return MC.fmt.pct(x, dp === undefined ? 1 : dp); }
   function dayLabel(d) { return MC.fmt.dayLabel(d); }
+  // "a 35% chance" / "an 18% chance"
+  function chance(p) { var s = pct(p, 0); return (/^(8|11|18|8\d)%/.test(s) ? 'an ' : 'a ') + s + ' chance'; }
 
   var METRICS = [
     { id: 'revenue', label: 'Revenue', fmt: money, dirs: 'both' },
@@ -184,7 +186,7 @@
       insights.push({
         kind: 'goal-risk',
         title: c.name + ' is on pace for ' + pct(projected / c.goal.target, 0) + ' of its ' + noun + ' goal',
-        body: 'About ' + gf(projected) + ' of ' + gf(c.goal.target) + ' by ' + dayLabel(lastDay) + ', a ' + pct(prob, 0) + ' chance of hitting it.',
+        body: 'About ' + gf(projected) + ' of ' + gf(c.goal.target) + ' by ' + dayLabel(lastDay) + ', ' + chance(prob) + ' of hitting it.',
         entity: { kind: 'campaign', id: c.id }, severity: prob < 0.2 ? 'crit' : 'warn', key: 'goal|' + c.id + '|' + today
       });
       // Extension: only with at least 48 hours left, and only when the recent pace can close part of the gap.
@@ -193,6 +195,10 @@
       if (!(meanDaily > 0) || !(gap > 0)) return;
       var days = Math.max(1, Math.min(p.maxExtendDays, Math.ceil(gap / meanDaily)));
       var o2 = outlook(s, actual, daysLeft, days), prob2 = MC.models.goalProbability(actual, o2.pts, c.goal.target);
+      if (prob2 < p.goalRiskThreshold) {
+        rows.push({ campaign: c.name, outlook: 'Even ' + days + ' more days would leave ' + chance(prob2) + ', so no extension suggested' });
+        return;
+      }
       var revRecent = MC.util.mean(c.series.revenue.slice(-7)), revSd = c.series.revenue.length > 2 ? MC.util.sd(c.series.revenue.slice(-7)) : revRecent * 0.5;
       var delta = revRecent * days, se = 1.28 * revSd * Math.sqrt(days), newEnd = c.endTick + days * 24;
       proposals.push({
@@ -200,7 +206,7 @@
         target: { kind: 'campaign', id: c.id },
         title: 'Extend ' + c.name + ' by ' + days + (days === 1 ? ' day' : ' days'),
         rationale: 'It is on pace for ' + pct(projected / c.goal.target, 0) + ' of its ' + noun + ' goal (' + gf(projected) + ' of ' + gf(c.goal.target) +
-          '), a ' + pct(prob, 0) + ' chance of hitting it. At the recent pace of ' + gf(meanDaily) + ' a day, ' + days + ' more ' + (days === 1 ? 'day' : 'days') +
+          '), ' + chance(prob) + ' of hitting it. At the recent pace of ' + gf(meanDaily) + ' a day, ' + days + ' more ' + (days === 1 ? 'day' : 'days') +
           ' lifts that to about ' + pct(prob2, 0) + '. The budget stays the same and is spread over the longer run.',
         evidence: [
           { label: 'Projected', value: gf(projected) + ' of ' + gf(c.goal.target) },
