@@ -252,3 +252,5 @@
 @media (prefers-reduced-motion: reduce) {
   .v-campaigns * { transition: none !important; animation: none !important; }
 }
+.v-campaigns .cm-facts-plain { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+@media (max-width: 639px) { .v-campaigns .cm-facts-plain { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
