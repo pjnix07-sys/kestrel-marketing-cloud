@@ -514,7 +514,7 @@
       else if (!FC) chart = html`<${NoChart} />`;
       else {
         var goal = fc && fin(fc.goal) ? { y: fc.goal, label: 'Daily pace for goal ' + vf(fc.goal) } : null;
-        chart = html`<${FC} actual=${actual} forecast=${points} goal=${goal} markers=${markers} yFormat=${axisFmt(metric)}
+        chart = html`<${FC} actual=${actual} forecast=${points} goal=${goal} markers=${markers} yFormat=${axisFmt(metric)} xFormat=${dayShort}
           height=${260} labels=${{ actual: metricLabel(metric), forecast: 'Forecast (14 days)' }} label=${metricLabel(metric)} />`;
       }
     } else if (!LC) chart = html`<${NoChart} />`;
@@ -524,7 +524,7 @@
         return { id: e.id, label: e.label, color: e.color, points: pts };
       }).filter(function (s) { return s.points.some(function (q) { return q.y; }); });
       chart = ser.length
-        ? html`<${LC} series=${ser} markers=${markers.filter(function (m) { return m.kind !== 'anomaly'; })} yFormat=${axisFmt(metric)} height=${260}
+        ? html`<${LC} series=${ser} markers=${markers.filter(function (m) { return m.kind !== 'anomaly'; })} yFormat=${axisFmt(metric)} xFormat=${dayShort} height=${260}
             ariaLabel=${metricLabel(metric) + ' by ' + split + ', ' + rangeLabel(f.range)} />`
         : html`<${Empty} title="No sends in this range yet." />`;
     }

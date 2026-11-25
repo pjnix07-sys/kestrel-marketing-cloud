@@ -356,7 +356,7 @@
       ${head}
       ${fc && fc.ready === false && cum ? html`<p className="hm-note">Early estimate from the last 14 days; the trend model takes over after a week of results.</p>` : null}
       <div className="hm-fc-chart">
-        ${FC && fc ? html`<${FC} data=${fc} cumulative=${true} nowX=${fc.today}
+        ${FC && fc ? html`<${FC} data=${fc} cumulative=${true} nowX=${fc.today} xFormat=${dayShort}
             goal=${fin(fc.goal) ? { y: fc.goal, label: 'Goal ' + money(fc.goal, true) } : null}
             yFormat="moneyCompact" height=${220} markers=${markers}
             labels=${{ actual: 'Revenue to date', forecast: 'Forecast' }} />`

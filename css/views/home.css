@@ -227,3 +227,4 @@
   .v-home *, .v-home *::before, .v-home *::after { transition: none !important; animation: none !important; }
   .v-home .hm-flash { display: none; }
 }
+.v-home .hm-panel { scroll-margin-top: calc(var(--app-topbar-h, 60px) + 12px); }
