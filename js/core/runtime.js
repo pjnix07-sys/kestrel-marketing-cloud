@@ -443,6 +443,12 @@
   }
   function targetEnt(p) { return p.target && p.target.id ? { kind: p.target.kind, id: p.target.id } : undefined; }
   function toneOf(sev) { return sev === 'crit' ? 'crit' : (sev === 'warn' ? 'warn' : 'agent'); }
+  // A run can only raise a change's risk above what the rule engine computed, never lower it.
+  function floorRisk(given, computed) {
+    var g = RISK_RANK[given] === undefined ? null : given, c = RISK_RANK[computed] === undefined ? 'low' : computed;
+    return g && RISK_RANK[g] > RISK_RANK[c] ? g : c;
+  }
+  function lowerFirst(t) { t = String(t || ''); return /^[A-Z][a-z]/.test(t) ? t.charAt(0).toLowerCase() + t.slice(1) : t; }
   function rank(r) { return RISK_RANK[r] === undefined ? 2 : RISK_RANK[r]; }
 
   RT.runAgent = function (world, id, t, reason) {
@@ -506,7 +512,7 @@
       var p = {
         id: pid, agentId: id, tick: t, kind: draft.kind, target: draft.target || null, title: draft.title || draft.kind,
         rationale: draft.rationale || '', evidence: draft.evidence || [], impact: draft.impact || null,
-        risk: draft.risk || (typeof def.risk === 'function' ? def.risk(draft, view) : 'low') || 'low',
+        risk: floorRisk(draft.risk, typeof def.risk === 'function' ? def.risk(draft, view) : 'low'),
         guardrails: [], actions: U().clone(draft.actions || []), inverse: null, diff: draft.diff || [],
         baseVer: versOf(world, ids), status: 'pending', reason: '', decidedTick: null, expiresTick: t + 48,
         realized: null, horizon: isNum(draft.horizon) ? draft.horizon : def.horizon, mustQueue: !!draft.mustQueue,
@@ -595,9 +601,9 @@
 
     if (created.length) {
       var first = prop(world, autoIds[0] || created[0]), name = def.name, q = created.length - autoIds.length, text;
-      if (created.length === 1) text = (autoIds.length ? name + ' applied: ' : name + ' suggests: ') + first.title;
-      else if (autoIds.length) text = name + ' applied ' + autoIds.length + (autoIds.length === 1 ? ' change' : ' changes') + (q ? ' and has ' + q + ' waiting for you' : '');
-      else text = name + ' has ' + q + ' suggestions waiting for you';
+      if (created.length === 1) text = autoIds.length ? name + ' applied ' + lowerFirst(first.title) : first.title;
+      else if (autoIds.length) text = name + ' applied ' + autoIds.length + (autoIds.length === 1 ? ' change' : ' changes') + (q ? ' and has ' + q + ' for you' : '');
+      else text = q + ' suggestions for you';
       if (ai && ai.mode === 'haiku' && ai.summary) text = ai.summary;
       addFeed(world, { tick: now, kind: autoIds.length ? 'agent-applied' : 'agent-proposed', agentId: id, proposalId: first.id,
         entity: targetEnt(first), text: text, tone: 'agent' });
@@ -720,7 +726,7 @@
       if (x.target) draft.target = x.target;
       draft.actions = U().clone(x.actions);
       if (Array.isArray(x.diff)) draft.diff = U().clone(x.diff);
-      if (x.risk === 'low' || x.risk === 'medium' || x.risk === 'high') draft.risk = x.risk;
+      if (x.risk === 'low' || x.risk === 'medium' || x.risk === 'high') draft.risk = floorRisk(x.risk, draft.risk || 'low');
       if (x.mustQueue) draft.mustQueue = true;
       if (isNum(x.horizon)) draft.horizon = x.horizon;
       draft.title = str(x.title, 140) || draft.title || x.kind;

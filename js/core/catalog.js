@@ -129,7 +129,7 @@
     var inv = def.inverse ? (def.inverse(world, p, ctx) || []) : [];
     var res = def.reduce(world, p, ctx);
     if (typeof res === 'string') return { ok: false, error: res };
-    return { ok: true, created: ctx.created.slice(), inverse: substitute(inv, ctx.created) };
+    return { ok: true, created: ctx.created.slice(), inverse: substitute(inv, ctx.created), info: ctx.info };
   };
 
   // inverse(world, action, meta?) -> action[] (computed against the world BEFORE apply;
@@ -172,6 +172,15 @@
       if (payload.note !== undefined) payload.note = cleanNote(payload.note);
     }
     var note = isObj(payload) ? payload.note || null : null;
+    // Live path only: high-risk decisions need a named person, so the two-person rule can't be skipped with no actor.
+    // (Replay passes the logged actor, which may be null for older entries, and is not checked here.)
+    if (!by && isObj(payload) && /^proposal\/(approve|approveMany|undo)$/.test(action.type)) {
+      var gids = action.type === 'proposal/approveMany' ? (Array.isArray(payload.ids) ? payload.ids : []) : [payload.id];
+      for (var gi = 0; gi < gids.length; gi++) {
+        var gx = prop(world, gids[gi]);
+        if (gx && gx.risk === 'high') return { ok: false, error: 'High risk changes need a named person. Choose who you’re working as first.' };
+      }
+    }
     var text = null;
     if (def.describe) { try { text = def.describe(world, payload); } catch (e) { text = null; } }
     var r = C.apply(world, { type: action.type, payload: payload }, { origin: 'user', tick: tick, by: by, note: note });
@@ -192,7 +201,7 @@
       var ent = def.entity ? def.entity(payload, r.created) : null;
       addFeed(world, { tick: tick, kind: 'user', entity: ent || undefined, text: text || action.type, tone: 'neutral', by: by || undefined });
     }
-    return { ok: true, created: r.created };
+    return { ok: true, created: r.created, info: r.info };
   };
 
   /* ---------------- copy-on-write helpers ---------------- */
@@ -1380,6 +1389,7 @@
       label: label,
       entity: function (p) { return feedEntity('agent', p.id); },
       validate: function (world, p, ctx) {
+        var ge = type === 'agent/runNow' ? null : roleErr(ctx, 'settings', 'change agent settings'); if (ge) return ge;
         if (!agentEnt(world, p.id)) return 'Unknown agent.';
         return validateExtra ? validateExtra(world, p, agentDef(p.id), agentEnt(world, p.id)) : null;
       },
@@ -1526,7 +1536,7 @@
 
   function approveCheck(world, id) {
     var p = prop(world, id);
-    if (!p || p.status !== 'pending') return 'This proposal is no longer pending.';
+    if (!p || p.status !== 'pending') return 'Someone already decided on this change.';
     if (isStale(world, p)) return null;
     var bf = blockingFail(world, p);
     if (bf) return 'Blocked by guardrail: ' + bf.label;
@@ -1539,7 +1549,7 @@
     if (err) return err;
     var p = prop(world, id);
     if (isStale(world, p)) {
-      closeProposal(world, p, { status: 'stale', reason: 'No longer applies: the campaign changed since this was proposed.', decidedTick: ctx.tick });
+      closeProposal(world, p, { status: 'stale', reason: 'Out of date: the campaign changed after this was suggested.', decidedTick: ctx.tick });
       return null;
     }
     MC.runtime.apply(world, id, 'agent:' + p.agentId);
@@ -1557,7 +1567,7 @@
       var e = roleErr(ctx, 'approve', 'approve changes'); if (e) return e;
       var x = prop(world, p.id);
       if (ctx.by && x && x.risk === 'high' && (x.signoffs || []).some(function (s) { return s.by === ctx.by; })) {
-        return 'You already signed this off. A second approver has to be someone else.';
+        return 'You already signed this off. A second approver has to be someone else. (Switching “Viewing as” to another person demonstrates the two-person rule; it isn’t real sign-in.)';
       }
       return approveCheck(world, p.id);
     },
@@ -1582,25 +1592,44 @@
     }
   });
 
+  function manyOk(world, id, ctx) {
+    var x = prop(world, id);
+    if (ctx.by && x && x.risk === 'high') return false;   // high-risk changes are approved one at a time, by two people
+    return !approveCheck(world, id);
+  }
   C.define('proposal/approveMany', {
     by: ['user'],
-    label: 'Approve several',
+    label: 'Approve selected',
     validate: function (world, p, ctx) {
       var re = roleErr(ctx, 'approve', 'approve changes'); if (re) return re;
       if (!Array.isArray(p.ids) || !p.ids.length) return 'Nothing selected.';
-      var first = null;
-      for (var i = 0; i < p.ids.length; i++) { var e = approveCheck(world, p.ids[i]); if (!e) return null; if (!first) first = e; }
-      return first;
+      var first = null, high = 0;
+      for (var i = 0; i < p.ids.length; i++) {
+        if (manyOk(world, p.ids[i], ctx)) return null;
+        var x = prop(world, p.ids[i]);
+        if (ctx.by && x && x.risk === 'high') high++;
+        else if (!first) first = approveCheck(world, p.ids[i]);
+      }
+      if (high && !first) return high === 1 ? 'That change is high risk. It needs two approvers, one at a time.' : 'Those changes are high risk. Each needs two approvers, one at a time.';
+      return first || 'Nothing here can be approved right now.';
     },
     reduce: function (world, p, ctx) {
+      var done = 0, skipped = 0;
       p.ids.forEach(function (id) {
-        var x = prop(world, id);
-        if (ctx.by && x && x.risk === 'high') return;   // high-risk changes are approved one at a time, by two people
-        approveOne(world, id, ctx);
+        if (!manyOk(world, id, ctx)) { skipped++; return; }
+        if (!approveOne(world, id, ctx)) done++; else skipped++;
       });
+      if (skipped) {
+        addFeed(world, { tick: ctx.tick, kind: 'user', text: 'Approved ' + done + ' of ' + p.ids.length + ' changes. ' + skipped + ' skipped: high risk changes need two approvers, one at a time.', tone: 'neutral', by: ctx.by || undefined });
+      }
+      ctx.info = { approved: done, skipped: skipped };
     },
     inverse: function () { return []; },
-    describe: function (world, p) { return 'You approved ' + p.ids.length + ' changes'; }
+    describe: function (world, p) {
+      var a = currentActor(), n = 0, sk = 0;
+      (p.ids || []).forEach(function (id) { if (manyOk(world, id, { by: a })) n++; else sk++; });
+      return 'You approved ' + n + (n === 1 ? ' change' : ' changes') + (sk ? ' and skipped ' + sk : '');
+    }
   });
 
   var REJECT_LABEL = { 'not-now': 'Not now', wrong: 'Not a good idea', other: 'Other' };
@@ -1610,8 +1639,8 @@
     validate: function (world, p, ctx) {
       var re = roleErr(ctx, 'approve', 'dismiss changes'); if (re) return re;
       var x = prop(world, p.id);
-      if (!x || x.status !== 'pending') return 'This proposal is no longer pending.';
-      if (!REJECT_LABEL[p.reason]) return 'Pick a reason.';
+      if (!x || x.status !== 'pending') return 'Someone already decided on this change.';
+      if (!REJECT_LABEL[p.reason]) return 'Choose why you’re dismissing this.';
       return null;
     },
     reduce: function (world, p, ctx) {
@@ -1633,10 +1662,14 @@
   C.define('proposal/undo', {
     by: ['user'],
     label: 'Undo',
-    validate: function (world, p) {
+    validate: function (world, p, ctx) {
+      var ue = roleErr(ctx, 'approve', 'undo changes'); if (ue) return ue;
       var x = prop(world, p.id);
       if (!x) return 'That change no longer exists.';
       if (x.status !== 'applied' && x.status !== 'auto') return 'Only applied changes can be undone.';
+      if (ctx.by && x.risk === 'high' && (x.undoSignoffs || []).some(function (s) { return s.by === ctx.by; })) {
+        return 'You already asked to undo this. A second person has to confirm it.';
+      }
       if (MC.runtime && typeof MC.runtime.undoCheck === 'function') {
         var r = MC.runtime.undoCheck(world, p.id) || {};
         if (!r.ok) return r.reason || 'This change can’t be undone.';
@@ -1646,6 +1679,16 @@
     },
     reduce: function (world, p, ctx) {
       var x = prop(world, p.id);
+      // High-risk changes need two different people to undo, like approving them.
+      if (ctx.by && x.risk === 'high') {
+        var uso = (x.undoSignoffs || []).concat([{ by: ctx.by, tick: ctx.tick }]);
+        putProposal(world, assign({}, x, { undoSignoffs: uso }));
+        if (uso.length < 2) {
+          addFeed(world, { tick: ctx.tick, kind: 'user', agentId: x.agentId, proposalId: x.id, entity: targetEntity(x), text: C.personaName(ctx.by) + ' asked to undo “' + x.title + '”. It needs a second person.', tone: 'neutral', by: ctx.by });
+          return;
+        }
+        x = prop(world, p.id);
+      }
       var meta = { origin: 'agent:' + x.agentId, tick: ctx.tick };
       var done = [];
       for (var i = 0; i < x.inverse.length; i++) {
@@ -1658,7 +1701,7 @@
       }
       closeProposal(world, prop(world, p.id), { status: 'undone', undoneTick: ctx.tick });
       bumpStat(world, x.agentId, 'undone');
-      addFeed(world, { tick: ctx.tick, kind: 'undone', agentId: x.agentId, proposalId: x.id, entity: targetEntity(x), text: 'You undid: ' + x.title, tone: 'neutral' });
+      addFeed(world, { tick: ctx.tick, kind: 'undone', agentId: x.agentId, proposalId: x.id, entity: targetEntity(x), text: (ctx.by ? C.personaName(ctx.by) : 'You') + ' undid: ' + x.title, tone: 'neutral', by: ctx.by || undefined });
     },
     inverse: function () { return []; },
     describe: function (world, p) { var x = prop(world, p.id); return 'You undid: ' + (x ? x.title : p.id); }
@@ -1737,7 +1780,10 @@
     by: ['user'],
     label: 'Save guardrails',
     entity: function () { return { kind: 'guardrails', id: 'guardrails' }; },
-    validate: function (world, p) { return guardErr(p); },
+    validate: function (world, p, ctx) {
+      var ge = roleErr(ctx, 'settings', 'change guardrails'); if (ge) return ge;
+      return guardErr(p);
+    },
     reduce: function (world, p, ctx) {
       var g = world.guardrails, d = p.patch;
       var ng = assign({}, g);

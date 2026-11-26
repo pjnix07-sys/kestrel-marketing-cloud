@@ -150,9 +150,13 @@
 .v-home .hm-skel.w80 { width: 80%; }
 
 /* ---------- needs you ---------- */
-.v-home .hm-needs-list { display: grid; gap: 10px; min-width: 0; }
-.v-home .hm-needs-item { min-width: 0; }
-.v-home .hm-mini { display: grid; gap: 8px; padding: 12px 0; border-bottom: 1px solid var(--line); min-width: 0; }
+.v-home .hm-needs-list { display: grid; gap: 0; min-width: 0; }
+.v-home .hm-needs-item { min-width: 0; padding: 12px 0; border-bottom: 1px solid var(--line); }
+.v-home .hm-needs-item:first-child { padding-top: 0; }
+.v-home .hm-needs-item:last-child { border-bottom: 0; padding-bottom: 0; }
+/* No card inside the panel: flat variant of ProposalCard, with a fallback for when it is not there yet. */
+.v-home .hm-needs-item.is-flat .ag-card { border: 0; border-radius: 0; background: transparent; box-shadow: none; padding: 0; }
+.v-home .hm-mini { display: grid; gap: 8px; min-width: 0; }
 .v-home .hm-mini-head { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .v-home .hm-mini-title { margin: 0; font-size: 14px; font-weight: 600; line-height: 1.35; overflow-wrap: anywhere; }
 .v-home .hm-mini-acts { display: flex; flex-wrap: wrap; gap: 8px; }

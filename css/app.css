@@ -21,7 +21,7 @@ a { color: var(--accent); }
 button, input, select, textarea { font: inherit; color: inherit; }
 code, pre, kbd { font-family: var(--font-mono); }
 img, svg { max-width: 100%; }
-.num, .tabular { font-variant-numeric: tabular-nums; }
+.tabular { font-variant-numeric: tabular-nums; } /* only where figures stack in columns (table cells); never sentence text or headline figures */
 .mono { font-family: var(--font-mono); }
 /* selected ring: apply to any selectable surface */
 .is-selected-ring, .k-selected { box-shadow: var(--ring-selected); }
@@ -336,7 +336,7 @@ svg g[tabindex]:focus-visible > :first-child { stroke: var(--focus); stroke-widt
 .k-error { margin: 0; font-size: 12px; color: var(--crit); font-weight: 500; }
 .k-input, .k-select {
   width: 100%; min-height: 40px; padding: 8px 10px; border-radius: var(--radius-md);
-  border: 1px solid var(--line-strong); background: var(--surface); color: var(--ink); font-size: 14px; min-width: 0;
+  border: 1px solid var(--control-border); background: var(--surface); color: var(--ink); font-size: 14px; min-width: 0;
 }
 .k-input--sm { min-height: 34px; padding: 4px 8px; font-size: 13px; }
 .k-input::placeholder, .k-textarea::placeholder { color: var(--ink-3); }
@@ -365,7 +365,7 @@ svg g[tabindex]:focus-visible > :first-child { stroke: var(--focus); stroke-widt
 .k-check-input { position: absolute; opacity: 0; width: 18px; height: 18px; margin: 0; top: 5px; left: 0; }
 .k-check-box {
   width: 18px; height: 18px; margin-top: 1px; flex: 0 0 auto; border-radius: var(--radius-sm);
-  border: 1.5px solid var(--line-strong); background: var(--surface); color: transparent;
+  border: 1.5px solid var(--control-border); background: var(--surface); color: transparent;
   display: inline-flex; align-items: center; justify-content: center;
 }
 .k-check-input:checked + .k-check-box { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
@@ -457,13 +457,13 @@ svg g[tabindex]:focus-visible > :first-child { stroke: var(--focus); stroke-widt
 .k-kpi.is-clickable { cursor: pointer; }
 .k-kpi.is-clickable:hover { background: var(--surface-2); }
 .k-kpi-label { grid-area: label; font-size: 13px; font-weight: 600; color: var(--ink-2); }
-.k-kpi-value { grid-area: value; font-family: var(--font-display); font-size: var(--text-2xl); font-weight: 700; line-height: 1.1; letter-spacing: var(--track-display); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.k-kpi-value { grid-area: value; font-family: var(--font-display); font-size: var(--text-2xl); font-weight: 700; line-height: 1.1; letter-spacing: var(--track-display); overflow-wrap: anywhere; }
 .k-kpi-goal { grid-area: goal; font-size: 12px; color: var(--ink-3); }
 .k-kpi .k-meter { grid-area: meter; margin: 4px 0; }
 .k-kpi-foot { grid-area: foot; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
 .k-kpi-spark { grid-area: spark; align-self: center; color: var(--chart-1); }
 
-.k-delta { font-variant-numeric: tabular-nums; display: inline-flex; align-items: baseline; gap: 2px; font-size: 12px; font-weight: 600; white-space: nowrap; }
+.k-delta { display: inline-flex; align-items: baseline; gap: 2px; font-size: 12px; font-weight: 600; white-space: nowrap; }
 .k-delta.is-good { color: var(--good); }
 .k-delta.is-bad { color: var(--crit); }
 .k-delta.is-flat { color: var(--ink-3); }
@@ -634,3 +634,6 @@ svg g[tabindex]:focus-visible > :first-child { stroke: var(--focus); stroke-widt
 .app-decide-input { width: 100%; font-size: 13px; }
 .app-decide-hint, .app-decide-ro, .app-decided { margin: 0; font-size: 12px; color: var(--ink-3); padding: 4px 2px 0; }
 .app-decided-why { color: var(--ink-2); }
+
+/* proposal card status line takes focus after a decision; no ring needed for a programmatic landing */
+[data-ag-status]:focus { outline: none; }

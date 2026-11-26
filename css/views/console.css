@@ -208,3 +208,9 @@
 .v-agents .cn-connect-line { color: var(--ink-3); }
 .v-agents .cn-reason-note { margin-top: 6px; }
 .v-agents .cn-reason-seg { display: inline-flex; width: auto; }
+
+/* Visually hidden live region for "thinking" announcements */
+.v-agents .cn-sr { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+.v-agents .cn-reason-static { display: inline-block; font-weight: 600; color: var(--ink); }
+/* Reserved line so the "paused" note never shifts the list */
+.v-agents .cn-freeze-note { min-height: 20px; margin: 4px 0; font-size: 13px; color: var(--ink-3); }

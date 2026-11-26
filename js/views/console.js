@@ -37,12 +37,13 @@
     return (n < 0 ? '-' : '') + s;
   }
   function num(n) { return fin(n) ? (tryFmt('num', n) || commas(n)) : DASH; }
+  // One time format: relative within a day, otherwise "Wed, Nov 25, 7 pm".
   function stamp(t) {
     if (!fin(t)) return DASH;
-    var r = tryFmt('stamp', t);
-    if (r) return r;
-    var h = ((t % 24) + 24) % 24;
-    return 'Day ' + (Math.floor(t / 24) + 1) + MID + (h < 10 ? '0' : '') + h + ':00';
+    var d = tryFmt('date', t), h = tryFmt('hour', ((t % 24) + 24) % 24);
+    if (d && h) return d + ', ' + h;
+    var hh = ((t % 24) + 24) % 24;
+    return 'Day ' + (Math.floor(t / 24) + 1) + ', ' + (hh % 12 === 0 ? 12 : hh % 12) + (hh < 12 ? ' am' : ' pm');
   }
   function rel(from, now) {
     if (!fin(from) || !fin(now)) return '';
@@ -52,6 +53,10 @@
     if (a < 1) return 'just now';
     var s = a < 48 ? a + 'h' : Math.round(a / 24) + 'd';
     return d >= 0 ? s + ' ago' : 'in ' + s;
+  }
+  function when(t, now) {
+    if (!fin(t)) return DASH;
+    return fin(now) && Math.abs(now - t) < 24 ? rel(t, now) : stamp(t);
   }
   function cadenceLabel(h) {
     if (!fin(h) || h <= 0) return DASH;
@@ -261,7 +266,7 @@
   function whenLine(row, tick) {
     var bits = [];
     if (row.awaiting) { bits.push('Thinking' + ELL); return bits.join(MID); }
-    bits.push(fin(row.lastRun) ? 'Ran ' + rel(row.lastRun, tick) : "Hasn't run yet");
+    bits.push(fin(row.lastRun) ? 'Ran ' + rel(row.lastRun, tick) : 'Not run yet');
     var st = stateOf(row);
     if (st === 'queued') bits.push('runs next');
     else if (st === 'running' && fin(row.nextRun)) bits.push('next ' + rel(row.nextRun, tick));
@@ -364,7 +369,7 @@
     }).filter(Boolean);
     var why = entry.reason === 'runNow' ? 'because you asked it to run now' : 'on its regular schedule';
     return html`<div className="cn-story" aria-label=${'How ' + agentName(entry.agentId) + ' decided'}>
-      <p className="cn-story-lede">${agentName(entry.agentId) + ' ran ' + rel(entry.tick, tick) + ' (' + stamp(entry.tick) + ') ' + why + '.'}</p>
+      <p className="cn-story-lede">${agentName(entry.agentId) + ' ran ' + when(entry.tick, tick) + ' ' + why + '.'}</p>
       ${typeof entry.summary === 'string' && entry.summary ? html`<p className="cn-story-summary">${entry.summary}</p>` : null}
       ${entry.error ? html`<p className="cn-error">${'This run stopped early and changed nothing: ' + entry.error}</p>` : null}
       <div className="cn-story-sec">
@@ -521,11 +526,18 @@
     }
     var val = p.row.rulesOnly ? 'rules' : 'auto';
     var opts = [{ value: 'auto', label: 'Claude' }, { value: 'rules', label: 'Rules only' }];
+    if (!on) {
+      return html`<div className="cn-field-block">
+        <span className="cn-label" id=${'agents-' + id + '-reasoning-label'}>Reasoning</span>
+        <span className="cn-reason-static">Rules</span>
+        <p className="cn-muted cn-reason-note">Connect Claude to switch</p>
+      </div>`;
+    }
     return html`<div className="cn-field-block">
       <span className="cn-label" id=${'agents-' + id + '-reasoning-label'}>Reasoning</span>
       ${Seg ? html`<${Seg} id=${'agents-' + id + '-reasoning'} label="Reasoning" size="sm" className="cn-reason-seg" options=${opts} value=${val} onChange=${set} />`
         : html`<span>${val === 'rules' ? 'Rules only' : 'Claude'}</span>`}
-      <p className="cn-muted cn-reason-note">${val === 'rules' ? 'This agent always uses its built-in rules.' : (on ? 'Claude reasons about each run before this agent acts.' : 'Applies once Claude is connected. Until then this agent uses its built-in rules.')}</p>
+      <p className="cn-muted cn-reason-note">${val === 'rules' ? 'This agent always uses its built-in rules.' : 'Claude reasons about each run before this agent acts.'}</p>
       ${msg ? html`<p className="cn-error" role="alert">${msg.text}</p>` : null}
     </div>`;
   }
@@ -568,7 +580,7 @@
       </div>
       ${msg ? html`<p className="cn-error" role="alert">${msg.text}</p>` : null}
       <dl className="cn-facts">
-        <div><dt>Last run</dt><dd className="num">${fin(row.lastRun) ? rel(row.lastRun, p.tick) + MID + stamp(row.lastRun) : "Hasn't run yet"}</dd></div>
+        <div><dt>Last run</dt><dd className="num">${fin(row.lastRun) ? when(row.lastRun, p.tick) : 'Not run yet'}</dd></div>
         <div><dt>Next run</dt><dd className="num">${stateOf(row) === 'queued' ? 'Queued to run shortly' : (stateOf(row) === 'running' && fin(row.nextRun) ? rel(row.nextRun, p.tick) : (stateOf(row) === 'off' ? "Doesn't run while off" : 'Paused'))}</dd></div>
         <div><dt>Track record</dt><dd className="num">${tr.text}</dd></div>
         <div><dt>Waiting for you</dt><dd className="num">${waiting ? html`<${Link} onClick=${function () { setFocus({ tab: 'approvals' }); }}>${plural(waiting, 'suggestion')}<//>` : 'Nothing'}</dd></div>
@@ -601,7 +613,7 @@
           return html`<li key=${e.id} className=${cx('cn-run', open && 'is-open')}>
             <button type="button" className="cn-run-btn" aria-expanded=${open ? 'true' : 'false'} aria-controls=${pid}
                 onClick=${function () { setFocus({ auditId: open ? null : e.id }); }}>
-              <span className="cn-run-when num">${rel(e.tick, p.tick)}<span className="cn-muted">${MID + stamp(e.tick)}</span></span>
+              <span className="cn-run-when num">${when(e.tick, p.tick)}</span>
               <span className="cn-run-out">${runOutcome(e)}<span className="cn-muted">${MID + engineLabel(e)}</span></span>
               <span className="cn-run-caret" aria-hidden="true">${open ? '−' : '+'}</span>
             </button>
@@ -731,7 +743,7 @@
         <div className="cn-detail-titles">
           <h2 id="agents-detail-title" className="cn-detail-title">${displayName(row)}</h2>
           <p className="cn-detail-short">${row.short || (def && def.short) || AGENT_SHORT[id] || ''}</p>
-          <p className="cn-detail-state"><${Dot} state=${st} label=${null} /><span>${def ? (row.awaiting ? 'Thinking' + ELL : STATE_LABEL[st]) : 'Not loaded yet'}</span><span className="cn-muted num">${MID + whenLine(row, p.tick)}</span></p>
+          <p className="cn-detail-state"><${Dot} state=${st} label=${null} /><span>${def ? (row.awaiting ? 'Thinking' + ELL : STATE_LABEL[st]) : 'Not available yet'}</span><span className="cn-muted num">${MID + whenLine(row, p.tick)}</span></p>
         </div>
         <div className="cn-detail-actions">
           <${Btn} kind="primary" size="md" id=${'agents-' + id + '-run'} onClick=${runNow} disabled=${!def || st === 'queued'}>${st === 'queued' ? 'Queued' : 'Run now'}<//>
@@ -866,7 +878,7 @@
     var shown = fz.items.slice(0, limit);
     var EMPTY_COPY = {
       needs: ['Nothing needs you right now', 'Suggestions that need your decision show up here.'],
-      applied: ['No autopilot changes yet', 'Changes agents apply on Autopilot are listed here, each with Undo.'],
+      applied: ['No autopilot changes yet', 'Changes agents make on their own are listed here, each with Undo. Suggestions you approved are under History.'],
       history: ['No decisions yet', 'Approved, dismissed, undone and expired suggestions are kept here.']
     };
     return html`<div className="cn-approvals">
@@ -881,6 +893,7 @@
           : html`<${Btn} id="agents-approve-low" onClick=${function () { setMsg(null); setConfirm(true); }}>${'Approve all low-risk (' + low.length + ')'}<//>`) : null}
       </div>
       ${msg ? html`<p className=${msg.tone === 'crit' ? 'cn-error' : 'cn-ok'} role="status">${msg.text}</p>` : null}
+      <p className=${cx('cn-freeze-note', use.active && 'is-on')}>${use.active ? "Paused while you're here" + (fz.pending > 0 ? ' \u00b7 ' + fz.pending + ' new' : '') : ''}</p>
       ${fz.pending > 0 && NP ? html`<${NP} count=${fz.pending} onClick=${fz.reveal} />` : null}
       <div id="agents-approvals-list" role="tabpanel" aria-labelledby=${'agents-approvals-tabs-' + sub}>
         ${shown.length && Card ? html`<ul className="cn-cards" ...${use.props}>${shown.map(function (x) {
@@ -1057,7 +1070,7 @@
             <button type="button" className="cn-run-btn cn-run-btn-wide" aria-expanded=${isOpen ? 'true' : 'false'} aria-controls=${pid}
                 onClick=${function () { setOpen(isOpen ? null : e.id); }}>
               <span className="cn-run-agent">${agentName(e.agentId)}</span>
-              <span className="cn-run-when num">${rel(e.tick, p.tick)}<span className="cn-muted">${MID + stamp(e.tick)}</span></span>
+              <span className="cn-run-when num">${when(e.tick, p.tick)}</span>
               <span className="cn-run-out">${runOutcome(e) + (e.reason === 'runNow' ? MID + 'you asked' : '')}<span className="cn-muted">${MID + engineLabel(e)}</span></span>
               <span className="cn-run-caret" aria-hidden="true">${isOpen ? '−' : '+'}</span>
             </button>
@@ -1099,7 +1112,7 @@
     try { hasDefs = !!(MC.runtime && typeof MC.runtime.defs === 'function' && MC.runtime.defs().length); } catch (e) { hasDefs = false; }
     var working = roster.filter(function (r) { var s = stateOf(r); return s === 'running' || s === 'queued'; }).length;
     var sub = !roster.length ? 'Agents watch your live campaigns and propose or make changes inside your guardrails.'
-      : (working ? plural(working, 'agent') + ' working' : 'All agents are paused or off') + (openCount ? MID + plural(openCount, 'suggestion') + ' waiting for you' : MID + 'nothing waiting for you');
+      : (working ? plural(working, 'agent') + ' working' : 'All agents are paused or off') + (openCount ? MID + plural(openCount, 'suggestion') + ' waiting for you' : MID + 'nothing needs you');
     var body;
     if (ready === undefined) body = html`<p className="cn-muted">Loading agents${ELL}</p>`;
     else if (!roster.length) {
@@ -1113,8 +1126,9 @@
     return html`<section className="v-agents">
       <header className="cn-head">
         <h1 id="page-title" tabIndex="-1" className="cn-title">Agents</h1>
+        <p className="cn-sr" role="status" aria-live="polite">${roster.filter(function (r) { return r.awaiting; }).map(function (r) { return displayName(r) + ' is thinking' + ELL; }).join(' ')}</p>
         <p className="cn-sub num">${sub}</p>
-        ${!connected && roster.length ? html`<p className="cn-sub cn-connect-line">Connect Claude to let the agents reason and write with Haiku.</p>` : null}
+        ${!connected && roster.length ? html`<p className="cn-sub cn-connect-line">Agents follow built-in rules for now. Connect Claude so they can explain their choices and write copy.</p>` : null}
       </header>
       ${roster.length && Tabs ? html`<${Tabs} id="agents-tabs" label="Agent sections" tabs=${tabs} value=${tab}
           onChange=${function (t) { setFocus({ tab: t }); }} panelId="agents-panel" />` : null}

@@ -217,7 +217,7 @@
   function outlookOf(g, status) {
     if (status === 'draft') return { tone: 'neutral', label: 'Draft' };
     if (status === 'scheduled') return { tone: 'accent', label: 'Scheduled' };
-    if (!g || !fin(g.outlookPct)) return { tone: 'neutral', label: 'Too early' };
+    if (!g || !fin(g.outlookPct)) return { tone: 'neutral', label: 'Too early to tell' };
     if (status === 'completed') return { tone: g.outlookPct >= 1 ? 'good' : 'neutral', label: pct(g.outlookPct, 0) + ' of goal' };
     var p = g.outlookPct;
     if (p >= 0.95) return { tone: 'good', label: 'On track' };
@@ -453,7 +453,7 @@
             ${list.map(function (r) { return h`<${BoardCard} key=${r.id} row=${r} campaign=${byId[r.id]} tick=${tick} segCount=${segCount(byId[r.id])} guardPct=${guardPct} />`; })}
             ${sug.map(function (pr) { return h`<${PlannerSuggestion} key=${pr.id} proposal=${pr} />`; })}
           </ul>
-          ${!list.length && !sug.length ? h`<p className="cm-col-empty">${col.id === 'draft' ? 'No drafts. Plan a campaign to start one.' : 'Nothing here right now.'}</p>` : null}
+          ${!list.length && !sug.length ? h`<p className="cm-col-empty">${col.id === 'draft' ? 'No drafts. Plan a campaign to start one.' : 'No campaigns ' + (col.id === 'scheduled' ? 'scheduled.' : col.id === 'live' ? 'live right now.' : 'completed yet.')}</p>` : null}
         </section>`;
       })}
       </div>
@@ -889,7 +889,7 @@
           <${AB} parts=${rows.filter(function (r) { return r.status === 'live' || r.share > 0; }).map(function (r) { return { key: r.id, label: 'Variant ' + r.name, share: r.share }; })}
             previous=${hasPrev ? rows.reduce(function (m, r) { m[r.id] = r.prevShare || 0; return m; }, {}) : null} />
         </div>` : null}
-      ${rows.length ? h`<div className="k-scroll-x"><table className="cm-table">
+      ${rows.length ? h`<div className="k-scroll-x"><table className="cm-table cm-table-stack">
         <thead><tr><th scope="col">Variant</th><th scope="col">Author</th><th scope="col" className="is-num">Sends</th>
           <th scope="col" className="is-num">Open</th><th scope="col" className="is-num">Click</th>
           <th scope="col" className="is-num">${reward}</th><th scope="col" className="is-num">Chance best</th></tr></thead>
@@ -897,13 +897,13 @@
           var aId = agentIdOf(r.author);
           var rate = r.reward === 'clicks' ? r.clickRate : r.convPerSend;
           return h`<tr key=${r.id}>
-            <td><span className="cm-strong">${r.name}</span> ${r.status !== 'live' ? h`<span className="cm-muted cm-small">${r.status}</span>` : null}</td>
-            <td>${aId ? h`<${AgentNote} text=${agentName(aId)} />` : h`<span className="cm-muted">You</span>`}</td>
-            <td className="is-num num">${num(r.sends)}</td>
-            <td className="is-num num">${isOwned(ch) ? pct(r.openRate) : DASH}</td>
-            <td className="is-num num">${pct(r.clickRate)}</td>
-            <td className="is-num num" title=${r.ci ? '95% interval ' + pct(r.ci[0], 2) + ' to ' + pct(r.ci[1], 2) : ''}>${pct(rate, 2)}${r.ci && r.sends > 0 ? h`<span className="cm-muted cm-small"> ±${pct((r.ci[1] - r.ci[0]) / 2, 2)}</span>` : null}</td>
-            <td className="is-num num">${fin(r.pBest) ? pct(r.pBest, 0) : DASH}</td>
+            <td data-label="Variant"><span className="cm-strong">${r.name}</span> ${r.status !== 'live' ? h`<span className="cm-muted cm-small">${r.status}</span>` : null}</td>
+            <td data-label="Author">${aId ? h`<${AgentNote} text=${agentName(aId)} />` : h`<span className="cm-muted">You</span>`}</td>
+            <td data-label="Sends" className="is-num num">${num(r.sends)}</td>
+            <td data-label="Open" className="is-num num">${isOwned(ch) ? pct(r.openRate) : DASH}</td>
+            <td data-label="Click" className="is-num num">${pct(r.clickRate)}</td>
+            <td data-label=${reward} className="is-num num" title=${r.ci ? '95% interval ' + pct(r.ci[0], 2) + ' to ' + pct(r.ci[1], 2) : ''}>${pct(rate, 2)}${r.ci && r.sends > 0 ? h`<span className="cm-muted cm-small"> ±${pct((r.ci[1] - r.ci[0]) / 2, 2)}</span>` : null}</td>
+            <td data-label="Chance best" className="is-num num">${fin(r.pBest) ? pct(r.pBest, 0) : DASH}</td>
           </tr>`;
         })}</tbody>
       </table></div>` : h`<p className="cm-muted">No variants on ${chLabel(ch)} yet.</p>`}
@@ -1003,7 +1003,7 @@
         ${pending.length ? h`<section className="cm-side-sec" aria-labelledby="cmp-pending-title">
             <h2 className="cm-h3" id="cmp-pending-title">Waiting for you <span className="cm-count num">${pending.length}</span></h2>
             <ul className="cm-prop-list">${pending.map(function (pr) {
-              return h`<li key=${pr.id}>${PC ? h`<${PC} id=${pr.id} compact=${true} />` : h`<p>${pr.title}</p>`}</li>`;
+              return h`<li key=${pr.id} className="cm-prop-flat">${PC ? h`<${PC} id=${pr.id} compact=${true} flat=${true} />` : h`<p>${pr.title}</p>`}</li>`;
             })}</ul>
           </section>` : null}
         <section className="cm-side-sec" aria-labelledby="cmp-changes-title">
@@ -1954,9 +1954,14 @@
     var rows = useSel(selRows) || EMPTY;
     var tick = useSel(selTick) || 0;
     var Tabs = ui('Tabs');
-    var live = rows.filter(function (r) { return r.status === 'live'; }).length;
+    var camps = useSel(selCampaigns);
+    var cById = (camps && camps.byId) || EMPTY_OBJ;
+    function isProg(r) { var cc = cById[r.id]; return !!(cc && cc.program); }
+    // Same groups as the board: dated live campaigns match the Live column; always-on programs are counted apart.
+    var live = rows.filter(function (r) { return r.status === 'live' && !isProg(r); }).length;
+    var onAlways = rows.filter(function (r) { return r.status === 'live' && isProg(r); }).length;
     var next = rows.filter(function (r) { return r.status === 'scheduled'; }).sort(function (a, b) { return a.startTick - b.startTick; })[0];
-    var sub = plural(rows.length, 'campaign', 'campaigns') + MID + live + ' live' + (next ? MID + next.name + ' starts ' + rel(next.startTick, tick) : '');
+    var sub = plural(rows.length, 'campaign', 'campaigns') + MID + live + ' live' + (onAlways ? MID + onAlways + ' always-on' : '') + (next ? MID + next.name + ' starts ' + rel(next.startTick, tick) : '');
     var body = mode === 'list' ? h`<${ListMode} />` : mode === 'calendar' ? h`<${CalendarMode} />` : h`<${Board} />`;
     return h`<div className="cm-index">
       <header className="cm-head">

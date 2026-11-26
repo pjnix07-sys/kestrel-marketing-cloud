@@ -151,7 +151,16 @@
       applied = 0;
       (w.feed || EMPTY).forEach(function (it) { if (it.kind === 'agent-applied' && tick - it.tick < 24) applied++; });
     }
-    return { applied: applied, byAgent: (a && a.byAgent) || null };
+    // The feed below lists the same changes, so count from both and use the larger: the sentence can never say
+    // "nothing changed" while the feed shows a change from the last day.
+    var fed = 0, last = null;
+    (w.feed || EMPTY).forEach(function (it) {
+      if (it.kind !== 'agent-applied') return;
+      if (tick - it.tick < 24) fed++;
+      if (last === null || it.tick > last) last = it.tick;
+    });
+    if (fed > applied) applied = fed;
+    return { applied: applied, byAgent: (a && a.byAgent) || null, lastTick: last };
   }
 
   // Nodes on the journey line: recent changes one by one, older ones grouped by day.
@@ -189,7 +198,7 @@
       actual: fc ? (fc.actual || EMPTY).map(function (a) { return { day: a.day, v: a.value }; }) : EMPTY,
       points: fc ? (fc.points || EMPTY).map(function (p) { return { day: p.day, v: p.mean }; }) : EMPTY,
       nodes: buildNodes(w, raw, t),
-      applied: act.applied, byAgent: act.byAgent, needs: open.length,
+      applied: act.applied, lastApplied: act.lastTick, byAgent: act.byAgent, needs: open.length,
       figs: {
         revenue: k.revenue ? k.revenue.value : null, goal: k.revenue ? k.revenue.goal : null,
         orders: k.conversions ? k.conversions.value : null,
@@ -356,8 +365,11 @@
     var lead = b.hour < 12 ? 'Overnight' : 'Since yesterday';
     if (n > 0 && need > 0) s2 = html`${lead + ', agents made '}${changes}${'; '}${needs}${'.'}`;
     else if (n > 0) s2 = html`${lead + ', agents made '}${changes}${' and nothing needs you.'}`;
-    else if (need > 0) s2 = html`${'Agents haven’t changed anything in the last day, but '}${needs}${'.'}`;
-    else s2 = html`${'Agents haven’t changed anything in the last day and nothing needs you.'}`;
+    else {
+      var since = fin(b.lastApplied) ? ' The latest was ' + (rel(b.lastApplied, b.tick) || timeLabel(b.lastApplied)) + '.' : '';
+      if (need > 0) s2 = html`${'Agents haven’t made changes in the last day, but '}${needs}${'.' + since}`;
+      else s2 = html`${'Agents haven’t made changes in the last day and nothing needs you.' + since}`;
+    }
     return html`<p className="hm-brief" id="home-brief">${s1}${' '}${s2}</p>`;
   }
 
@@ -459,7 +471,7 @@
               onClick=${function () { pick(o.n); }} onKeyDown=${function (e) { onKey(e, i, o.n); }}
               onMouseEnter=${function () { setHov(i); }} onMouseLeave=${function () { setHov(-1); }}
               onFocus=${function () { setHov(i); setActive(i); }} onBlur=${function () { setHov(-1); }}>
-            <circle className="hm-node-hit" cx=${o.x} cy=${o.y} r="11" />
+            <circle className="hm-node-hit" cx=${o.x} cy=${o.y} r="13" />
             <circle className="hm-node-ring" cx=${o.x} cy=${o.y} r="9" />
             <circle className="hm-node-dot" cx=${o.x} cy=${o.y} r=${o.n.count > 1 ? 5 : 4} />
           </g>`;
@@ -514,8 +526,8 @@
         actions=${frozen.pending > 0 ? html`<${NewPill} count=${frozen.pending} onClick=${frozen.reveal} />` : null}>
       <div className="hm-needs-list" ...${hold.bind}>
         ${shown.map(function (pr) {
-          return html`<div key=${pr.id} className="hm-needs-item">
-            ${PC ? html`<${PC} id=${pr.id} compact=${true} showTarget=${true} />` : html`<${MiniProposal} proposal=${pr} />`}
+          return html`<div key=${pr.id} className="hm-needs-item is-flat">
+            ${PC ? html`<${PC} id=${pr.id} compact=${true} flat=${true} showTarget=${true} />` : html`<${MiniProposal} proposal=${pr} />`}
           </div>`;
         })}
       </div>
@@ -725,12 +737,12 @@
   /* ================= Live campaigns ================= */
   function outlook(g, pace) {
     if (pace) {
-      if (pace.status === 'early') return { text: 'Too early', tone: 'neutral', title: 'Pacing starts after a week of results' };
+      if (pace.status === 'early') return { text: 'Too early to tell', tone: 'neutral', title: 'Pacing starts after a week of results' };
       if (pace.status === 'ahead') return { text: 'Ahead', tone: 'good', title: pace.note || undefined };
       if (pace.status === 'on') return { text: 'On pace', tone: 'neutral', title: pace.note || undefined };
       if (pace.status === 'behind') return { text: 'Behind', tone: 'warn', title: pace.note || undefined };
     }
-    if (!g || !fin(g.p) || !fin(g.outlookPct)) return { text: 'Too early', tone: 'neutral' };
+    if (!g || !fin(g.p) || !fin(g.outlookPct)) return { text: 'Too early to tell', tone: 'neutral' };
     var pc = Math.round(g.outlookPct * 100) + '%';
     if (g.p >= 0.7) return { text: 'Likely ' + pc, tone: 'good' };
     if (g.p >= 0.4) return { text: 'At risk ' + pc, tone: 'warn' };
@@ -823,6 +835,22 @@
       </div>
     </section>`;
   }
+
+  /* Memoise the cards: selector outputs are stable between ticks, so a tick that changes nothing here re-renders nothing. */
+  (function () {
+    var memo = window.React && window.React.memo;
+    if (typeof memo !== 'function') return;
+    Brief = memo(Brief);
+    Journey = memo(Journey);
+    Figures = memo(Figures);
+    LiveCampaigns = memo(LiveCampaigns);
+    AgentsRail = memo(AgentsRail);
+    NeedsYou = memo(NeedsYou);
+    FeedRow = memo(FeedRow, function (a, b) {
+      return a.item === b.item && a.proposal === b.proposal && a.error === b.error && a.hot === b.hot &&
+        a.today === b.today && (!a.today || a.now === b.now);
+    });
+  })();
 
   MC.views.home = Home;
 })();
