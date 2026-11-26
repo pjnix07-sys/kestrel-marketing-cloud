@@ -1,4 +1,4 @@
-/* Kestrel Marketing Cloud - Budget Pacer agent. Keeps each live campaign's spend on plan (pacing
+/* Marketing Cloud - Budget Pacer agent. Keeps each live campaign's spend on plan (pacing
    notes) and moves budget toward the channel returning the most per extra dollar, using response
    curves fitted to recent daily spend and revenue. The campaign total never changes. */
 (function () {

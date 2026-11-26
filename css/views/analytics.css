@@ -1,4 +1,4 @@
-/* Kestrel Marketing Cloud - Analytics view. Everything is scoped under .v-analytics and colored
+/* Marketing Cloud - Analytics view. Everything is scoped under .v-analytics and colored
    only through tokens from css/tokens.css. */
 
 .v-analytics { display: flex; flex-direction: column; gap: 16px; min-width: 0; color: var(--ink); }

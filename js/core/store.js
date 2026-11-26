@@ -1,4 +1,4 @@
-/* Kestrel Marketing Cloud - MC.store (live world + batched notify), MC.uiStore (ephemeral UI
+/* Marketing Cloud - MC.store (live world + batched notify), MC.uiStore (ephemeral UI
    state, conveniences persisted in localStorage), MC.nav (bare-hash routing) and the data hooks
    (useSelect, useShallow, useUi, useTick, useDraft, useFrozen, useDebounced). */
 (function () {
@@ -75,7 +75,7 @@
   };
 
   /* ======================= ui store ======================= */
-  var LS_KEY = 'kestrel.ui.v1';
+  var LS_KEY = 'mc.ui.v1';
   var ROUTES = MC.ROUTES || ['home', 'campaigns', 'content', 'audiences', 'analytics', 'agents'];
   var THEMES = ['system', 'light', 'dark'];
   var NOTIFY_LEVELS = ['all', 'changes', 'silent'];

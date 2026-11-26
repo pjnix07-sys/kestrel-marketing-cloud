@@ -1,4 +1,4 @@
-/* Kestrel Marketing Cloud - Campaigns view (#campaigns). Scoped under .v-campaigns; tokens only.
+/* Marketing Cloud - Campaigns view (#campaigns). Scoped under .v-campaigns; tokens only.
    One bordered surface level per region, no edge stripes, no gradients, no translucent panels. */
 
 .v-campaigns { display: flex; flex-direction: column; gap: var(--space-5); min-width: 0; color: var(--ink); }

@@ -1,4 +1,4 @@
-/* Kestrel Marketing Cloud - Campaigns view (#campaigns): MC.views.campaigns.
+/* Marketing Cloud - Campaigns view (#campaigns): MC.views.campaigns.
    Opens on the Board with one primary action (Plan a campaign). List and Calendar are tabs.
    Campaign detail keeps dense material (journey, content, audience, budget, activity) behind tabs.
    The Planner turns a brief into a plan through MC.runtime.preview('planner', ...) and degrades to a

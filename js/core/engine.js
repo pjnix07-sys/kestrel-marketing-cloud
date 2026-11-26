@@ -1,4 +1,4 @@
-/* Kestrel Marketing Cloud - MC.engine: boots the Fernway Outfitters sample world and keeps it moving.
+/* Marketing Cloud - MC.engine: boots the Fernway Outfitters sample world and keeps it moving.
    One tick = one hour of world time. The wall-clock scheduler is a setTimeout chain that runs
    continuously at one default pace (PACE_MS) regardless of which view is open; each fire advances
    exactly one tick inside a single store batch, so subscribers see one notify per tick.

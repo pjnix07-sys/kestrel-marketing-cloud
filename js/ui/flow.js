@@ -1,4 +1,4 @@
-/* Kestrel Marketing Cloud - journey FlowDiagram and campaign Gantt (MC.charts.*).
+/* Marketing Cloud - journey FlowDiagram and campaign Gantt (MC.charts.*).
    Hand-written SVG, token colors only, keyboard-selectable nodes and rows. */
 (function () {
   'use strict';

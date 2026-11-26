@@ -1,4 +1,4 @@
-/* Kestrel Marketing Cloud - Agents (#agents). Scoped under .v-agents; colors from tokens only.
+/* Marketing Cloud - Agents (#agents). Scoped under .v-agents; colors from tokens only.
    One bordered surface per region, hairline dividers inside, no rails, gradients or blur. */
 
 .v-agents { display: grid; gap: 20px; min-width: 0; color: var(--ink); }

@@ -1,4 +1,4 @@
-/* Kestrel Marketing Cloud - MC.guardrails: the rules every agent proposal is checked against before it
+/* Marketing Cloud - MC.guardrails: the rules every agent proposal is checked against before it
    can apply, plus the campaign preflight used when a draft is scheduled and by the Campaign Planner.
    Pure functions of (world, proposal, def); no clock, no randomness, no store access. */
 (function () {

@@ -1,4 +1,4 @@
-# Kestrel Marketing Cloud: Architecture Proposal (Marketer-Workflow Lens)
+# Marketing Cloud: Architecture Proposal (Marketer-Workflow Lens)
 
 This is a binding contract for 9 parallel builders. It covers the whole system and goes deepest on what the marketer sees and does.
 
@@ -89,7 +89,7 @@ js/app.js                      ui      shell, router, top bar, drawer, toasts, t
 **index.html (exact order)**
 
 ```html
-<title>Kestrel Marketing Cloud</title>
+<title>Marketing Cloud</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">

@@ -1,4 +1,4 @@
-/* Kestrel Marketing Cloud · Audiences view (#audiences)
+/* Marketing Cloud · Audiences view (#audiences)
    Tabs: Segments · Builder · Profiles · Overlap. Owner: audiences lane.
    Drafts (rule builder, names, search) live in local state only; the store is written only on explicit actions. */
 (function () {

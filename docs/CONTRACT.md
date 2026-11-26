@@ -1,6 +1,6 @@
 > **Binding build contract.** Derived from the marketer-workflow architecture proposal. Section 10 (Amendments), when present, overrides anything earlier in this document.
 
-# Kestrel Marketing Cloud: Architecture Proposal (Marketer-Workflow Lens)
+# Marketing Cloud: Architecture Proposal (Marketer-Workflow Lens)
 
 This is a binding contract for 13 parallel builders (lanes in §10.1). It covers the whole system and goes deepest on what the marketer sees and does. **Read §10 before writing any code**; it resolves every known inconsistency below.
 
@@ -91,7 +91,7 @@ js/app.js                      ui      shell, router, top bar, drawer, toasts, t
 **index.html (order summary only; the complete literal file is §10.2 and binds)**
 
 ```html
-<title>Kestrel Marketing Cloud</title>
+<title>Marketing Cloud</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
@@ -1103,7 +1103,7 @@ Rules every lane follows:
 No doctype/html/head/body, no inline scripts, no `defer`/`async` (classic scripts must execute in this order). The viewport meta tag is required so phone emulation lays out at device width. Every file in §2 appears exactly once.
 
 ```html
-<title>Kestrel Marketing Cloud</title>
+<title>Marketing Cloud</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>

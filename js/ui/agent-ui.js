@@ -1,4 +1,4 @@
-/* Kestrel Marketing Cloud - agent UI components (attached to MC.ui):
+/* Marketing Cloud - agent UI components (attached to MC.ui):
    AgentChip, ProposalCard, GuardrailList, DiffTable, AllocationBar, ImpactBadge,
    TraceView, AgentPulse, AutonomyControl. Token colors only; store reads via
    narrow MC.hooks.useSelect selectors; drafts and menus live in local state. */

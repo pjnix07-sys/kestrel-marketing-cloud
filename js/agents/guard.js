@@ -1,4 +1,4 @@
-/* Kestrel Marketing Cloud - Fatigue Guard agent. Rests people who are being messaged too much on a
+/* Marketing Cloud - Fatigue Guard agent. Rests people who are being messaged too much on a
    channel, before they unsubscribe, and asks to pause a channel whose unsubscribe rate jumps well
    above its normal level. Only treatment members are rested; the control group keeps its plan. */
 (function () {

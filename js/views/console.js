@@ -1,4 +1,4 @@
-/* Kestrel Marketing Cloud - Agents (#agents): MC.views.agents.
+/* Marketing Cloud - Agents (#agents): MC.views.agents.
    Opens on the roster with recent activity. Tabs: Roster · Activity · Approvals · Guardrails · Run history.
    Run traces read as plain language (what the agent saw, what it decided, what changed) and are
    rendered from data fields only (step text, rows, rationale, optional summary), so richer

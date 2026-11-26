@@ -1,4 +1,4 @@
-/* Kestrel Marketing Cloud - MC.copy: deterministic Fernway Outfitters copy engine.
+/* Marketing Cloud - MC.copy: deterministic Fernway Outfitters copy engine.
    Seeded phrase banks by tone x category x offer, channel adapters with length limits,
    a linear engagement model (features -> score), brand & compliance checks with
    deterministic fixes, and token rendering for previews. generate() is pure:

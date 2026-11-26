@@ -1,4 +1,4 @@
-/* Kestrel Marketing Cloud - Command Center (#home): MC.views.home.
+/* Marketing Cloud - Command Center (#home): MC.views.home.
    Answers three questions on one screen: how are we doing (KPIs vs goals, forecast),
    what changed (feed, movers) and what needs me (approvals, agent pulse).
    Store reads go through narrow module-level selectors; feed and approvals freeze while

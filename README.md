@@ -1,4 +1,4 @@
-# Kestrel Marketing Cloud
+# Marketing Cloud
 
 A prototype agentic marketing cloud, inspired by Salesforce Marketing Cloud Next. A marketer plans campaigns, composes content, segments audiences and reads predictive analytics while eight deterministic agents run in the background, proposing and applying optimizations.
 

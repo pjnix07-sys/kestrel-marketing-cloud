@@ -1,4 +1,4 @@
-/* Kestrel Marketing Cloud - UI kit (MC.ui.*, `k-` classes) and the layout hooks
+/* Marketing Cloud - UI kit (MC.ui.*, `k-` classes) and the layout hooks
    MC.hooks.useWidth / useReducedMotion. Components are plain React function components used
    through htm:  html`<${MC.ui.Button} kind="primary" onClick=${fn}>Save<//>`.
    Colors come from css/tokens.css only (classes in css/app.css). */

@@ -1,4 +1,4 @@
-/* Kestrel Marketing Cloud - Insight Analyst agent. Reads each running campaign's complete days, flags
+/* Marketing Cloud - Insight Analyst agent. Reads each running campaign's complete days, flags
    days that land well outside the usual range, warns when a campaign is unlikely to reach its goal
    (and suggests a short extension when that would close the gap), and once a week names the segment
    that returned the most for each campaign. Insights go to the feed; only the extension needs a person. */

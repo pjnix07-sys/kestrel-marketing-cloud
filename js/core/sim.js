@@ -1,4 +1,4 @@
-/* Kestrel Marketing Cloud - MC.sim: the hourly simulation step for the Fernway Outfitters sample
+/* Marketing Cloud - MC.sim: the hourly simulation step for the Fernway Outfitters sample
    world (synthetic data). Journey engine for owned channels, paid-media response curves, organic
    orders, attribution, the day roll, go-live enrollment and the hidden "latent truth" that agents
    never see. Columnar data is mutated in place and followed by a rev bump; entity changes go

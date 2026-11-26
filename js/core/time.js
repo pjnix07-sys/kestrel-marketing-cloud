@@ -1,4 +1,4 @@
-/* Kestrel Marketing Cloud - MC.time: clock arithmetic.
+/* Marketing Cloud - MC.time: clock arithmetic.
    tick 0 = Sat 2026-11-07 00:00 on the internal calendar; 1 tick = 1 hour; history days are negative.
    Pure integer calendar math (proleptic Gregorian). The only Date read is the display anchor:
    display dates shift the internal calendar so the boot day shows as the real current date (§11.1).

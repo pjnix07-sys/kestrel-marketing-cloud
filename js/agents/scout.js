@@ -1,4 +1,4 @@
-/* Kestrel Marketing Cloud - Segment Scout agent. Looks at the people campaigns reached recently, finds
+/* Marketing Cloud - Segment Scout agent. Looks at the people campaigns reached recently, finds
    simple rules (one or two conditions on visible attributes) whose members bought far more often than
    average, and proposes them as new segments, or as an addition to a live campaign's audience. It never
    edits a segment or audience a person wrote: new rules arrive as new segments. */

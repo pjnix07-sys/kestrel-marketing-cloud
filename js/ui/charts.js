@@ -1,4 +1,4 @@
-/* Kestrel Marketing Cloud - hand-written SVG charts (MC.charts.*, ch- classes).
+/* Marketing Cloud - hand-written SVG charts (MC.charts.*, ch- classes).
    Colors come only from CSS custom properties (tokens.css). Every chart is safe on
    empty / NaN input, sizes from its container width, carries role="img" with an
    aria-label summary, and (except Sparkline / ScoreRing) offers "View as table". */

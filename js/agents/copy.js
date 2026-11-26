@@ -1,4 +1,4 @@
-/* Kestrel Marketing Cloud - Copy Drafter agent. Watches the leading email, SMS and push variant on each
+/* Marketing Cloud - Copy Drafter agent. Watches the leading email, SMS and push variant on each
    live campaign. When the leader's click rate tires, or a test has clearly settled, it writes a fresh
    challenger from the campaign's tone, product and offer, checks it against the brand rules, and
    proposes it as a new variant on a small share of traffic. It never edits copy a person wrote. */

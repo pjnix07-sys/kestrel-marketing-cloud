@@ -1,4 +1,4 @@
-/* Kestrel Marketing Cloud - namespace root (core).
+/* Marketing Cloud - namespace root (core).
    Creates window.MC, MC.html, shared buckets, channel/fact constants and the
    runtime contract checker. Sample tenant: Fernway Outfitters (synthetic data). */
 (function () {

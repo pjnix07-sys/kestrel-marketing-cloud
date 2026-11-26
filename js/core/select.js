@@ -1,4 +1,4 @@
-/* Kestrel Marketing Cloud - MC.select: memoized derived selectors shared by every view.
+/* Marketing Cloud - MC.select: memoized derived selectors shared by every view.
    Each selector is keyed on the world, the relevant world.rev counters / slice references and its
    arguments, so repeated calls inside one tick return the same object (safe for useSelect). */
 (function () {

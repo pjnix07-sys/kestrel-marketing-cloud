@@ -1,4 +1,4 @@
-/* Kestrel Marketing Cloud - design tokens (palette, type, spacing, radii, motion).
+/* Marketing Cloud - design tokens (palette, type, spacing, radii, motion).
    Full light palette on bare :root. Dark mode only redefines tokens: once for the system
    preference (unless the person picked Light) and once for an explicit Dark choice. */
 

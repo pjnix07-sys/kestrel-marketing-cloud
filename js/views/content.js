@@ -1,4 +1,4 @@
-/* Kestrel Marketing Cloud · Content Studio (#content). MC.views.content.
+/* Marketing Cloud · Content Studio (#content). MC.views.content.
    Library · Composer (+ Generate variants) · Preview & checks. The composer draft lives in component
    state (mirrored in module memory so it survives switching variants and routes) and is never replaced
    from the store while dirty; a ver change underneath shows a ConflictChip. Generation is pure

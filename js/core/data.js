@@ -1,4 +1,4 @@
-/* Kestrel Marketing Cloud - MC.data: the synthetic Fernway Outfitters sample world (sample data only).
+/* Marketing Cloud - MC.data: the synthetic Fernway Outfitters sample world (sample data only).
    Taxonomy, journey templates, 6,000 profiles with a hidden latent truth, 60 days of aggregate history
    (organic orders and the completed Fall Trail Running Sale), model fit and scores, nine seeded
    segments, six seeded campaigns with generated variants, and agent entities. Pure function of the

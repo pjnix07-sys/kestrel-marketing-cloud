@@ -1,4 +1,4 @@
-/* Kestrel Marketing Cloud - Send-Time Tuner agent. Moves each live campaign's email, SMS and push
+/* Marketing Cloud - Send-Time Tuner agent. Moves each live campaign's email, SMS and push
    sends to the hours people actually open, or to each person's own best hour when the audience's
    habits are spread out and well known. Opens by hour are blended with a prior built from the
    audience's best-hour histogram. */

@@ -1,4 +1,4 @@
-/* Kestrel Marketing Cloud - Analytics view (#analytics). MC.views.analytics.
+/* Marketing Cloud - Analytics view (#analytics). MC.views.analytics.
    Performance over time with forecasts and bands, agent impact vs control, funnel, channels and
    variants, attribution, ROI-ranked audiences, anomalies, a what-if budget simulator on fitted
    response curves, and narrative insights. Reads only through MC.select.* and narrow selectors;

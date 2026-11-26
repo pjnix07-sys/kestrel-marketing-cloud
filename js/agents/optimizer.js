@@ -1,4 +1,4 @@
-/* Kestrel Marketing Cloud - Variant Optimizer agent. Shifts traffic toward the variants that are
+/* Marketing Cloud - Variant Optimizer agent. Shifts traffic toward the variants that are
    winning on each live campaign's email, SMS and push channels (Thompson sampling with a prior
    from the content score), and pauses clear losers once they have enough sends. */
 (function () {

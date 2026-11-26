@@ -1,4 +1,4 @@
-/* Kestrel Marketing Cloud - Campaign Planner agent and MC.planner. Turns a brief into a full plan the
+/* Marketing Cloud - Campaign Planner agent and MC.planner. Turns a brief into a full plan the
    marketer can accept section by section: audience (ranked by expected value), channels and budget
    (equal-marginal split on response curves), journey, content, forecast and preflight checks. The
    same planner drafts an event campaign once a week when a holiday is coming up with nothing planned.

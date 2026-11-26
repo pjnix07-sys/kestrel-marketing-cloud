@@ -1,4 +1,4 @@
-/* Kestrel Marketing Cloud - application shell: sidebar + phone top bar, quiet agent pulse,
+/* Marketing Cloud - application shell: sidebar + phone top bar, quiet agent pulse,
    approvals count, theme, approvals drawer, batched autopilot toasts, bare-hash router,
    error boundaries, boot. Sample tenant: Fernway Outfitters (fictional). Per §11 the shell shows
    no clock or pace controls; the only time control is the overflow menu's "Jump ahead". */
@@ -29,7 +29,7 @@
     return;
   }
   if (!MC.store || typeof MC.store.subscribe !== 'function' || !MC.uiStore || typeof MC.uiStore.getState !== 'function') {
-    bootMessage("Kestrel couldn't start.", 'A core file failed to load. Reload the page; if it keeps happening, the deployment is incomplete.');
+    bootMessage("Marketing Cloud couldn't start.", 'A core file failed to load. Reload the page; if it keeps happening, the deployment is incomplete.');
     return;
   }
 
@@ -145,9 +145,9 @@
 
   /* ---------------- brand + navigation ---------------- */
   function Mark(p) {
-    return html`<a className="app-mark" href="#home" aria-label="Kestrel Marketing Cloud, Command Center" onClick=${function (e) { e.preventDefault(); go('home'); }}>
-      <span className="app-mark-glyph" aria-hidden="true"><${Icon} name="kestrel" size=${20} /></span>
-      ${p.compact ? null : html`<span className="app-mark-word">Kestrel</span>`}
+    return html`<a className="app-mark" href="#home" aria-label="Marketing Cloud, Command Center" onClick=${function (e) { e.preventDefault(); go('home'); }}>
+      <span className="app-mark-glyph" aria-hidden="true"><img src="assets/mark.svg" width="24" height="24" alt="" /></span>
+      ${p.compact ? null : html`<span className="app-mark-word">Marketing Cloud</span>`}
     </a>`;
   }
 
@@ -173,7 +173,7 @@
   }
 
   function Sidebar() {
-    return html`<aside className="app-sidebar" aria-label="Kestrel">
+    return html`<aside className="app-sidebar" aria-label="Marketing Cloud">
       <div className="app-sidebar-top"><${Mark} /></div>
       <${NavList} />
       <div className="app-sidebar-foot">
@@ -430,7 +430,7 @@
     var err = this.state.error;
     return html`<section className="app-fault" role="alert">
       <h1 id="page-title" tabIndex="-1" className="app-fault-title">This view hit an error.</h1>
-      <p>The rest of Kestrel keeps running, and your agents are unaffected.</p>
+      <p>The rest of Marketing Cloud keeps running, and your agents are unaffected.</p>
       <div className="app-fault-actions">
         <button type="button" className="k-btn k-btn--primary k-btn--md" id="app-reload-view"
           onClick=${function () { self.setState({ error: null }); if (self.props.onReload) self.props.onReload(); }}><span className="k-btn-label">Reload view</span></button>
@@ -475,7 +475,7 @@
     PHASES.forEach(function (ph, i) { if (ph.id === p.phase) idx = i; });
     if (p.error) {
       return html`<section className="app-bootcard app-bootcard--error" role="alert">
-        <h1 id="page-title" tabIndex="-1" className="app-page-h1">Kestrel couldn't load the sample workspace.</h1>
+        <h1 id="page-title" tabIndex="-1" className="app-page-h1">Marketing Cloud couldn't load the sample workspace.</h1>
         <p>${p.error}</p>
         <button type="button" className="k-btn k-btn--primary k-btn--md" id="app-boot-retry" onClick=${p.onRetry}><span className="k-btn-label">Try again</span></button>
       </section>`;
@@ -633,7 +633,7 @@
     if (!missing.length) return null;
     return html`<details className="app-devcheck">
       <summary>${'Build check: ' + missing.length + (missing.length === 1 ? ' piece' : ' pieces') + ' of the app ' + (missing.length === 1 ? "isn't" : "aren't") + ' loaded yet'}</summary>
-      <p>Parts of Kestrel that depend on these show a fallback until they ship.</p>
+      <p>Parts of Marketing Cloud that depend on these show a fallback until they ship.</p>
       <ul>${missing.map(function (m) { return html`<li key=${m}><code>${m}</code></li>`; })}</ul>
     </details>`;
   }
@@ -656,7 +656,7 @@
 
     useEffect(function () { MC.uiStore.applyTheme(theme); }, [theme]);
     useEffect(function () {
-      try { document.title = (TITLES[route] || 'Command Center') + ' · Kestrel Marketing Cloud'; } catch (e) { /* no document */ }
+      try { document.title = (TITLES[route] || 'Command Center') + ' · Marketing Cloud'; } catch (e) { /* no document */ }
       if (first.current) { first.current = false; return undefined; }
       // A route change is a person's navigation: start at the top and move focus to the page heading.
       var raf = window.requestAnimationFrame(function () {
@@ -697,7 +697,7 @@
     reactRoot.render(html`<${App} />`);
   } catch (e) {
     report(e);
-    bootMessage("Kestrel couldn't start.", 'The interface failed to render. Reload the page to try again.');
+    bootMessage("Marketing Cloud couldn't start.", 'The interface failed to render. Reload the page to try again.');
     return;
   }
   watchToasts();

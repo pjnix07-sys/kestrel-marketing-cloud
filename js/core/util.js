@@ -1,4 +1,4 @@
-/* Kestrel Marketing Cloud - MC.util (hashing, canonical form, math helpers) and MC.fmt
+/* Marketing Cloud - MC.util (hashing, canonical form, math helpers) and MC.fmt
    (locale-independent formatters). No Date, Intl or Math.random anywhere in this file. */
 (function () {
   'use strict';
