@@ -108,3 +108,32 @@ All show a calm inline state ("Writing…") and never block the rest of the UI.
   agents reason and write with Haiku." No nagging banners.
 - Design bans from the user (binding, all views): no glassmorphism (no `backdrop-filter`, no translucent frosted panels); no
   curved or rounded left-edge bars or accent stripes on buttons, banners, cards or rows.
+
+## As implemented (fleet core: `js/ai/client.js`, `context.js`, `fleet.js`, `tasks.js`; runtime/catalog integration)
+
+**`MC.ai` (client.js)**: `state()` → `'off'|'connecting'|'on'|'invalid'|'blocked'`; `isOn()`; `getState()` → `{state, message, remember, hasKey, model, modelLabel, usage, inFlight, queued}`;
+`subscribe(fn) → unsubscribe` (fn gets `getState()`); `verifyKey(key) → Promise<{ok, state, error?}>` (one `max_tokens:16` call, stores nothing);
+`connect(key, {remember=true}) → Promise<{ok, state, error?}>` (verify, then localStorage or sessionStorage under `mc.ai.key`); `setRemember(bool)`; `disconnect()` (clears both);
+`restore()` runs at load. `isKeyLike(s)` (`sk-ant-` prefix), `keyHint()`, `KEY_URL`, `MODEL`, `MODEL_LABEL` ("Haiku 5.5"), `DATA_POLICY` (Connect panel copy).
+`usage()` → `{calls, agentRuns, tasks, fallbacks, errors, input, output, cacheRead, cacheWrite, cost, ms}` at $0.10/$0.50 per MTok, cache reads 0.1×, writes 1.25×; `usageLine()` → "This session: 42 agent runs · about $0.03".
+`call({system, user|messages, schema, maxTokens, effort='low', timeoutMs, kind}) → Promise<{ok, data?, error?, usage, ms}>` (never rejects; ≤ 3 in flight).
+A 401 drops the key and sets `invalid` (or `blocked` for the CORS message); 429 honours `retry-after` once.
+
+**Data policy**: `MC.ai.context.scrub` runs on everything sent; profile-level fields (`idx`, `members`, `sample`, names, emails, …) and long id lists become counts. Only aggregates leave the browser.
+
+**World facts (logged, replay-safe)**: `ai/setEnabled {on}` (dispatched by the fleet when the connection changes; `off` completes every waiting run with its rule drafts),
+`agent/setAiMode {id, aiMode:'auto'|'rules'}` (per-agent rules-only lock; default auto), `agent/aiRun {runId, agentId, decisions, extra, insights, summary, model, ms}` or `{runId, agentId, fallback:true, reason}`.
+`world.ai = {on, pending:{runId: job}}` exists only after the first `ai/setEnabled`; with AI never connected the world and smoke output are unchanged.
+
+**Runtime**: when `world.ai.on` and `agent.aiMode !== 'rules'`, `runAgent` records the run in `world.ai.pending`, sets `agent.aiAwait = runId` (the agent skips further runs until it lands) and,
+for the live world only, calls `MC.ai.fleet.enqueue`. `MC.runtime.statusOf()` adds `awaiting:true, runId` while waiting; `MC.runtime.awaiting(world)` lists waiting runs.
+The verdict goes through the same proposal path (materiality, cooldown, dedupe, guardrails, routing). Proposals from Haiku carry `ai:'haiku'`, `why`, `confidence`.
+Every audit entry has `engine:'ai'|'rules'`; AI-path entries add `ai:'haiku'|'fallback'`, `landedTick`, `model`, `aiMs`, `summary`, `fallbackReason`.
+Copy written by Haiku is always `mustQueue` (never auto-applied).
+
+**`MC.ai.fleet`**: `enqueue(job)`, `validate(world, job, data, ground)`, `schemaFor(agentId)`, `tunables(agentId, draft)` / `applyAdjust` (Copy Drafter `share` within `challengerShare`),
+`ROLES`, `DEADLINE_MS` (8000), `sync()`, `last` (`{runId, agentId, result, reason?|ms?}`).
+
+**`MC.ai.tasks`** (always resolve; `source:'ai'|'rules'`, never shown as a badge):
+`writeVariants(opts) → VariantDraft[]` (MC.copy.generate shape; also `MC.copy.generateAsync`), `briefFromText(text) → Brief + {narrative}` (§10.9 Brief, ready for `MC.planner.plan`),
+`segmentFromText(text) → {rule, name, why, matched, ignored, confidence, count?}`, `explain(proposal|insight|id, question?) → {text}`.

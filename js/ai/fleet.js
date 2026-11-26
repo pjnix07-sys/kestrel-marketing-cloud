@@ -1,4 +1,4 @@
-/* Kestrel Marketing Cloud - MC.ai.fleet: the eight agents as Haiku agents (§12.5). Per-agent roles,
+/* Marketing Cloud - MC.ai.fleet: the eight agents as Haiku agents (§12.5). Per-agent roles,
    response schemas, validation of Haiku's verdict, and the bridge into the runtime: runtime.runAgent hands
    awaiting runs to enqueue(); the verdict (or the rule-based fallback after 8 s, an error, or a validation
    failure) lands as ONE logged action `agent/aiRun`, so replay reproduces it without calling the API.
@@ -145,7 +145,7 @@
       if (!v) return;
       var title = cleanText(x.title, ground, 140) || (cand ? cand.title : 'Add a fresh ' + chLower(v.channel) + ' challenger');
       var e = { kind: 'new-variant', target: target, actions: [{ type: 'variant/create', payload: { variant: v, share: sh } }], title: title,
-        why: cleanText(x.why, ground, 600), risk: 'medium', horizon: 96,
+        why: cleanText(x.why, ground, 600), risk: 'medium', horizon: 96, mustQueue: true,   // Haiku-written copy is always reviewed
         diff: [{ label: 'New ' + chLower(v.channel) + ' variant', before: '—', after: hookOf(v) }, { label: 'Its share of traffic', before: '0%', after: Math.round(sh * 100) + '%' }] };
       if (cand) e.replaces = x.candidate;
       out.push(e);
@@ -223,7 +223,8 @@
         title: cleanText(d.title, ground, 140), why: cleanText(d.why, ground, 600),
         confidence: isNum(d.confidence) ? Math.max(0, Math.min(1, d.confidence)) : 0.5 });
     });
-    if (n && !decisions.length) return { ok: false, error: 'no-decisions' };
+    // No usable decision: either candidates went unanswered, or every reference was unknown or malformed.
+    if ((n || data.decisions.length) && !decisions.length) return { ok: false, error: 'no-decisions' };
     var extra = [];
     try {
       if (job.agentId === 'copy') extra = copyExtras(world, job, data, ground);
@@ -281,14 +282,14 @@
     inflight[job.runId] = true;
     function finish(fn) { if (done) return; done = true; delete inflight[job.runId]; later(fn); }
     if (!(AI.isOn && AI.isOn())) { finish(function () { fallback(job, 'off'); }); return; }
-    setTimeout(function () { finish(function () { fallback(job, 'timeout'); }); }, DEADLINE_MS);
+    setTimeout(function () { finish(function () { fallback(job, 'timeout'); }); }, FL.DEADLINE_MS);
     later(function () {
       var world = MC.store.getState();
       if (!world || !world.ai || !world.ai.pending || !world.ai.pending[job.runId]) { done = true; delete inflight[job.runId]; return; }
       var ctx;
       try { ctx = AI.context.build(world, job); } catch (e) { report(e); finish(function () { fallback(job, 'context'); }); return; }
       AI.call({ system: ctx.system, user: ctx.user, schema: FL.schemaFor(job.agentId), maxTokens: 4000, effort: 'low', kind: 'agent',
-        timeoutMs: Math.max(500, DEADLINE_MS - (clock() - t0)) }).then(function (r) {
+        timeoutMs: Math.max(200, FL.DEADLINE_MS - (clock() - t0)) }).then(function (r) {
         if (done) return;
         if (!r.ok) { finish(function () { fallback(job, r.error); }); return; }
         var w = MC.store.getState(), v;

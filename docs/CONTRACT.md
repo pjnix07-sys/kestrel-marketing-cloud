@@ -1849,7 +1849,7 @@ Live dispatches are stamped with `world.meta.tick` and are processed before tick
   notify:{ [agentId]:'all'|'changes'|'silent' } }
 ```
 
-- localStorage key `kestrel.ui.v1` holds `{theme, route, sampleDismissed, notify}`. Every read and write is wrapped in try/catch, and a failure falls back to the defaults.
+- localStorage key `mc.ui.v1` holds `{theme, route, sampleDismissed, notify}`. Every read and write is wrapped in try/catch, and a failure falls back to the defaults.
 - Routing:
   - Only `#home`, `#campaigns`, `#content`, `#audiences`, `#analytics` and `#agents` are valid. Unknown or empty hashes render home.
   - `MC.nav.go` sets focus, then `location.hash`. A `hashchange` listener updates `route`.

@@ -1,4 +1,4 @@
-/* Kestrel Marketing Cloud - MC.ai.context: the deep context the Haiku agents reason over (§12.4).
+/* Marketing Cloud - MC.ai.context: the deep context the Haiku agents reason over (§12.4).
    stable prefix (identical bytes every call: sorted keys, no clock, no world state; carries the cache
    breakpoint) + agent block (role, params, autonomy, track record) + volatile snapshot (today's world,
    the agent's observation and the rule engine's candidate drafts c0..cn). Read-only over the world. */
@@ -16,6 +16,34 @@
   function isTyped(v) { return !!v && ArrayBuffer.isView && ArrayBuffer.isView(v); }
   function sortedKeys(o) { return Object.keys(o || {}).sort(); }
   function safe(fn, dflt) { try { var r = fn(); return r === undefined ? dflt : r; } catch (e) { return dflt; } }
+
+  /* ---------------- data policy: aggregates only ---------------- */
+  // Nothing profile-level ever leaves the browser: no names, emails, phone numbers, per-profile attributes,
+  // scores or profile index lists. Segment sizes, campaign metrics, distributions and the candidate actions
+  // (with any per-profile lists collapsed to a count) are fine. Every value sent goes through scrub().
+  var PROFILE_KEYS = { idx: 1, indices: 1, profiles: 1, profileIdx: 1, members: 1, bits: 1, sample: 1, firstName: 1, lastName: 1,
+    email: 1, phone: 1, address: 1, latent: 1, cands: 1, people: 0 };
+  function scrub(v, depth) {
+    depth = depth || 0;
+    if (v === null || v === undefined || typeof v !== 'object' || depth > 14) return v;
+    if (isTyped(v)) return { count: v.length };
+    if (Array.isArray(v)) {
+      var allInt = v.length > 24 && v.every(function (x) { return typeof x === 'number' && Math.floor(x) === x; });
+      if (allInt) return { count: v.length };
+      return v.map(function (x) { return scrub(x, depth + 1); });
+    }
+    var o = {};
+    Object.keys(v).forEach(function (k) {
+      if (PROFILE_KEYS[k]) {
+        var x = v[k];
+        if (Array.isArray(x) || isTyped(x)) o[k + 'Count'] = x.length;
+        return;
+      }
+      o[k] = scrub(v[k], depth + 1);
+    });
+    return o;
+  }
+  CX.scrub = function (v) { return scrub(v); };
 
   /* ---------------- canonical JSON (sorted keys, rounded numbers) ---------------- */
   function round(x) {
@@ -45,12 +73,12 @@
     return undefined;
   }
   // Byte-stable JSON: keys sorted at every level, floats rounded, private/derived fields dropped.
-  CX.stable = function (v) { return JSON.stringify(tidy(v)); };
+  CX.stable = function (v) { return JSON.stringify(tidy(scrub(v))); };
 
   // Shrinks a value until its JSON fits: halves the longest array each pass (lists come newest/most
   // important first), never cutting inside an object.
   function fit(v, maxChars) {
-    var t = tidy(v);
+    var t = tidy(scrub(v));
     for (var guard = 0; guard < 60 && JSON.stringify(t).length > maxChars; guard++) {
       var best = null;
       (function walk(x, parent, key) {
@@ -71,7 +99,7 @@
 
   /* ---------------- stable prefix ---------------- */
   var MANUAL = [
-    'You are one of eight marketing agents working inside Kestrel Marketing Cloud for Fernway Outfitters, an outdoor gear retailer.',
+    'You are one of eight marketing agents working inside Marketing Cloud for Fernway Outfitters, an outdoor gear retailer.',
     'The person you work for is Fernway\'s lifecycle and campaigns marketer. They run email, SMS, push, social ads and web ads campaigns, and they review what the agents suggest.',
     '',
     'HOW YOUR WORK BECOMES REAL',

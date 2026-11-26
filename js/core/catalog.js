@@ -1,4 +1,4 @@
-/* Kestrel Marketing Cloud - MC.catalog: typed action catalog with validators, copy-on-write
+/* Marketing Cloud - MC.catalog: typed action catalog with validators, copy-on-write
    reducers and inverses. Every user change and every agent change goes through apply().
    Entity slices are copy-on-write; columnar data is mutated in place and followed by a rev bump. */
 (function () {
@@ -1293,9 +1293,9 @@
     function (n) { return 'You asked ' + n + ' to run now'; });
 
   agentAction('agent/setAiMode', 'Reasoning on or off',
-    function (world, p) { return (p.aiMode === 'on' || p.aiMode === 'off') ? null : 'Pick on or off.'; },
+    function (world, p) { return (p.aiMode === 'auto' || p.aiMode === 'rules') ? null : 'Pick auto or rules.'; },
     function (world, p) { return { aiMode: p.aiMode }; },
-    function (n, p) { return p.aiMode === 'off' ? 'You set ' + n + ' to use its standard playbook only' : 'You let ' + n + ' reason through its runs again'; });
+    function (n, p) { return p.aiMode === 'rules' ? 'You set ' + n + ' to its standard playbook only' : 'You let ' + n + ' reason through its runs again'; });
 
   /* ================= Haiku agent fleet (§12.5) ================= */
   // Logged world fact: whether agent runs wait for the fleet's verdict. Dispatched by MC.ai.fleet when the

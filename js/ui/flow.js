@@ -58,12 +58,6 @@
     if (s.type === 'wait') return 'Pause before next step';
     return stepKicker(s);
   }
-  function stripeColor(s) {
-    if (s.type === 'send') return 'var(--chart-1)';
-    if (s.type === 'decide') return 'var(--chart-4)';
-    if (s.type === 'wait') return 'var(--ink-3)';
-    return 'var(--line-strong)';
-  }
   function edgesOf(s) {
     var out = [];
     if (!s) return out;
@@ -220,8 +214,7 @@
             </g>` : null}
           <rect x=${b.x} y=${b.y} width=${nodeW} height=${nodeH} rx="6" strokeWidth=${isSel ? 2 : 1}
             style=${{ fill: isSel ? 'var(--accent-soft)' : 'var(--surface)', stroke: isSel ? 'var(--accent)' : (tag ? 'var(--agent)' : 'var(--line-strong)') }} />
-          <rect x=${b.x + 1} y=${b.y + 6} width="3" height=${nodeH - 12} rx="1.5" style=${{ fill: stripeColor(s) }} />
-          <text x=${b.x + 12} y=${b.y + 15} style=${{ fill: 'var(--ink-3)', fontSize: 10, fontWeight: 600, letterSpacing: '0.03em', textTransform: 'uppercase' }}>${trunc(stepKicker(s), maxChars + 2)}</text>
+          <text x=${b.x + 12} y=${b.y + 15} style=${{ fill: 'var(--ink-3)', fontSize: 11, fontWeight: 500 }}>${trunc(stepKicker(s), maxChars + 2)}</text>
           <text x=${b.x + 12} y=${b.y + 32} style=${{ fill: 'var(--ink)', fontSize: 12, fontWeight: 600 }}>${trunc(stepTitle(s), maxChars)}</text>
           ${!compact && statText ? html`<text x=${b.x + 12} y=${b.y + 50} style=${{ fill: 'var(--ink-2)', fontSize: 11, fontVariantNumeric: 'tabular-nums' }}>${trunc(statText, maxChars + 2)}</text>` : null}
           <title>${label}</title>
@@ -341,7 +334,7 @@
             <rect x=${bx0} y=${y + (rowH - barH) / 2} width=${bw} height=${barH} rx="4" strokeWidth="1" strokeDasharray=${st.dash}
               style=${{ fill: st.fill, stroke: st.stroke }} />
             ${fits ? html`<text x=${bx0 + 6} y=${y + rowH / 2} dominantBaseline="central" style=${{ fill: st.text, fontSize: 11, fontWeight: 500 }}>${txt}</text>` : null}
-          </g>` : html`<text x=${s >= to ? x1 : x0 + 4} y=${y + rowH / 2} textAnchor=${s >= to ? 'end' : 'start'} dominantBaseline="central" style=${{ fill: 'var(--ink-3)', fontSize: 11 }}>${s >= to ? 'Starts later →' : '← Ended earlier'}</text>`}
+          </g>` : html`<text x=${s >= to ? x1 : x0 + 4} y=${y + rowH / 2} textAnchor=${s >= to ? 'end' : 'start'} dominantBaseline="central" style=${{ fill: 'var(--ink-3)', fontSize: 11 }}>${s >= to ? 'Starts later' : 'Ended earlier'}</text>`}
         <title>${label}</title>
       </g>`;
     });

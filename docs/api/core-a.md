@@ -62,7 +62,7 @@ Files: `js/core/namespace.js`, `util.js`, `time.js`, `rng.js`, `catalog.js`, `st
 - `MC.uiStore`:
   - `getState()`, `version()`, `subscribe(fn)`, `set(patch|fn)` (shallow merge, synchronous notify).
   - Helpers: `setFocus(view, patch)`, `setNotify(agentId, level)`, `addToast(t) -> id` (keeps the last 3), `dismissToast(id)`, `clearToasts()`, `applyTheme(theme)`, `reset()`.
-  - It persists `{theme, route, sampleDismissed, notify}` under `kestrel.ui.v1` with try/catch. On a bare URL it restores the persisted route; an unknown hash goes to `home`. `notify` defaults to `'changes'` for all 8 agents.
+  - It persists `{theme, route, sampleDismissed, notify}` under `mc.ui.v1` with try/catch. On a bare URL it restores the persisted route; an unknown hash goes to `home`. `notify` defaults to `'changes'` for all 8 agents.
 - `MC.nav.go(route, focusPatch?)`, `MC.nav.route()`, `MC.nav.ROUTES`. It also installs a `hashchange` listener.
 - `MC.hooks`:
   - `useSelect(sel, eq=Object.is)` returns undefined before `init`. `useShallow(sel)`, `useUi(sel?, eq)`, `useTick()`.

@@ -562,7 +562,7 @@
       ${parsed ? h`<div className="aud-parsed">
         ${parsed.matched && parsed.matched.length ? h`<div className="aud-parsed-row"><span className="aud-parsed-k">Understood:</span>
           <ul className="aud-plainlist">${parsed.matched.map(function (m, i) {
-            return h`<li key=${i + '-' + m.phrase}><span className="aud-chip-phrase">${m.phrase}</span> ${ARROW} ${m.label}</li>`;
+            return h`<li key=${i + '-' + m.phrase}><span className="aud-chip-phrase">${m.phrase}</span>: ${m.label}</li>`;
           })}</ul></div>` : h`<p className="aud-msg aud-msg-warn">Nothing in that description matched an attribute. Try words like “lapsed”, “hikers”, “Pacific Northwest”, “Summit tier” or “high predicted LTV”.</p>`}
         ${parsed.ignored && parsed.ignored.length ? h`<div className="aud-parsed-row"><span className="aud-parsed-k">Ignored:</span>
           <p className="aud-muted">${parsed.ignored.map(function (t) { return '“' + t + '”'; }).join(', ')}</p></div>` : null}

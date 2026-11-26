@@ -1,4 +1,4 @@
-/* Kestrel Marketing Cloud - MC.runtime: the agent runtime. Registry of agent definitions, cadence
+/* Marketing Cloud - MC.runtime: the agent runtime. Registry of agent definitions, cadence
    scheduling on the simulated clock, seeded rng forks per run, proposals with guardrails and
    autonomy routing (Off / Suggest / Autopilot), apply and undo through the action catalog,
    realized-impact measurement and a chained audit log with FNV-1a digests. Everything here works
@@ -573,7 +573,8 @@
     var chain = U().hex8(U().fnv1a(prev + '|' + R.inDigest + '|' + outDigest));
     var entry = { id: 'run-' + id + '-' + t, agentId: id, tick: t, reason: R.reason, mode: mode, inDigest: R.inDigest, outDigest: outDigest,
       prev: prev, chain: chain, proposals: created.slice(), insights: createdIns.map(function (x) { return x.id; }),
-      dispatched: dispatched, trace: trace, error: err ? String(err && err.message ? err.message : err) : null, _ms: U().now() - R.t0 };
+      dispatched: dispatched, trace: trace, error: err ? String(err && err.message ? err.message : err) : null, _ms: U().now() - R.t0,
+      engine: ai && ai.mode === 'haiku' ? 'ai' : 'rules' };
     if (ai) {
       entry.ai = ai.mode; entry.landedTick = now;
       if (ai.model) entry.model = ai.model;
@@ -606,9 +607,9 @@
 
   /* ======================= Haiku fleet integration (§12.5) ======================= */
   // Whether a run goes through the fleet. Reads only logged world facts (world.ai.on via ai/setEnabled,
-  // agent.aiMode via agent/setAiMode), so live and replay take the same branch.
+  // agent.aiMode 'auto'|'rules' via agent/setAiMode; default auto), so live and replay take the same branch.
   function aiActive(world, a) {
-    return !!(world.ai && world.ai.on && a && a.aiMode !== 'off');
+    return !!(world.ai && world.ai.on && a && a.aiMode !== 'rules');
   }
   RT.aiActive = function (world, id) { return aiActive(world, agentOf(world, id)); };
 
@@ -720,6 +721,7 @@
       draft.actions = U().clone(x.actions);
       if (Array.isArray(x.diff)) draft.diff = U().clone(x.diff);
       if (x.risk === 'low' || x.risk === 'medium' || x.risk === 'high') draft.risk = x.risk;
+      if (x.mustQueue) draft.mustQueue = true;
       if (isNum(x.horizon)) draft.horizon = x.horizon;
       draft.title = str(x.title, 140) || draft.title || x.kind;
       if (x.why) { draft._why = str(x.why, 600); draft.rationale = draft._why + (base && base.rationale ? '\n\n' + base.rationale : ''); }

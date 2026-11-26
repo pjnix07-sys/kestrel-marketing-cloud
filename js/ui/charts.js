@@ -70,6 +70,7 @@
   }
   function shortDay(d) {
     if (!fin(d)) return DASH;
+    if (window.MC && MC.time && typeof MC.time.dayLabel === 'function') return MC.time.dayLabel(d, { style: 'short' });
     var c = calDay(d);
     return MONTHS[c.m] + ' ' + c.d;
   }

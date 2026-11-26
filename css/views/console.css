@@ -87,7 +87,7 @@
 .v-agents .cn-roster-main { display: grid; gap: 2px; min-width: 0; }
 .v-agents .cn-roster-name { font-size: 15px; font-weight: 600; color: var(--ink); }
 .v-agents .cn-roster-short { font-size: 13px; color: var(--ink-2); line-height: 1.4; overflow-wrap: anywhere; }
-.v-agents .cn-roster-meta { font-size: 12px; color: var(--ink-3); margin-top: 2px; overflow-wrap: anywhere; }
+.v-agents .cn-roster-meta { display: grid; gap: 1px; font-size: 13px; color: var(--ink-2); margin-top: 4px; overflow-wrap: anywhere; }
 .v-agents .cn-roster-side { display: grid; justify-items: end; gap: 4px; flex: none; }
 .v-agents .cn-roster-state { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--ink-2); white-space: nowrap; }
 .v-agents .cn-roster-pending { font-size: 12px; font-weight: 600; color: var(--agent); white-space: nowrap; }

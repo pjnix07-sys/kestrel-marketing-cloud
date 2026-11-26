@@ -415,7 +415,7 @@
         <span className="cn-roster-main">
           <span className="cn-roster-name">${displayName(r)}</span>
           <span className="cn-roster-short">${r.short || (agentDef(r.id) || {}).short || AGENT_SHORT[r.id] || ''}</span>
-          <span className="cn-roster-meta num">${(AUTONOMY_LABEL[r.autonomy] || DASH) + MID + cadenceLabel(r.cadence) + MID + whenLine(r, p.tick)}</span>
+          <span className="cn-roster-meta"><span>${(AUTONOMY_LABEL[r.autonomy] || DASH) + ', ' + cadenceLabel(r.cadence)}</span><span>${whenLine(r, p.tick)}</span></span>
         </span>
         <span className="cn-roster-side">
           <span className="cn-roster-state"><${Dot} state=${st} label=${null} />${loaded(r.id) ? STATE_LABEL[st] : 'Not loaded'}</span>

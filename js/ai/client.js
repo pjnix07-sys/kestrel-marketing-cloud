@@ -1,4 +1,4 @@
-/* Kestrel Marketing Cloud - MC.ai: the Claude Haiku client (§12.2, §12.3). Key storage, connection state,
+/* Marketing Cloud - MC.ai: the Claude Haiku client (§12.2, §12.3). Key storage, connection state,
    a small concurrency queue, the usage/cost meter and subscribe().
    Raw fetch is deliberate: the binding contract (§2, §10.1) forbids modules/imports and has no build step,
    so the @anthropic-ai/sdk package cannot be loaded. Nothing here touches the world; agent results reach
@@ -11,12 +11,14 @@
   var URL = 'https://api.anthropic.com/v1/messages';
   var VERSION = '2026-10-21';
   var MODEL = 'claude-haiku-5-5';
-  var LS_KEY = 'kestrel.ai.key';
+  var LS_KEY = 'mc.ai.key';
   var MAX_CONCURRENT = 3;
   // USD per million tokens. Cache reads bill at 0.1x input; 5-minute cache writes at 1.25x input.
   var PRICE = { input: 0.10, output: 0.50, cacheRead: 0.01, cacheWrite: 0.125 };
 
   AI.MODEL = MODEL;
+  // Shown in the Connect panel. Enforced by MC.ai.context.scrub(): context is aggregates only.
+  AI.DATA_POLICY = 'Only aggregated campaign and audience numbers are sent to Anthropic — never individual customer records.';
   AI.MODEL_LABEL = 'Haiku 5.5';
   AI.KEY_URL = 'https://platform.claude.com/settings/keys';
   AI.PRICE = PRICE;
@@ -195,7 +197,7 @@
             if (!r.ok) {
               usage.errors++;
               var auth = authFailure(r.status, r.error);
-              if (auth && k === key) setState(auth.state, auth.text); else emit();
+              if (auth && k === key) { key = null; clearKey(); setState(auth.state, auth.text); } else emit();
               fail(r.status === 429 ? 'rate-limited' : (auth ? auth.state : (r.status >= 500 ? 'server' : (r.error === 'timeout' ? 'timeout' : (r.status ? 'http-' + r.status : 'network')))));
               return;
             }
@@ -243,7 +245,7 @@
         setState('on');
       } else {
         // A failed new key never disturbs a working connection.
-        setState(key ? 'on' : (r.state === 'blocked' || r.state === 'invalid' ? r.state : 'off'), r.error);
+        setState(AI.isOn() ? 'on' : (r.state === 'blocked' || r.state === 'invalid' ? r.state : 'off'), r.error);
       }
       return r;
     });

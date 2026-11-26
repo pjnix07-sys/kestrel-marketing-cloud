@@ -139,14 +139,17 @@
     var theme = useUi(selTheme) || 'system';
     var Seg = ui('Segmented');
     if (!Seg) return null;
-    return html`<${Seg} id=${p.id || 'app-theme'} label="Theme" size="sm" block=${!!p.block} options=${THEMES} value=${theme}
+    var opts = THEMES.map(function (o) { return Object.assign({}, o, { iconOnly: !p.block, title: o.label }); });
+    return html`<${Seg} id=${p.id || 'app-theme'} label="Theme" size="sm" block=${!!p.block} options=${opts} value=${theme}
       onChange=${function (v) { setUi({ theme: v }); }} />`;
   }
 
   /* ---------------- brand + navigation ---------------- */
   function Mark(p) {
     return html`<a className="app-mark" href="#home" aria-label="Marketing Cloud, Command Center" onClick=${function (e) { e.preventDefault(); go('home'); }}>
-      <span className="app-mark-glyph" aria-hidden="true"><img src="assets/mark.svg" width="24" height="24" alt="" /></span>
+      <span className="app-mark-glyph" aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="28" height="28" fill="none"><path d=${(MC.icons && MC.icons.mark) || 'M4 20L7 6l5 7 5-9 3 16'} stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" /><circle className="app-mark-node" cx="17" cy="4" r="2.6" /></svg>
+      </span>
       ${p.compact ? null : html`<span className="app-mark-word">Marketing Cloud</span>`}
     </a>`;
   }

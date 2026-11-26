@@ -249,7 +249,7 @@
           return html`<li key=${x.key} style=${{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
             <span aria-hidden="true" style=${{ width: 8, height: 8, borderRadius: 2, background: color(i) }}></span>
             <span style=${{ color: 'var(--ink)' }}>${x.label || x.key}</span>
-            <span>${hasPrev ? pct(pv, 0) + ' ' + ARROW + ' ' + pct(x.share, 0) : pct(x.share, 0)}</span>
+            <span>${hasPrev ? pct(x.share, 0) + ' (was ' + pct(pv, 0) + ')' : pct(x.share, 0)}</span>
           </li>`;
         })}
       </ul>
@@ -375,7 +375,7 @@
     var header = html`<div style=${{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '4px 8px', minWidth: 0 }}>
       <${AgentChip} agentId=${pr.agentId} />
       <span style=${{ fontSize: 12, color: 'var(--ink-2)' }}>${KIND_LABEL[pr.kind] || pr.kind}</span>
-      <span style=${{ fontSize: 11, fontWeight: 600, padding: '1px 8px', borderRadius: 999, background: risk.bg, color: risk.fg }}>${risk.label}</span>
+      <span style=${{ fontSize: 12, fontWeight: 600, color: risk.fg }}>${risk.label}</span>
       <span className="num" style=${{ marginLeft: 'auto', fontSize: 12, color: 'var(--ink-3)', fontVariantNumeric: 'tabular-nums' }}>${rel(pr.tick, tick)}</span>
     </div>`;
 
@@ -431,7 +431,7 @@
 
     var cardStyle = {
       display: 'grid', gap: 8, minWidth: 0, padding: compact ? '10px 12px' : '12px 14px', borderRadius: 10,
-      background: 'var(--surface)', border: '1px solid var(--line)', borderLeft: pending ? '3px solid var(--agent)' : '1px solid var(--line)'
+      background: pending ? 'var(--agent-soft)' : 'var(--surface)', border: pending ? '1px solid transparent' : '1px solid var(--line)'
     };
     return html`<article className=${'ag-card ag-card-' + pr.status + (compact ? ' is-compact' : '')} aria-labelledby=${titleId} style=${cardStyle}>
       ${header}
@@ -463,8 +463,8 @@
   }
 
   /* ================= TraceView ================= */
-  var MONO = { fontFamily: 'var(--font-mono)', fontSize: 12 };
-  var H4 = { margin: '0 0 4px', fontSize: 12, fontWeight: 600, letterSpacing: '0.03em', textTransform: 'uppercase', color: 'var(--ink-3)' };
+  var MONO = { fontSize: 12, fontVariantNumeric: 'tabular-nums' };
+  var H4 = { margin: '0 0 4px', fontSize: 13, fontWeight: 600, color: 'var(--ink-2)' };
   function rowCells(r) {
     if (Array.isArray(r)) return r;
     if (r && typeof r === 'object') {
@@ -493,7 +493,7 @@
     if (e.id != null) bits.push('id:' + e.id);
     if (e.channel) bits.push('channel:' + e.channel);
     if (!bits.length && e.kind) bits.push(e.kind);
-    return d.type + ' {' + bits.join(', ') + '}' + (d.payloadDigest ? '  #' + d.payloadDigest : '');
+    return d.type + ' {' + bits.join(', ') + '}';
   }
   function TraceView(p) {
     var React = R();
@@ -525,12 +525,10 @@
       <div style=${{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, paddingBottom: 8 }}>
         <${AgentChip} agentId=${entry.agentId} size="md" />
         <span className="num" style=${{ fontSize: 13, color: 'var(--ink-2)' }}>${'Run at ' + stamp(entry.tick)}</span>
-        <code style=${Object.assign({ marginLeft: 'auto', color: 'var(--ink-3)' }, MONO)}>${entry.id}</code>
       </div>
       <div style=${sec}>
         <h4 style=${H4}>1 ${DOT} Observe</h4>
         ${obs.length ? obs.map(txt) : html`<div style=${{ fontSize: 13, color: 'var(--ink-3)' }}>No observations recorded.</div>`}
-        <div style=${Object.assign({ marginTop: 4, color: 'var(--ink-2)' }, MONO)}>in ${entry.inDigest || DASH}</div>
       </div>
       <div style=${sec}>
         <h4 style=${H4}>2 ${DOT} Decide</h4>
@@ -555,11 +553,6 @@
         ${disp.length ? html`<ul style=${{ listStyle: 'none', margin: 0, padding: 0, display: 'grid', gap: 2 }}>${disp.map(function (d, i) {
           return html`<li key=${'a' + i} style=${Object.assign({ color: 'var(--ink)', overflowWrap: 'anywhere' }, MONO)}>${payloadText(d)}</li>`;
         })}</ul>` : html`<div style=${{ fontSize: 13, color: 'var(--ink-3)' }}>${props.length ? 'No actions applied yet; proposals are waiting for review.' : 'No actions called.'}</div>`}
-      </div>
-      <div style=${Object.assign({}, sec, { color: 'var(--ink-2)', display: 'flex', flexWrap: 'wrap', gap: '4px 14px' }, MONO)}>
-        <span>out ${entry.outDigest || DASH}</span>
-        <span>chain ${entry.chain || DASH}</span>
-        ${fin(entry._ms) ? html`<span>${'ran in ' + (entry._ms < 10 ? entry._ms.toFixed(1) : Math.round(entry._ms)) + ' ms'}</span>` : null}
       </div>
     </section>`;
   }
@@ -610,18 +603,19 @@
     return html`<button type="button" className=${'ag-pulse' + (p.compact ? ' is-compact' : '')} onClick=${onClick} aria-label=${text + '. Open agents.'}
         style=${{ font: 'inherit', display: 'inline-flex', alignItems: 'center', gap: 8, minHeight: 36, padding: '4px 10px', borderRadius: 999, border: '1px solid var(--line)', background: 'var(--surface)', color: 'var(--ink-2)', cursor: 'pointer', minWidth: 0 }}>
       <span aria-hidden="true" style=${{ display: 'inline-flex', gap: 4 }}>
-        ${list.map(function (r) {
+        ${(p.dots ? list : []).map(function (r) {
           var st = stateOf(r), lr = lastRunTick(r), ranNow = st !== 'off' && lr != null && lr === tick && tick > 0;
           var dot = { width: 8, height: 8, borderRadius: '50%', boxSizing: 'border-box', display: 'inline-block' };
           if (st === 'off') Object.assign(dot, { background: 'var(--line-strong)' });
           else if (st === 'paused') Object.assign(dot, { background: 'transparent', border: '1.5px solid var(--agent)' });
           else Object.assign(dot, { background: 'var(--agent)', opacity: ranNow ? 1 : 0.5 });
-          if (ranNow) Object.assign(dot, { boxShadow: '0 0 0 3px var(--agent-soft)' });
-          if (!reduced) dot.transition = 'opacity 300ms ease, box-shadow 300ms ease';
+          if (ranNow) Object.assign(dot, { opacity: 1, outline: '1.5px solid var(--agent)', outlineOffset: 2 });
+          if (!reduced) dot.transition = 'opacity 300ms ease';
           var tip = (r.name || agentName(r.id)) + ' ' + DOT + ' ' + (st === 'off' ? 'off' : (st === 'paused' ? 'paused' : (lr != null ? 'ran ' + hh(lr) : 'waiting for first run'))) +
             (fin(r.changes24h) && r.changes24h > 0 ? ' ' + DOT + ' ' + r.changes24h + (r.changes24h === 1 ? ' change' : ' changes') : '');
           return html`<span key=${r.id} title=${tip} style=${dot}></span>`;
         })}
+        ${p.dots ? null : html`<span style=${{ width: 8, height: 8, borderRadius: '50%', display: 'inline-block', background: working ? 'var(--agent)' : 'var(--line-strong)' }}></span>`}
       </span>
       ${p.compact ? (need > 0 ? html`<span className="num" style=${{ fontSize: 12, fontWeight: 600, color: 'var(--agent)' }}>${need}</span>` : null)
         : html`<span className="num" style=${{ fontSize: 12, whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums' }}>${text}</span>`}
