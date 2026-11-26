@@ -523,7 +523,7 @@
     var opts = [{ value: 'auto', label: 'Claude' }, { value: 'rules', label: 'Rules only' }];
     return html`<div className="cn-field-block">
       <span className="cn-label" id=${'agents-' + id + '-reasoning-label'}>Reasoning</span>
-      ${Seg ? html`<${Seg} id=${'agents-' + id + '-reasoning'} label="Reasoning" size="sm" options=${opts} value=${val} onChange=${set} />`
+      ${Seg ? html`<${Seg} id=${'agents-' + id + '-reasoning'} label="Reasoning" size="sm" className="cn-reason-seg" options=${opts} value=${val} onChange=${set} />`
         : html`<span>${val === 'rules' ? 'Rules only' : 'Claude'}</span>`}
       <p className="cn-muted cn-reason-note">${val === 'rules' ? 'This agent always uses its built-in rules.' : (on ? 'Claude reasons about each run before this agent acts.' : 'Applies once Claude is connected. Until then this agent uses its built-in rules.')}</p>
       ${msg ? html`<p className="cn-error" role="alert">${msg.text}</p>` : null}

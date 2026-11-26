@@ -207,3 +207,4 @@
 .v-agents .ag-autonomy { justify-items: start; }
 .v-agents .cn-connect-line { color: var(--ink-3); }
 .v-agents .cn-reason-note { margin-top: 6px; }
+.v-agents .cn-reason-seg { display: inline-flex; width: auto; }
