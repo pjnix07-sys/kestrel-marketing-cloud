@@ -348,3 +348,30 @@
 .v-campaigns .cm-writebrief-row { display: flex; flex-wrap: wrap; gap: 8px; }
 .v-campaigns .cm-writebrief-row .k-input { flex: 1 1 260px; min-width: 0; }
 .v-campaigns .cm-ready-act .k-select { max-width: 200px; }
+
+/* Waiting for you: no card inside the side panel (flat ProposalCard, with a fallback for when it is not there yet) */
+.v-campaigns .cm-prop-list { gap: 0; }
+.v-campaigns .cm-prop-flat { padding: var(--space-3) 0; border-bottom: 1px solid var(--line); min-width: 0; }
+.v-campaigns .cm-prop-flat:first-child { padding-top: 0; }
+.v-campaigns .cm-prop-flat:last-child { border-bottom: 0; padding-bottom: 0; }
+.v-campaigns .cm-prop-flat .ag-card { border: 0; border-radius: 0; background: transparent; box-shadow: none; padding: 0; }
+
+/* planner: example briefs */
+.v-campaigns .cm-examples { display: flex; flex-wrap: wrap; gap: 8px; }
+.v-campaigns .cm-example {
+  min-height: 36px; padding: 6px 12px; border: 1px solid var(--line-strong); border-radius: 999px; background: transparent;
+  color: var(--ink-2); font: inherit; font-size: 13px; cursor: pointer;
+}
+.v-campaigns .cm-example:hover { border-color: var(--ink-3); color: var(--ink); }
+
+/* mobile: tabs wrap instead of clipping; the variant table stacks into one block per variant */
+@media (max-width: 639px) {
+  .v-campaigns .k-tabs { flex-wrap: wrap; overflow: visible; row-gap: 0; }
+  .v-campaigns .cm-table-stack { min-width: 0; }
+  .v-campaigns .cm-table-stack thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  .v-campaigns .cm-table-stack, .v-campaigns .cm-table-stack tbody, .v-campaigns .cm-table-stack tr, .v-campaigns .cm-table-stack td { display: block; width: 100%; }
+  .v-campaigns .cm-table-stack tr { padding: 8px 0; border-bottom: 1px solid var(--line); }
+  .v-campaigns .cm-table-stack td { border-bottom: 0; padding: 3px 0; display: flex; justify-content: space-between; gap: 12px; text-align: right; }
+  .v-campaigns .cm-table-stack td:first-child { justify-content: flex-start; font-size: 14px; }
+  .v-campaigns .cm-table-stack td[data-label]:not(:first-child)::before { content: attr(data-label); color: var(--ink-3); text-align: left; }
+}

@@ -234,6 +234,12 @@
       startDay: t + 2, endDay: t + 16, channels: ['email', 'push', 'social'], tone: 'practical', offer: 'none', notes: ''
     };
   }
+  // Starting points for a blank planner: each fills the whole brief so the marketer only has to check it.
+  var BRIEF_EXAMPLES = [
+    { label: 'Win back lapsed customers', patch: { name: 'Win-back, free shipping', goal: { type: 'reactivation', target: 400 }, budget: 4000, channels: ['email', 'push'], offer: 'freeship', notes: 'Customers who have not ordered in 90 days.' } },
+    { label: 'Weekend sale', patch: { name: 'Weekend sale', goal: { type: 'revenue', target: 25000 }, budget: 6000, channels: ['email', 'sms', 'social'], notes: 'Two-day sale across the catalog.' } },
+    { label: 'Launch a new product', patch: { name: 'New product launch', goal: { type: 'launch', target: 600 }, budget: 8000, channels: ['email', 'social', 'push'], notes: 'Announce to loyal customers first, then everyone.' } }
+  ];
   function briefFromCampaign(c, copyName) {
     var b = c.brief && typeof c.brief === 'object' ? clone(c.brief) : null;
     var base = {
@@ -1606,7 +1612,7 @@
             onChange=${function (e) { setLine(e.target.value); }} onKeyDown=${function (e) { if (e.key === 'Enter') { e.preventDefault(); writeBrief(); } }} />
           <${Btn} kind="secondary" id="brief-describe-go" disabled=${!line.trim() || busy} onClick=${writeBrief}>${busy ? 'Writing' + ELL : 'Write brief'}<//>
         </div>
-        ${wmsg ? h`<p className="cm-muted cm-small" role="status">${wmsg}</p>` : null}
+        <p className="cm-muted cm-small" role="status" aria-live="polite">${busy ? 'Writing the brief…' : (wmsg || '')}</p>
       </div>` : null}
       <${Field} id="brief-name" label="Campaign name" error=${p.showErrors ? errs.name : null}>
         <${TI} id="brief-name" value=${b.name} maxLength=${80} placeholder="e.g. Cyber Monday follow-up" onChange=${function (v) { patch('name', v); }} />
@@ -1793,6 +1799,7 @@
       return b0;
     }), brief = bs[0], setBriefSt = bs[1];
     var ps = React.useState(planMemo), memo = ps[0], setMemoSt = ps[1];
+    var lms = React.useState(''), liveMsg = lms[0], setLiveMsg = lms[1];
     var es = React.useState(null), msg = es[0], setMsg = es[1];
     var vs = React.useState(false), showErrors = vs[0], setShowErrors = vs[1];
     var eds = React.useState(null), editing = eds[0], setEditing = eds[1];
@@ -1819,6 +1826,7 @@
       var keepEdits = regen ? memo.edits : {};
       setMemo({ plan: out.plan, trace: out.trace, key: key, regen: r, fallback: !out.plan, accepted: keepAccepted, edits: keepEdits, draftedTick: tick });
       setEditing(null);
+      setLiveMsg(out.error ? 'Couldn’t draft the plan.' : (out.plan ? 'Plan drafted. Review each part on the right.' : 'Draft ready. Save it as a draft campaign.'));
     }
     function regenSection(id) {
       var r = Object.assign({}, memo.regen); r[id] = (r[id] || 0) + 1;
@@ -1877,8 +1885,14 @@
       right = h`<div className="cm-plan-empty">
         <p className="cm-plan-empty-title">${available ? 'Your plan appears here' : 'Plan by hand'}</p>
         <p className="cm-muted">${available
-          ? 'Fill in a goal and budget, then Draft plan. The planner proposes an audience, channel mix, journey, content and a forecast. You accept each part.'
+          ? 'Start with a name, a goal and a budget, then select Draft plan. The planner proposes an audience, channel mix, journey, content and a forecast, and you accept each part.'
           : 'The Campaign Planner isn’t available right now. Fill in the brief and save it as a draft campaign; you can finish the details by hand.'}</p>
+        <p className="cm-label" id="plan-examples-label">Or start from an example</p>
+        <div className="cm-examples" role="group" aria-labelledby="plan-examples-label">
+          ${BRIEF_EXAMPLES.map(function (ex) {
+            return h`<button key=${ex.label} type="button" className="cm-example" onClick=${function () { setBrief(Object.assign(defaultBrief(w0), ex.patch)); setShowErrors(false); setLiveMsg('Filled in the brief from the example “' + ex.label + '”.'); }}>${ex.label}</button>`;
+          })}
+        </div>
       </div>`;
     } else if (!sections) {
       right = h`<div className="cm-plan-empty">
@@ -1915,6 +1929,7 @@
     }
 
     return h`<div className="cm-planner">
+      <p className="k-sr" role="status" aria-live="polite" id="plan-live">${liveMsg}</p>
       <header className="cm-detail-head">
         <${Link} className="cm-back" id="cmp-back" onClick=${function () { setFocus({ mode: draftId ? 'detail' : 'board', id: draftId }); }}>${LARR} ${draftId ? 'Back to draft' : 'Campaigns'}<//>
         <div className="cm-detail-titlerow">
@@ -1924,7 +1939,7 @@
           </div>
           <div className="cm-row cm-detail-actions">
             ${!confirmDiscard ? h`<${Btn} kind="ghost" id="plan-discard" onClick=${function () { setConfirmDiscard(true); }}>Discard brief<//>` : null}
-            <${Btn} kind="primary" id="plan-create" disabled=${!hasResult || outOfDate} onClick=${create}>${finalLabel}<//>
+            <${Btn} kind=${hasResult ? 'primary' : 'secondary'} id="plan-create" disabled=${!hasResult || outOfDate} onClick=${create}>${finalLabel}<//>
           </div>
         </div>
         ${confirmDiscard && IC ? h`<${IC} id="plan-discard-confirm" tone="crit" message="Discard this brief and plan?" confirmLabel="Discard" cancelLabel="Keep editing"
@@ -1981,6 +1996,16 @@
     var ready = useSel(function (w) { return !!(w && w.campaigns); });
     var focus = useUiSel(function (s) { return s.focus && s.focus.campaigns; }) || EMPTY_OBJ;
     var mode = focus.mode || 'board';
+    // A switch between the index, the planner and a campaign replaces the page content: move focus to the new h1
+    // (changing the Board/List/Calendar tab keeps focus where it is).
+    var viewKey = mode === 'planner' || mode === 'detail' ? mode + ':' + (focus.id || '') : 'index';
+    var seenKey = R().useRef(viewKey);
+    R().useEffect(function () {
+      if (seenKey.current === viewKey) return;
+      seenKey.current = viewKey;
+      var el = document.getElementById('page-title');
+      try { if (el) el.focus({ preventScroll: false }); } catch (e) { /* noop */ }
+    }, [viewKey]);
     var body;
     if (!ready) {
       body = h`<div className="cm-index"><header className="cm-head"><div className="cm-head-titles">
