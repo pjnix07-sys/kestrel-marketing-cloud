@@ -451,7 +451,7 @@
         <path className="hm-j-future" d=${dFuture} fill="none" />
         <path className="hm-j-past" d=${dPast} fill="none" pathLength="1" />
         <text className="hm-j-label" x=${L} y=${H - 6} textAnchor="start">${dayShort(from)}</text>
-        <text className="hm-j-label" x=${Math.min(width - 28, Math.max(28, nowX))} y=${H - 6} textAnchor="middle">Now</text>
+        ${width - nowX > 72 ? html`<text className="hm-j-label" x=${Math.max(28, nowX)} y=${H - 6} textAnchor="middle">Now</text>` : null}
         <text className="hm-j-label" x=${width - Rr} y=${H - 6} textAnchor="end">${dayShort(b.month.toDay)}</text>
         ${nodes.map(function (o, i) {
           return html`<g key=${o.n.id} className="hm-node" tabIndex=${i === act ? 0 : -1} role="button" ref=${function (el) { refs.current[i] = el; }}
