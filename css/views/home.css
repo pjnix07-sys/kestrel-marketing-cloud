@@ -3,6 +3,8 @@
 .v-home { display: grid; gap: 28px; min-width: 0; color: var(--ink); }
 .v-home * { box-sizing: border-box; }
 .v-home .num { font-variant-numeric: tabular-nums; }
+/* Display figures use proportional digits: tabular widths space out '.' and ',' in this face. */
+.v-home .hm-fig dd, .v-home .hm-fig dd .num { font-variant-numeric: normal; letter-spacing: 0; }
 .v-home :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 .v-home .hm-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 

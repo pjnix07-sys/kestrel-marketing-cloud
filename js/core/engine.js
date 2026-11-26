@@ -206,6 +206,8 @@
     opts = opts || {};
     if (bootPromise) return bootPromise;
     var seed = opts.seed === undefined ? MC.SEED : opts.seed;
+    // Pin the display calendar before any text is generated (catch-up writes feed and insight text).
+    try { if (MC.time && MC.time.anchorDisplay) MC.time.anchorDisplay('2026-11-07', 0); } catch (e) { report(e); }
     bootPromise = generateWorld(seed, opts.onPhase).then(function (w) {
       return opts.catchUp === false ? w : catchUp(w, E.catchUpTarget(opts.now), opts.onPhase);
     }).then(function (w) {

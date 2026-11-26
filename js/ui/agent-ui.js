@@ -151,8 +151,9 @@
     var name = isUser ? 'You' : agentName(id);
     var style = {
       display: 'inline-flex', alignItems: 'center', gap: 6, maxWidth: '100%', minWidth: 0,
-      padding: md ? '3px 10px' : '1px 8px', borderRadius: 999, fontSize: md ? 13 : 12, fontWeight: 600, lineHeight: 1.5,
-      background: isUser ? 'var(--surface-2)' : 'var(--agent-soft)', color: isUser ? 'var(--ink-2)' : 'var(--agent)', whiteSpace: 'nowrap'
+      // Calm attribution (§11.3): a dot and the name in plain text, no filled pill.
+      padding: 0, fontSize: md ? 13 : 12, fontWeight: 600, lineHeight: 1.5,
+      background: 'none', color: isUser ? 'var(--ink-2)' : 'var(--agent)', whiteSpace: 'nowrap'
     };
     return html`<span className=${'ag-chip' + (isUser ? ' is-user' : '')} title=${p.title || name} style=${style}>
       <span aria-hidden="true" style=${{ width: md ? 8 : 7, height: md ? 8 : 7, borderRadius: '50%', flex: 'none', background: isUser ? 'var(--ink-3)' : 'var(--agent)' }}></span>
@@ -431,7 +432,7 @@
 
     var cardStyle = {
       display: 'grid', gap: 8, minWidth: 0, padding: compact ? '10px 12px' : '12px 14px', borderRadius: 10,
-      background: pending ? 'var(--agent-soft)' : 'var(--surface)', border: pending ? '1px solid transparent' : '1px solid var(--line)'
+      background: 'var(--surface)', border: '1px solid var(--line)'
     };
     return html`<article className=${'ag-card ag-card-' + pr.status + (compact ? ' is-compact' : '')} aria-labelledby=${titleId} style=${cardStyle}>
       ${header}
