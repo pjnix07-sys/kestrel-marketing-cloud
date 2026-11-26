@@ -178,13 +178,40 @@
   }
   E.generateWorld = generateWorld;
 
+  // Fast-forwards a freshly generated world to the real current date and hour, so the sample season
+  // (Nov 7 - Dec 31, 2026, on its real calendar) reads as "today". Outside the season it stays at the start.
+  E.LAST_DAY = 54; // Dec 31, 2026
+  E.catchUpTarget = function (now) {
+    var d = now || new Date();
+    var day = MC.time.simDayOfYmd(d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2));
+    if (day === null || day < 0 || day > E.LAST_DAY) return 0;
+    return MC.time.tickOf(day, d.getHours());
+  };
+  function catchUp(w, target, onPhase) {
+    return new Promise(function (resolve, reject) {
+      if (!(target > (w.meta.tick || 0))) return resolve(w);
+      try { if (onPhase) onPhase('catchup', { index: 4, total: 5, label: 'Catching up to today' }); } catch (e) { report(e); }
+      (function chunk() {
+        try {
+          var stop = Math.min(target, w.meta.tick + 48);
+          while (w.meta.tick < stop) w = E.advance(w);
+        } catch (e) { return reject(e); }
+        if (w.meta.tick >= target) resolve(w); else yieldThen(chunk);
+      })();
+    });
+  }
+  E.catchUp = catchUp;
+
   E.boot = function (opts) {
     opts = opts || {};
     if (bootPromise) return bootPromise;
     var seed = opts.seed === undefined ? MC.SEED : opts.seed;
     bootPromise = generateWorld(seed, opts.onPhase).then(function (w) {
+      return opts.catchUp === false ? w : catchUp(w, E.catchUpTarget(opts.now), opts.onPhase);
+    }).then(function (w) {
       E.checkpoints = {};
-      try { if (MC.time && MC.time.anchorDisplay) MC.time.anchorDisplay(undefined, MC.time.dayOf(w.meta.tick || 0)); } catch (e) { report(e); }
+      // Display dates are the season's real calendar (Black Friday = Fri, Nov 27, 2026), so digests never depend on the boot date.
+      try { if (MC.time && MC.time.anchorDisplay) MC.time.anchorDisplay('2026-11-07', 0); } catch (e) { report(e); }
       MC.store.init(w);
       booted = true;
       E.setSpeed(opts.speed && E.SPEEDS[opts.speed] !== undefined ? opts.speed : E.DEFAULT_SPEED);
@@ -218,6 +245,8 @@
     E.setSpeed('pause');
     var s = seed === undefined || seed === null ? MC.SEED : seed;
     return generateWorld(s, onPhase).then(function (w) {
+      return catchUp(w, E.catchUpTarget(), onPhase);
+    }).then(function (w) {
       E.checkpoints = {};
       E.lastError = null;
       try { if (MC.uiStore && MC.uiStore.clearToasts) MC.uiStore.clearToasts(); } catch (e) { report(e); }

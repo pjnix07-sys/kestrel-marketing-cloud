@@ -22,7 +22,7 @@ const ticks = +process.argv[2] || 200;
   try {
     if (MC.contract && MC.contract.check) { const r = MC.contract.check(); const miss = (r && (r.missing || r)) || []; if (miss.length) console.log('contract missing:', JSON.stringify(miss).slice(0, 800)); }
     const t0 = Date.now();
-    await MC.engine.boot({ seed: 'fernway', speed: 'pause' });
+    await MC.engine.boot({ seed: 'fernway', speed: 'pause', catchUp: false });
     console.log('booted in', Date.now() - t0, 'ms; agents registered:', MC.runtime.defs().map(d => d.id).join(','));
     let w = MC.store.get ? MC.store.get() : MC.store.getState();
     for (let i = 0; i < ticks; i++) { w = MC.engine.advance(w); }
