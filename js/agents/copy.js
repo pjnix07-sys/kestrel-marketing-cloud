@@ -89,7 +89,7 @@
     }
     return { last: last, peak: peak };
   }
-  function words(s) { return String(s || '').toLowerCase().replace(/\{[a-z_]+\}/g, ' ').match(/[a-z0-9%$]+/g) || []; }
+  function words(s) { return String(s || '').toLowerCase().replace(/\{[a-z_]+(\|[^}]*)?\}/g, ' ').match(/[a-z0-9%$]+/g) || []; }
   function featVec(v) {
     var ft = MC.copy.features(v);
     return [Math.min(1, ft.len / 80), ft.hasNumber, ft.personal, ft.urgency, ft.question, ft.ctaStrength, ft.image, Math.min(1, ft.grade / 12), ft.caps, ft.toneFit];

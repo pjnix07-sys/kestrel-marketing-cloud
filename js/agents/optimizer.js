@@ -27,7 +27,7 @@
     var prod = MC.copy && typeof MC.copy.productOf === 'function' ? MC.copy.productOf(v.productId) : null;
     var offer = (MC.copy && MC.copy.OFFER_TEXT && MC.copy.OFFER_TEXT[v.offer]) || '';
     // Fill merge fields so the quote reads naturally (the name is dropped, not invented).
-    s = s.replace(/\s*\{first_name\}/g, '').replace(/\{product\}/g, prod && prod.name ? prod.name : 'our pick')
+    s = s.replace(/\s*\{first_name(\|[^}]*)?\}/g, '').replace(/\{product\}/g, prod && prod.name ? prod.name : 'our pick')
       .replace(/\{offer\}/g, offer).replace(/\{link\}/g, '').replace(/^[\s,.:;!-]+/, '').replace(/\s+/g, ' ').trim();
     s = s.charAt(0).toUpperCase() + s.slice(1);
     if (s.length > 48) s = s.slice(0, 46).replace(/\s+\S*$/, '') + '…';
