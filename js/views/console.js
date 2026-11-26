@@ -102,7 +102,7 @@
   var PROPOSAL_STATUS = {
     pending: { label: 'Waiting for you', tone: 'agent' }, auto: { label: 'Applied on Autopilot', tone: 'good' },
     applied: { label: 'Approved by you', tone: 'good' }, rejected: { label: 'Dismissed', tone: 'neutral' },
-    undone: { label: 'Undone', tone: 'neutral' }, expired: { label: 'Expired', tone: 'neutral' },
+    undone: { label: 'Undone', tone: 'neutral' }, expired: { label: 'Expired unreviewed', tone: 'neutral' },
     superseded: { label: 'Replaced by a newer suggestion', tone: 'neutral' }, stale: { label: 'No longer applies', tone: 'warn' }
   };
   var NOTIFY_OPTS = [
@@ -526,18 +526,11 @@
     }
     var val = p.row.rulesOnly ? 'rules' : 'auto';
     var opts = [{ value: 'auto', label: 'Claude' }, { value: 'rules', label: 'Rules only' }];
-    if (!on) {
-      return html`<div className="cn-field-block">
-        <span className="cn-label" id=${'agents-' + id + '-reasoning-label'}>Reasoning</span>
-        <span className="cn-reason-static">Rules</span>
-        <p className="cn-muted cn-reason-note">Connect Claude to switch</p>
-      </div>`;
-    }
     return html`<div className="cn-field-block">
       <span className="cn-label" id=${'agents-' + id + '-reasoning-label'}>Reasoning</span>
       ${Seg ? html`<${Seg} id=${'agents-' + id + '-reasoning'} label="Reasoning" size="sm" className="cn-reason-seg" options=${opts} value=${val} onChange=${set} />`
-        : html`<span>${val === 'rules' ? 'Rules only' : 'Claude'}</span>`}
-      <p className="cn-muted cn-reason-note">${val === 'rules' ? 'This agent always uses its built-in rules.' : 'Claude reasons about each run before this agent acts.'}</p>
+        : html`<span>${on && val !== 'rules' ? 'Claude' : 'Rules only'}</span>`}
+      <p className="cn-muted cn-reason-note">${val === 'rules' ? 'This agent always uses its built-in rules.' : on ? 'Claude reasons about each run before this agent acts.' : 'Uses its built-in rules until you connect Claude.'}</p>
       ${msg ? html`<p className="cn-error" role="alert">${msg.text}</p>` : null}
     </div>`;
   }
@@ -898,7 +891,7 @@
       <div id="agents-approvals-list" role="tabpanel" aria-labelledby=${'agents-approvals-tabs-' + sub}>
         ${shown.length && Card ? html`<ul className="cn-cards" ...${use.props}>${shown.map(function (x) {
           var pr = P && P.byId ? P.byId[x.id] : null;
-          return html`<li key=${x.id}><${Card} id=${x.id} showTarget=${true} />
+          return html`<li key=${x.id}><${Card} id=${x.id} showTarget=${true} flat=${true} />
             ${sub === 'needs' && DN && pr ? html`<${DN} id=${x.id} risk=${pr.risk} signoffs=${pr.signoffs} />` : null}
             ${sub === 'history' && DM && pr ? html`<${DM} p=${pr} />` : null}</li>`;
         })}</ul>` : html`<${Empty} title=${EMPTY_COPY[sub][0]} body=${EMPTY_COPY[sub][1]} />`}

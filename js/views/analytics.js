@@ -563,7 +563,7 @@
       ${chart}
       ${openP ? html`<div className="an-callout" role="region" aria-label="Agent change details">
           <div className="an-callout-head"><strong>Agent change</strong><${Btn} kind="ghost" onClick=${function () { setOpenP(null); }}>Close<//></div>
-          ${PC ? html`<${PC} id=${openP} showTarget=${true} />` : html`<p className="an-note">${openP}</p>`}
+          ${PC ? html`<${PC} id=${openP} showTarget=${true} flat=${true} />` : html`<p className="an-note">${openP}</p>`}
         </div>` : null}
     <//>`;
   }

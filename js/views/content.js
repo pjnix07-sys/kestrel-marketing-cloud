@@ -242,7 +242,7 @@
         <span>Copy Drafter suggested ${list.length === 1 ? 'a new challenger' : list.length + ' new challengers'}</span>
         <span className="cs-agentnote-act">${open ? 'Hide' : 'Review'}</span>
       </button>
-      ${open && PC ? h`<div className="cs-agentnote-list">${list.map(function (p) { return h`<${PC} key=${p.id} id=${p.id} compact=${true} showTarget=${true} />`; })}</div>` : null}
+      ${open && PC ? h`<div className="cs-agentnote-list">${list.map(function (p) { return h`<${PC} key=${p.id} id=${p.id} flat=${true} compact=${true} showTarget=${true} />`; })}</div>` : null}
     </div>`;
   }
 
@@ -475,7 +475,7 @@
         Drafted by ${agentName(ag)}${when ? ', ' + when : ''}
         ${prop && PC ? h` <button type="button" className="cs-link" aria-expanded=${open ? 'true' : 'false'} onClick=${function () { setOpen(!open); }}>${open ? 'Hide why' : 'Why'}</button>` : null}
       </p>
-      ${open && prop && PC ? h`<${PC} id=${prop} compact=${true} />` : null}
+      ${open && prop && PC ? h`<${PC} id=${prop} flat=${true} compact=${true} />` : null}
     </div>`;
   }
 
