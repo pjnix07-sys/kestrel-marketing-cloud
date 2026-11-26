@@ -23,20 +23,22 @@
   FL.ROLES = {
     optimizer: 'Shift traffic toward the winning variants and pause clear losers. Choose among the engine\'s traffic-shift and pause drafts and explain them in the marketer\'s terms (which message is winning, by how much, on which channel).',
     sendtime: 'Move sends to the hours each audience actually opens. Choose among the engine\'s send-hour drafts; skip moves that are marginal or that fight a recent marketer decision.',
-    pacer: 'Keep spend on plan and move budget toward the channel returning the most. Choose among budget-shift drafts; explain pacing in dollars per day and days left.',
-    guard: 'Protect customers from over-messaging before they unsubscribe. Choose among suppression and channel-pause drafts; be conservative, explain the trade-off in unsubscribes avoided versus revenue forgone.',
+    pacer: 'Keep spend on plan and move budget toward the channel returning the most. Choose among budget-shift drafts; explain pacing in plain words, quoting only the figures in the candidate\'s evidence.',
+    guard: 'Protect customers from over-messaging before they unsubscribe. Choose among suppression and channel-pause drafts; be conservative, explain the trade-off in words (fewer unsubscribes against some revenue forgone) and quote only figures from the candidate\'s evidence.',
     analyst: 'Watch the numbers, flag surprises and warn when a goal is at risk. Write the insight titles and bodies yourself (rewrite rule insights by ref, add at most two new ones), and choose among extend-campaign drafts.',
     copy: 'Write fresh challenger copy when a winner tires or a test has settled. You may rewrite a candidate\'s copy (variants[].candidate = its id) or write an original challenger for a live campaign channel; obey the brand book and channel limits exactly.',
     scout: 'Find pockets of customers who respond far better than average. Name and explain candidate segments (segments[].candidate = its id to rename), or propose at most one original rule over known attributes.',
     planner: 'Plan campaigns for upcoming retail moments. Choose among the engine\'s campaign drafts and write the plan narrative in "why": who it is for, what it says, when it runs and what it should earn.'
   };
 
+  // How a segment condition's value is written as text. Used by the Scout task and by segmentFromText (tasks.js).
+  FL.VALUE_FORMAT = 'value as text: a number, "lo..hi" for between, comma-separated values for category lists, "yes"/"no" for flags. Fractions are 0 to 1.';
   var TASK = {
-    copy: 'Also return "variants": rewritten or original challengers. For a rewrite set candidate to the draft id and keep campaignId and channel from it; for an original set candidate to "". Fill only the fields that channel uses (others ""). Subject ≤ 60, push title ≤ 40, push body ≤ 120, SMS ≤ 160 and ending with the opt-out text, social headline ≤ 40, social text ≤ 125, button label ≤ 28. Use {first_name}, {product}, {offer}, {link} tokens only as listed.',
-    scout: 'Also return "segments": renames of candidate segments (candidate = draft id, conditions []) or at most one original rule (candidate "", combine "all" or "any", conditions over segmentAttributes keys with their ops; value as text: a number, "lo..hi" for between, comma-separated values for category lists, "yes"/"no" for flags). Names under 48 characters, in plain words.'
+    copy: 'Also return "variants": rewritten or original challengers, and leave "segments" empty. For a rewrite set candidate to the draft id and keep campaignId and channel from it; for an original set candidate to "". Fill only the fields that channel uses (others ""). The channel limits and merge tokens are in the brand book.',
+    scout: 'Also return "segments": renames of candidate segments (candidate = draft id, conditions []) or at most one original rule (candidate "", combine "all" or "any", conditions over segmentAttributes keys with their ops; ' + FL.VALUE_FORMAT + '), and leave "variants" empty. Names under 48 characters, in plain words.'
   };
   FL.taskText = function (agentId) {
-    return 'Return your verdict as the JSON schema requires. ' + (TASK[agentId] || 'Return "decisions" for every candidate, "insights" and a "summary".');
+    return 'Return your verdict as the JSON schema requires. ' + (TASK[agentId] || 'Return "decisions" for every candidate, "insights" and a "summary"; leave "variants" and "segments" empty.');
   };
 
   /* ---------------- tunables: what Haiku may adjust inside declared ranges ---------------- */
@@ -83,27 +85,78 @@
   var INSIGHT = obj({ ref: S, title: S, body: S, severity: { type: 'string', enum: ['info', 'warn', 'crit'] }, entityId: S });
   var FIELD_KEYS = ['subject', 'preheader', 'headline', 'body', 'cta', 'sms', 'pushTitle', 'pushBody', 'socialText', 'socialHeadline', 'alt'];
   var FIELDS = (function () { var p = {}; FIELD_KEYS.forEach(function (k) { p[k] = S; }); return obj(p); })();
-  var VARIANT = obj({ candidate: S, campaignId: S, channel: S, fields: FIELDS, title: S, why: S });
-  var SEGMENT = obj({ candidate: S, name: S, why: S, combine: { type: 'string', enum: ['all', 'any'] },
-    conditions: { type: 'array', items: obj({ attr: S, cmp: S, value: S }) } });
-  FL.schemaFor = function (agentId) {
-    var p = { decisions: { type: 'array', items: DECISION }, insights: { type: 'array', items: INSIGHT }, summary: S };
-    if (agentId === 'copy') p.variants = { type: 'array', items: VARIANT };
-    if (agentId === 'scout') p.segments = { type: 'array', items: SEGMENT };
-    return obj(p);
+  // One schema for every agent, so structured output never splits the prompt cache by agent: the schema is part of the
+  // cached request, and eight different schemas would mean eight cache entries for the same 7k-token prefix.
+  // Agents that do not write copy or segments return those lists empty. channel and attr are enums (static, so cache-safe).
+  var schemaCache = null;
+  FL.schemaFor = function () {
+    if (schemaCache) return schemaCache;
+    var channels = (MC.CH && MC.CH.ALL) || [], attrs = ((MC.segments && MC.segments.ATTRS) || []).map(function (a) { return a.key; });
+    var variant = obj({ candidate: S, campaignId: S, channel: channels.length ? { type: 'string', enum: [''].concat(channels) } : S, fields: FIELDS, title: S, why: S });
+    var segment = obj({ candidate: S, name: S, why: S, combine: { type: 'string', enum: ['all', 'any'] },
+      conditions: { type: 'array', items: obj({ attr: attrs.length ? { type: 'string', enum: attrs } : S, cmp: S, value: S }) } });
+    schemaCache = obj({ decisions: { type: 'array', items: DECISION }, insights: { type: 'array', items: INSIGHT }, summary: S,
+      variants: { type: 'array', items: variant }, segments: { type: 'array', items: segment } });
+    return schemaCache;
   };
   FL.FIELD_KEYS = FIELD_KEYS;
+  var MAX_NEW_INSIGHTS = 2;
 
   /* ---------------- validation ---------------- */
-  var META_RE = /\b(ticks?|seeds?|digests?|simulat\w*|sandbox|json|prompt|LLM|Haiku|Claude|language model|as an ai|c\d+)\b/i;
+  // Words that give the machinery away. "prompt" and "seed" are ordinary retail words, so only their technical uses are blocked.
+  var META_RE = /\b(ticks?|digests?|simulat\w*|sandbox|json|LLM|Haiku|Claude|language model|as an ai|system prompt|(?:random|world|rng|sim\w*)\s+seeds?|seeded|c\d+)\b/i;
+  var URL_RE = /\b(?:https?:\/\/|www\.)\S+|\b[a-z0-9-]+(?:\.[a-z0-9-]+)*\.(?:com|net|org|io|co|app|ly|dev|xyz|shop|store|info|biz|me|us|uk)\b(?:\/\S*)?/gi;
+  var EMAIL_RE = /[\w.+-]+@[\w-]+(?:\.[\w-]+)+/g;
+  var PHONE_RE = /(?:\+\d[\d\s().-]{6,}\d|\(\d{3}\)\s?\d{3}[\s.-]?\d{4}|\b\d{3}[\s.-]\d{3,4}[\s.-]\d{4}\b)/g;
+  // URLs, emails and phone numbers never reach the UI from Haiku prose (injected text could use them to persuade).
+  function stripContact(s) {
+    return s.replace(EMAIL_RE, ' ').replace(URL_RE, ' ').replace(PHONE_RE, ' ').replace(/\s{2,}/g, ' ').replace(/\s+([.,;:!?])/g, '$1').trim();
+  }
+  // Cuts at a word boundary at or under max, dropping dangling punctuation.
+  function cutWords(s, max) {
+    if (!max || s.length <= max) return s;
+    var c = s.slice(0, max), sp = c.lastIndexOf(' ');
+    if (s.charAt(max) !== ' ' && sp >= max * 0.5) c = c.slice(0, sp);
+    return c.replace(/[\s,;:\-–—(“"']+$/, '');
+  }
   function cleanText(s, ground, max) {
-    s = str(s, max);
+    s = typeof s === 'string' ? stripContact(s.trim()) : '';
+    s = cutWords(s, max);
     if (!s || META_RE.test(s)) return '';
     if (MC.ai.context && !MC.ai.context.grounded(s, ground)) return '';
     return s;
   }
   FL.cleanText = cleanText;
+  FL.TITLE_MAX = 80;
 
+  /* A title must describe what the candidate does. Compared by action family, channel and scope words; a title that
+     names a different action, a channel the candidate never touches or a wider scope than the draft is dropped and the
+     draft's own title is used instead. */
+  var FAMILIES = { pause: /\b(pause|stop|halt|suspend|suppress|rest|resting)\b/i, extend: /\b(extend|lengthen|prolong)\b/i,
+    shift: /\b(shift|move|reallocate|rebalance|raise|increase|cut|reduce|boost|lower|reschedule)\b/i, retire: /\b(retire|remove|delete|cancel|end)\b/i,
+    create: /\b(create|add|draft|save|launch|plan|write|test)\b/i };
+  var TYPE_FAMILY = { 'campaign/setBudget': 'shift', 'campaign/setAlloc': 'shift', 'campaign/setSendHour': 'shift', 'campaign/setEnd': 'extend',
+    'campaign/setChannelPaused': 'pause', 'profiles/suppress': 'pause', 'variant/setStatus': 'retire pause', 'variant/create': 'create',
+    'segment/create': 'create', 'campaign/include': 'create', 'campaign/create': 'create' };
+  var CH_WORDS = { email: /\be-?mail\b/i, sms: /\b(sms|text messages?|texts)\b/i, push: /\bpush\b/i, social: /\bsocial\b/i, web: /\b(web|display)\b/i };
+  var SCOPE_RE = /\b(all|every|each|entire|whole|everyone|everything)\b/gi;
+  function familiesOf(text) { return Object.keys(FAMILIES).filter(function (k) { return FAMILIES[k].test(text); }); }
+  FL.titleFits = function (title, cand) {
+    if (!title || !cand) return true;
+    var actions = (cand.actions || []).map(function (a) { return a.type; });
+    var blob = [cand.title, cand.kind, cand.rationale, JSON.stringify(cand.diff || []), JSON.stringify(cand.target || {}), JSON.stringify((cand.actions || []).map(function (a) { return a.payload && (a.payload.channel || a.payload.byChannel) || ''; }))].join(' ');
+    var have = {};
+    familiesOf(blob).forEach(function (f) { have[f] = 1; });
+    actions.forEach(function (t) { String(TYPE_FAMILY[t] || '').split(' ').forEach(function (f) { if (f) have[f] = 1; }); });
+    if (familiesOf(title).some(function (f) { return !have[f]; })) return false;
+    if (Object.keys(CH_WORDS).some(function (ch) { return CH_WORDS[ch].test(title) && !CH_WORDS[ch].test(blob); })) return false;
+    var own = String(cand.title || '').toLowerCase(), wide = (title.match(SCOPE_RE) || []).map(function (x) { return x.toLowerCase(); });
+    // "every campaign" widens one campaign's change to all of them; the draft title never claims that
+    if (wide.some(function (x) { return own.indexOf(x) < 0; }) && /\b(campaigns|audiences|customers|channels|segments|budgets?)\b/i.test(title)) return false;
+    return true;
+  };
+
+  function fitTitle(t, cand) { return t && FL.titleFits(t, cand) ? t : ''; }
   function brandOf(world) { return (world.guardrails && world.guardrails.brand) || (MC.copy && MC.copy.DEFAULT_BRAND); }
   function hookOf(v) { var k = MC.copy && MC.copy.HOOK ? MC.copy.HOOK[v.channel] : 'subject'; return (v.fields && v.fields[k]) || ''; }
   function chLower(ch) { return ch === 'sms' ? 'SMS' : ((MC.CH.LABEL[ch] || ch).toLowerCase()); }
@@ -143,7 +196,7 @@
       }
       var v = buildVariant(base, x.fields, world);
       if (!v) return;
-      var title = cleanText(x.title, ground, 140) || (cand ? cand.title : 'Add a fresh ' + chLower(v.channel) + ' challenger');
+      var fresh = 'Add a fresh ' + chLower(v.channel) + ' challenger', title = fitTitle(cleanText(x.title, ground, FL.TITLE_MAX), cand || { title: fresh, kind: 'new-variant', actions: [{ type: 'variant/create' }] }) || (cand ? cand.title : fresh);
       var e = { kind: 'new-variant', target: target, actions: [{ type: 'variant/create', payload: { variant: v, share: sh } }], title: title,
         why: cleanText(x.why, ground, 600), risk: 'medium', horizon: 96, mustQueue: true,   // Haiku-written copy is always reviewed
         diff: [{ label: 'New ' + chLower(v.channel) + ' variant', before: '—', after: hookOf(v) }, { label: 'Its share of traffic', before: '0%', after: Math.round(sh * 100) + '%' }] };
@@ -220,7 +273,7 @@
         if (t && isNum(a.value) && a.value >= t.min && a.value <= t.max) adj[t.param] = a.value;
       });
       decisions.push({ candidate: d.candidate, verdict: d.verdict === 'propose' ? 'propose' : 'skip', adjust: adj,
-        title: cleanText(d.title, ground, 140), why: cleanText(d.why, ground, 600),
+        title: fitTitle(cleanText(d.title, ground, FL.TITLE_MAX), cand), why: cleanText(d.why, ground, 600),
         confidence: isNum(d.confidence) ? Math.max(0, Math.min(1, d.confidence)) : 0.5 });
     });
     // No usable decision: either candidates went unanswered, or every reference was unknown or malformed.
@@ -241,13 +294,14 @@
       if (d.title) x.title = d.title;
       if (!x.why && d.why) x.why = d.why;
     });
-    var insights = [];
+    var insights = [], fresh = 0;
     (Array.isArray(data.insights) ? data.insights : []).slice(0, 8).forEach(function (x) {
       if (!x) return;
-      var title = cleanText(x.title, ground, 140), body = cleanText(x.body, ground, 900);
+      var title = cleanText(x.title, ground, FL.TITLE_MAX), body = cleanText(x.body, ground, 900);
       if (!title) return;
       var ref = /^i\d+$/.test(x.ref || '') && +x.ref.slice(1) < (job.insights || []).length ? x.ref : '';
       if (!ref && !body) return;
+      if (!ref && ++fresh > MAX_NEW_INSIGHTS) return;   // the analyst's role allows two new insights; enforced here, not just asked for
       var eid = str(x.entityId, 80);
       if (eid && !MC.catalog.entityById(world, eid)) eid = '';
       insights.push({ ref: ref, title: title, body: body, severity: x.severity === 'crit' || x.severity === 'warn' ? x.severity : 'info', entityId: eid });

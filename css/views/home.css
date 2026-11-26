@@ -24,6 +24,10 @@
   font-size: clamp(24px, 2.6vw + 8px, 38px); line-height: 1.22; color: var(--ink); text-wrap: pretty;
 }
 .v-home .hm-brief.is-skeleton { display: grid; gap: 10px; }
+/* Reserve the brief's usual height so its first live update doesn't push the journey line down (layout shift). */
+.v-home .hm-brief, .v-home .hm-brief.is-skeleton { min-height: calc(2 * 1.22em); }
+.v-home .hm-brief.is-skeleton { font-size: clamp(24px, 2.6vw + 8px, 38px); }
+@media (max-width: 640px) { .v-home .hm-brief, .v-home .hm-brief.is-skeleton { min-height: calc(5 * 1.22em); } }
 .v-home .hm-ilink {
   font: inherit; letter-spacing: inherit; color: inherit; background: none; border: 0; padding: 0; margin: 0; cursor: pointer;
   text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 0.18em; text-decoration-color: var(--accent);

@@ -26,7 +26,7 @@
     opts = opts || {};
     if (!on() || !AI.context) return Promise.resolve(null);
     var ctx;
-    try { ctx = AI.context.forTask(opts.noWorld ? null : world(), instructions, extra); } catch (e) { report(e); return Promise.resolve(null); }
+    try { ctx = AI.context.forTask(opts.noWorld ? null : world(), instructions, extra, opts.userText); } catch (e) { report(e); return Promise.resolve(null); }
     return AI.call({ system: ctx.system, user: ctx.user, schema: schema, maxTokens: opts.maxTokens || 2000, effort: 'low', kind: 'task',
       timeoutMs: opts.timeoutMs || TIMEOUT_MS }).then(function (r) {
       if (!r.ok) { if (AI.noteFallback) AI.noteFallback(); return null; }
@@ -139,7 +139,7 @@
         budget: Math.max(500, Math.min(50000, Math.round(isNum(d.budget) ? d.budget : fallback.budget))),
         startDay: start, endDay: start + len - 1, channels: chans, tone: d.tone, offer: d.offer,
         notes: clean(d.narrative, ground, 800) || str(text, 600), narrative: clean(d.narrative, ground, 800), source: 'ai' };
-    }).then(function (b) { return b || fallback; });
+    }, { userText: str(text, 2000) }).then(function (b) { return b || fallback; });
   };
 
   /* ---------------- segmentFromText ---------------- */
@@ -156,7 +156,7 @@
     var schema = obj({ name: S, why: S, combine: { type: 'string', enum: ['all', 'any'] },
       conditions: { type: 'array', items: obj({ attr: S, cmp: S, value: S }) } });
     var instructions = 'Turn the marketer\'s audience description into a segment rule over segmentAttributes (keys and ops exactly as listed). ' +
-      'value as text: a number, "lo..hi" for between, comma-separated values for category lists, "yes"/"no" for flags. Fractions are 0 to 1. ' +
+      FL().VALUE_FORMAT + ' ' +
       'Name it in plain words under 48 characters; "why" says in one sentence how the rule reads the description.\n\nDescription: ' + str(text, 1000);
     return ask(instructions, null, schema, function (d, ground) {
       var rule = FL().ruleFrom(d.combine, d.conditions);
@@ -165,7 +165,7 @@
         matched: [], ignored: [], confidence: 0.8, source: 'ai' };
       if (w) { try { out.count = MC.segments.evaluate(w, rule).count; } catch (e) { /* skip */ } }
       return out;
-    }).then(function (r) { return r || fb; });
+    }, { userText: str(text, 1000) }).then(function (r) { return r || fb; });
   };
 
   /* ---------------- explain ---------------- */
@@ -204,6 +204,6 @@
     return ask(instructions, detail, obj({ answer: S }), function (d, ground) {
       var t = clean(d.answer, ground, 1500);
       return t ? { text: t, source: 'ai' } : null;
-    }).then(function (v) { return v || fb; });
+    }, { userText: str(question, 400) }).then(function (v) { return v || fb; });
   };
 })();
