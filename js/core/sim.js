@@ -266,7 +266,7 @@
     if (!E) {
       var n = world.profiles.n;
       E = { step: new Int16Array(n), due: new Int32Array(n), ctl: new Uint8Array(n), flags: new Uint8Array(n),
-        rev: new Float32Array(n), order: new Int32Array(0), entered: 0, exited: 0 };
+        rev: new Float32Array(n), all: new Float32Array(n), order: new Int32Array(0), entered: 0, exited: 0 };
       E.step.fill(-1);
       world.enroll[cid] = E;
     }
@@ -278,6 +278,20 @@
     for (var k = 0; k < steps.length; k++) if (steps[k].type === 'entry') return k;
     return 0;
   }
+
+  // Universal holdout: a fixed share of profiles (stable hash of the profile id) that no campaign messages on owned
+  // channels. They still see organic and paid. The flag array is cached on the world under a "_" key (not digested).
+  function universalHoldoutBits(world) {
+    var P = world.profiles, n = P.n, pct = (world.meta && typeof world.meta.universalHoldoutPct === 'number') ? world.meta.universalHoldoutPct : 5;
+    var u = world._uh;
+    if (u && u.n === n && u.pct === pct && u.id === P.id) return u.bits;
+    var bits = new Uint8Array(n), fnv = U().fnv1a;
+    for (var i = 0; i < n; i++) bits[i] = (fnv(P.id[i] + '|uh') % 100) < pct ? 1 : 0;
+    world._uh = { n: n, pct: pct, id: P.id, bits: bits };
+    return bits;
+  }
+  SIM.universalHoldoutBits = universalHoldoutBits;
+  SIM.inUniversalHoldout = function (world, i) { return universalHoldoutBits(world)[i] === 1; };
 
   function holdoutOf(world, c) {
     if (typeof c.holdoutPct === 'number') return c.holdoutPct;
@@ -417,7 +431,13 @@
     P.aov[i] = P.orders[i] > 0 ? P.spend[i] / P.orders[i] : rev;
     // "Purchased" decisions in every journey the profile is in.
     var en = world.enroll || {}, ord = world.campaigns.order;
-    for (var k = 0; k < ord.length; k++) { var E = en[ord[k]]; if (E && E.step[i] !== -1) E.flags[i] |= 4; }
+    for (var k = 0; k < ord.length; k++) {
+      var E = en[ord[k]];
+      if (!E || E.step[i] === -1) continue;
+      E.flags[i] |= 4;
+      var cc = world.campaigns.byId[ord[k]];
+      if (E.all && cc && (cc.status === 'live' || cc.status === 'paused')) E.all[i] += rev;   // everything this person spent while the campaign ran
+    }
     return react;
   }
 
@@ -444,6 +464,7 @@
     var P = world.profiles, LP = (world.latent && world.latent.profiles) || {}, g = world.guardrails || {};
     var f = F(), chIdx = CH().IDX, BIT = CH().BIT;
     var e = dayEntry(world, d), cd = campDay(e, c.id), allIdx = allIndex(world, c.id);
+    var uh = universalHoldoutBits(world);
     var quiet = g.quiet || { start: 21, end: 8, channels: ['sms', 'push'] };
     var freqCap = g.freqCap || { email: 4, sms: 2, push: 5 };
     var ctlPol = c.ctl || {};
@@ -496,6 +517,7 @@
     function trySend(i, s, k) {
       var ch = s.channel, ci = chIdx[ch], bit = BIT[ch];
       if (OWNED_NAMES.indexOf(ch) < 0 || c.channels.indexOf(ch) < 0 || pol[k].paused[ch]) return SKIP;
+      if (uh[i]) return SKIP;
       var el = eligible(k, ch);
       if (!el) return SKIP;
       if (!(P.consent[i] & bit) || (P.unsub[i] & bit)) return SKIP;

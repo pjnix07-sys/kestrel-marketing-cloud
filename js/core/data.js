@@ -264,13 +264,13 @@
   function trsSetup(world, seed, members) {
     var P = world.profiles, F = MC.F, days = world.metrics.days, n = P.n;
     var E = { step: new Int16Array(n), due: new Int32Array(n), ctl: new Uint8Array(n), flags: new Uint8Array(n),
-      rev: new Float32Array(n), order: new Int32Array(0), entered: 0, exited: 0 };
+      rev: new Float32Array(n), all: new Float32Array(n), order: new Int32Array(0), entered: 0, exited: 0 };
     E.step.fill(-1);
     var emailable = [], adsW = [], adsIdx = [], fnv = U().fnv1a, i;
     for (var m = 0; m < members.length; m++) {
       i = members[m];
       E.step[i] = -2; E.ctl[i] = (fnv(P.id[i] + '|' + TRS.id) % 100) < 10 ? 1 : 0;
-      if ((P.consent[i] & 1) && !(P.unsub[i] & 1)) emailable.push(i);
+      if ((P.consent[i] & 1) && !(P.unsub[i] & 1) && (fnv(P.id[i] + '|uh') % 100) >= 5) emailable.push(i);
       if ((P.consent[i] & 8) && !E.ctl[i]) { adsIdx.push(i); adsW.push(Math.exp(world.latent.profiles.p0[i])); }
     }
     E.entered = E.exited = members.length;
@@ -533,7 +533,7 @@
 
   function skeleton(seed) {
     return {
-      meta: { seed: seed, tick: 0, tenant: 'Fernway Outfitters', sample: true, day0: DAY0, monthGoal: clone(D.MONTH_GOAL) },
+      meta: { seed: seed, tick: 0, tenant: 'Fernway Outfitters', sample: true, day0: DAY0, monthGoal: clone(D.MONTH_GOAL), universalHoldoutPct: 5 },
       modelState: { coef: new Float64Array(8), snap: null, snapDay: -8 },
       seq: 0,
       rev: { profiles: 0, metrics: 0, enroll: 0, segCounts: 0 },

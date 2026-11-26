@@ -21,7 +21,7 @@
   function pct(x, dp) { return MC.fmt.pct(x, dp === undefined ? 1 : dp); }
   function dayLabel(d) { return MC.fmt.dayLabel(d); }
   // "a 35% chance" / "an 18% chance"
-  function chance(p) { var s = pct(p, 0); return (/^(8|11|18|8\d)%/.test(s) ? 'an ' : 'a ') + s + ' chance'; }
+  function chance(p) { if (p < 0.05) return 'under a 5% chance'; var s = pct(p, 0); return (/^(8|11|18|8\d)%/.test(s) ? 'an ' : 'a ') + s + ' chance'; }
 
   var METRICS = [
     { id: 'revenue', label: 'Revenue', fmt: money, dirs: 'both' },
@@ -189,12 +189,14 @@
       if (c.status !== 'live' || !c.goal || !(c.goal.target > 0)) return;
       var s = c.series.goal, n = s.length;
       if (n < MIN_GOAL_DAYS) { rows.push({ campaign: c.name, outlook: 'Too early to tell' }); return; }
+      // Pacing, projection and chance all come from the same selectors the campaign views use, so the wording never disagrees with them.
+      var S = MC.select, pace = S && S.campaignPacing ? S.campaignPacing(world, c.id) : null, g = S && S.campaignGoal ? S.campaignGoal(world, c.id) : null;
+      if (!pace || !g || g.early || !isNum(g.projected) || !isNum(g.p) || pace.status === 'early') { rows.push({ campaign: c.name, outlook: 'Too early to tell' }); return; }
       var actual = MC.util.sum(s), lastDay = T().dayOf(c.endTick - 1), daysLeft = Math.max(0, lastDay - today + 1);
-      var o = outlook(s, actual, daysLeft, 0);
-      var prob = MC.models.goalProbability(actual, o.pts, c.goal.target), projected = actual + o.mean;
+      var projected = g.projected, prob = g.p;
       var gf = goalFmt(c.goal.type), noun = GOAL_NOUN[c.goal.type] || 'goal';
-      rows.push({ campaign: c.name, projected: gf(projected), goal: gf(c.goal.target), chance: pct(prob, 0) });
-      if (!(prob < p.goalRiskThreshold) || daysLeft <= 0) return;
+      rows.push({ campaign: c.name, pacing: pace.status === 'ahead' ? 'Ahead of pace' : (pace.status === 'on' ? 'On pace' : 'Behind pace'), projected: gf(projected), goal: gf(c.goal.target), chance: pct(prob, 0) });
+      if (pace.status !== 'behind' || !(prob < p.goalRiskThreshold) || daysLeft <= 0) return;
       var sev = prob < 0.2 ? 'crit' : 'warn';
       if (recentGoalWarning(world, c.id, t, sev)) {
         rows.push({ campaign: c.name, outlook: 'Already flagged in the last 3 days' });
@@ -209,9 +211,9 @@
       var recent = s.slice(-7), meanDaily = MC.util.mean(recent), gap = c.goal.target - projected;
       if (!(meanDaily > 0) || !(gap > 0)) return;
       var days = Math.max(1, Math.min(p.maxExtendDays, Math.ceil(gap / meanDaily)));
-      var o2 = outlook(s, actual, daysLeft, days), prob2 = MC.models.goalProbability(actual, o2.pts, c.goal.target);
-      if (prob2 < p.goalRiskThreshold) {
-        rows.push({ campaign: c.name, outlook: 'Even ' + days + ' more days would leave ' + chance(prob2) + ', so no extension suggested' });
+      var projected2 = projected + meanDaily * days, share2 = projected2 / c.goal.target;
+      if (share2 < 0.9) {
+        rows.push({ campaign: c.name, outlook: 'Even ' + days + ' more days would reach only about ' + pct(share2, 0) + ' of the goal, so no extension suggested' });
         return;
       }
       var revRecent = MC.util.mean(c.series.revenue.slice(-7)), revSd = c.series.revenue.length > 2 ? MC.util.sd(c.series.revenue.slice(-7)) : revRecent * 0.5;
@@ -221,18 +223,18 @@
         target: { kind: 'campaign', id: c.id },
         title: 'Extend ' + c.name + ' by ' + days + (days === 1 ? ' day' : ' days'),
         rationale: 'It is on pace for ' + pct(projected / c.goal.target, 0) + ' of its ' + noun + ' goal (' + gf(projected) + ' of ' + gf(c.goal.target) +
-          '), ' + chance(prob) + ' of hitting it. At the recent pace of ' + gf(meanDaily) + ' a day, ' + days + ' more ' + (days === 1 ? 'day' : 'days') +
-          ' lifts that to about ' + pct(prob2, 0) + '. The budget stays the same and is spread over the longer run.',
+          '). At the recent pace of ' + gf(meanDaily) + ' a day, ' + days + ' more ' + (days === 1 ? 'day' : 'days') +
+          ' lifts that to about ' + pct(share2, 0) + '. The budget stays the same and is spread over the longer run.',
         evidence: [
           { label: 'Projected', value: gf(projected) + ' of ' + gf(c.goal.target) },
-          { label: 'Chance of hitting the goal', value: pct(prob, 0) + ' \u2192 ' + pct(prob2, 0) },
+          { label: 'Share of goal', value: pct(projected / c.goal.target, 0) + ' \u2192 ' + pct(share2, 0) },
           { label: 'Recent pace', value: gf(meanDaily) + ' a day' }
         ],
         impact: { metric: 'revenue', unit: '$', delta: Math.round(delta), lo: Math.round(Math.max(0, delta - se)), hi: Math.round(delta + se),
-          horizonDays: days, confidence: r4(prob2) },
+          horizonDays: days, confidence: r4(Math.max(0.3, Math.min(0.9, share2))) },
         actions: [{ type: 'campaign/setEnd', payload: { id: c.id, endTick: newEnd } }],
         diff: [{ label: 'Last day', before: dayLabel(lastDay), after: dayLabel(T().dayOf(newEnd - 1)) },
-          { label: 'Chance of hitting the goal', before: pct(prob, 0), after: pct(prob2, 0) }]
+          { label: 'Share of goal', before: pct(projected / c.goal.target, 0), after: pct(share2, 0) }]
       });
     });
     if (rows.length) trace.push({ step: 'decide', text: 'Checked each live campaign\u2019s outlook against its goal.', rows: rows });

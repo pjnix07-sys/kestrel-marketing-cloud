@@ -515,33 +515,43 @@
     });
   };
 
-  // Revenue per person: people the campaign enrolled vs the held-out control group. Mean difference with a 95%
-  // interval from the per-person sample variance (log-ratio delta method).
+  // True when profile idx is in the universal holdout: a fixed share of people (world.meta.universalHoldoutPct, 5 by
+  // default) that no campaign messages on owned channels. Same hash the simulation uses.
+  SEL.inUniversalHoldout = function (w, idx) {
+    var pct = (w.meta && typeof w.meta.universalHoldoutPct === 'number') ? w.meta.universalHoldoutPct : 5;
+    return (MC.util.fnv1a(w.profiles.id[idx] + '|uh') % 100) < pct;
+  };
+
+  // Revenue per person over the campaign window: audience members who were messaged vs audience members in the
+  // universal holdout (never messaged, still exposed to organic and paid). Everything they spent counts, so the
+  // difference is what the campaign added. Percent units (13.5 = 13.5%), 95% interval from the per-person variance
+  // (log-ratio delta method). The per-campaign control group used to judge agent changes is not used here.
   SEL.campaignLift = function (w, cid) {
     var c = camp(w, cid);
     if (!c) return null;
     return memo('campaignLift', [w, rv(w, 'enroll'), rv(w, 'metrics'), c, w.meta.tick], cid, function () {
       var E = w.enroll && w.enroll[cid];
       var out = { ready: false, metric: 'revenue per person', treated: null, control: null, liftPct: null, lo: null, hi: null, nTreated: 0, nControl: 0, note: '' };
-      if (!E || !E.step) { out.note = c.status === 'draft' || c.status === 'scheduled' ? 'Starts when the campaign goes live.' : 'No results yet.'; return out; }
+      if (!E || !E.step || !E.all) { out.note = c.status === 'draft' || c.status === 'scheduled' ? 'Starts when the campaign goes live.' : 'No results yet.'; return out; }
       var n = [0, 0], s1 = [0, 0], s2 = [0, 0], buyers = [0, 0];
       for (var i = 0; i < E.step.length; i++) {
         if (E.step[i] === -1) continue;
-        var k = E.ctl[i] ? 1 : 0, r = E.rev[i];
+        var k = SEL.inUniversalHoldout(w, i) ? 1 : 0, r = E.all[i];
         n[k]++; s1[k] += r; s2[k] += r * r; if (r > 0) buyers[k]++;
       }
       out.nTreated = n[0]; out.nControl = n[1];
-      if (n[1] < 100) { out.note = 'The control group has ' + n[1] + ' people so far. Lift shows once it reaches 100.'; return out; }
+      if (n[1] < 30) { out.note = 'Only ' + n[1] + ' people in this audience are held out from all messages so far. Lift shows once there are 30.'; return out; }
+      if (n[0] < 30) { out.note = 'Not enough people have been messaged yet.'; return out; }
       var mt = s1[0] / n[0], mc = s1[1] / n[1];
       out.treated = mt; out.control = mc;
-      if (buyers[1] < 3) { out.note = 'Only ' + buyers[1] + (buyers[1] === 1 ? ' person' : ' people') + ' in the control group ' + (buyers[1] === 1 ? 'has' : 'have') + ' bought so far. Lift needs at least 3.'; return out; }
+      if (buyers[1] < 3 || buyers[0] < 3 || !(mc > 0)) { out.note = 'Only ' + buyers[1] + (buyers[1] === 1 ? ' held-out person has' : ' held-out people have') + ' bought so far. Lift needs at least 3.'; return out; }
       var vt = Math.max(0, s2[0] / n[0] - mt * mt) / n[0], vc = Math.max(0, s2[1] / n[1] - mc * mc) / n[1];
       var lr = Math.log(mt > 0 ? mt / mc : 1e-9), se = Math.sqrt(vt / (mt * mt || 1) + vc / (mc * mc));
       out.liftPct = (mt / mc - 1) * 100;   // percent units (13.5 = 13.5%)
       out.lo = (mt > 0 ? Math.exp(lr - Z95 * se) - 1 : -1) * 100;
       out.hi = (mt > 0 ? Math.exp(lr + Z95 * se) - 1 : -1) * 100;
       out.ready = true;
-      out.note = out.lo > 0 ? 'Clearly above the control group.' : (out.hi < 0 ? 'Clearly below the control group.' : 'Too close to call: the range includes no lift.');
+      out.note = out.lo > 0 ? 'Clearly above the held-out group.' : (out.hi < 0 ? 'Clearly below the held-out group.' : 'Too close to call: the range includes no lift.');
       return out;
     });
   };
