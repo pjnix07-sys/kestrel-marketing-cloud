@@ -601,7 +601,7 @@
 
     if (created.length) {
       var first = prop(world, autoIds[0] || created[0]), name = def.name, q = created.length - autoIds.length, text;
-      if (created.length === 1) text = autoIds.length ? name + ' applied ' + lowerFirst(first.title) : first.title;
+      if (created.length === 1) text = autoIds.length ? 'Applied: ' + first.title : first.title;
       else if (autoIds.length) text = name + ' applied ' + autoIds.length + (autoIds.length === 1 ? ' change' : ' changes') + (q ? ' and has ' + q + ' for you' : '');
       else text = q + ' suggestions for you';
       if (ai && ai.mode === 'haiku' && ai.summary) text = ai.summary;
