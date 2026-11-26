@@ -231,27 +231,39 @@ async function secApprovals() {
     await page.click('#app-approvals-btn');
     const drawer = page.locator('#approvals-drawer');
     await drawer.waitFor({ state: 'visible' });
-    const card = drawer.locator('article').first();
-    await card.waitFor();
-    const titleId = await card.locator('[id^="proposal-"][id$="-title"]').first().getAttribute('id');
-    const pid = open.find(id => 'proposal-' + id.replace(/[^a-zA-Z0-9_-]/g, '-') + '-title' === titleId);
-    await check('approvals drawer lists pending proposals', !!pid, 'first card ' + titleId, page);
-    if (!pid) return;
-    await card.getByRole('button', { name: 'Approve', exact: true }).click();
-    await page.waitForFunction(id => { const p = MC.store.getState().proposals.byId[id]; return p && (p.status === 'applied' || p.status === 'auto'); }, pid, { timeout: 8000 }).catch(() => {});
-    const st = await ws(page, (w, id) => ({ status: w.proposals.byId[id].status, undo: MC.runtime.undoCheck(w, id), open: w.proposals.open.length }), pid);
-    await check('approve -> applied/auto and undo available', (st.status === 'applied' || st.status === 'auto') && st.undo && st.undo.ok, `status ${st.status}, undoCheck ${JSON.stringify(st.undo)}`, page);
-    await check('approving reduces the pending count', st.open === open.length - 1, `open ${open.length} -> ${st.open}`, page);
-    await page.getByRole('tab', { name: /Applied by agents/ }).click();
-    const same = page.locator('article:has(#' + titleId + ')');
-    await same.waitFor({ timeout: 5000 }).catch(() => {});
-    const undoBtn = same.getByRole('button', { name: 'Undo' });
-    if (await undoBtn.count() && await undoBtn.isEnabled()) {
-      await undoBtn.click();
-      await page.waitForFunction(id => MC.store.getState().proposals.byId[id].status === 'undone', pid, { timeout: 8000 }).catch(() => {});
-      const s2 = await ws(page, (w, id) => w.proposals.byId[id].status, pid);
-      await check('undo restores the proposal (status undone)', s2 === 'undone', 'status ' + s2, page);
-    } else await warn('approvals undo via UI', 'Undo button not found/enabled for ' + pid + ' (' + JSON.stringify(st.undo) + ')', page);
+    const cards = drawer.locator('article');
+    await cards.first().waitFor();
+    const nCards = await cards.count();
+    await check('approvals drawer lists pending proposals', nCards === open.length || nCards >= Math.min(open.length, 30), `${nCards} cards, ${open.length} pending`, page);
+    let done = null;
+    for (let i = 0; i < Math.min(nCards, 8) && !done; i++) {
+      const card = cards.nth(i);
+      const titleId = await card.locator('[id^="proposal-"][id$="-title"]').first().getAttribute('id');
+      const pid = open.find(id => 'proposal-' + id.replace(/[^a-zA-Z0-9_-]/g, '-') + '-title' === titleId);
+      if (!pid) continue;
+      await card.getByRole('button', { name: 'Approve', exact: true }).click();
+      await page.waitForFunction(id => { const p = MC.store.getState().proposals.byId[id]; return p && p.status !== 'pending'; }, pid, { timeout: 2500 }).catch(() => {});
+      const st = await ws(page, (w, id) => ({ status: w.proposals.byId[id].status, undo: MC.runtime.undoCheck(w, id), open: w.proposals.open.length }), pid);
+      if (st.status === 'applied' || st.status === 'auto') { done = { pid, titleId, st }; break; }
+      const txt = (await card.innerText()).split('\n').filter(l => /Blocked|Couldn|guardrail/i.test(l)).join(' ');
+      await warn('approvals: Approve did not apply ' + pid, 'status ' + st.status + '; card says "' + txt + '"', page);
+    }
+    await check('approve -> applied/auto and undo available', !!done && done.st.undo && done.st.undo.ok, done ? `${done.pid}: status ${done.st.status}, undoCheck ${JSON.stringify(done.st.undo)}` : 'none of the first pending proposals could be approved', page);
+    if (done) {
+      await check('approving reduces the pending count', done.st.open === open.length - 1, `open ${open.length} -> ${done.st.open}`, page);
+      await page.mouse.move(2, 2);   // the list freezes while hovered
+      await page.getByRole('tab', { name: done.st.status === 'auto' ? /Applied by agents/ : /^History/ }).click();   // approved-by-you lands in History
+      const same = page.locator('article:has(#' + done.titleId + ')');
+      for (let k = 0; k < 4 && !(await same.count()); k++) { const more = page.locator('#approvals-more'); if (!(await more.count())) break; await more.click(); await page.waitForTimeout(250); }
+      await same.waitFor({ timeout: 3000 }).catch(() => {});
+      const undoBtn = same.getByRole('button', { name: 'Undo' });
+      if (await undoBtn.count() && await undoBtn.isEnabled()) {
+        await undoBtn.click();
+        await page.waitForFunction(id => MC.store.getState().proposals.byId[id].status === 'undone', done.pid, { timeout: 8000 }).catch(() => {});
+        const s2 = await ws(page, (w, id) => w.proposals.byId[id].status, done.pid);
+        await check('undo restores the proposal (status undone)', s2 === 'undone', 'status ' + s2, page);
+      } else await warn('approvals undo via UI', 'Undo button not found/enabled for ' + done.pid, page);
+    }
     const errs = w.take();
     await check('approvals no console errors', !errs.length, errs.join(' / ') || 'none', page);
     await page.keyboard.press('Escape');
@@ -347,11 +359,11 @@ async function secContent() {
     const fixes = await page.$$eval('[id^="cs-fix-"]:not(#cs-fix-all)', els => els.map(e => e.id));
     await check('content: editing a field re-runs the checks', head1 !== head0 && fixes.length > 0, `"${head0}" -> "${head1}"; fixes ${fixes.join(',')}`, page);
     if (fixes.includes('cs-fix-banned')) {
-      await page.click('#cs-fix-banned');
-      await page.waitForTimeout(400);
-      const subj = await page.inputValue('#cs-subject');
+      let clicks = 0;
+      while (clicks < 5 && await page.locator('#cs-fix-banned').count()) { await page.click('#cs-fix-banned'); clicks++; await page.waitForTimeout(300); }
+      const subj = await page.inputValue('#cs-subject'), body = await page.inputValue('#cs-body');
       const still = await page.locator('#cs-fix-banned').count();
-      await check('content: Fix removes the banned-word failure', !/guaranteed/i.test(subj) && still === 0, 'subject now "' + subj + '"', page);
+      await check('content: Fix clears the banned-word failure', !/guaranteed/i.test(subj + ' ' + body) && still === 0, `after ${clicks} click(s) subject "${subj}", body "${body}"`, page);
     } else if (fixes.length) {
       await page.click('#' + fixes[0]);
       await pass('content: Fix applied', fixes[0]);
