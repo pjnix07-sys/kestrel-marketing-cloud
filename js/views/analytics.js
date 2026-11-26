@@ -1,4 +1,4 @@
-/* Kestrel Marketing Cloud - Analytics view (#analytics). MC.views.analytics.
+/* Marketing Cloud - Analytics view (#analytics). MC.views.analytics.
    Performance over time with forecasts and bands, agent impact vs control, funnel, channels and
    variants, attribution, ROI-ranked audiences, anomalies, a what-if budget simulator on fitted
    response curves, and narrative insights. Reads only through MC.select.* and narrow selectors;
@@ -25,10 +25,15 @@
     for (var i = 0; i < a.length; i++) if (!Object.is(a[i], b[i])) return false;
     return true;
   }
+  function sameItemsDeep(a, b) {
+    if (a === b) return true;
+    if (!a || !b || a.length !== b.length) return false;
+    for (var i = 0; i < a.length; i++) if (a[i].id !== b[i].id || !Object.is(a[i].pc, b[i].pc)) return false;
+    return true;
+  }
   function selTick(w) { return w.meta.tick; }
   function selCampaigns(w) { return w.campaigns; }
   function selProposals(w) { return w.proposals; }
-  function selSeed(w) { return w.meta.seed; }
 
   /* ---------------- formatting ---------------- */
   function fmtCall(name, a, b) {
@@ -60,14 +65,22 @@
     var r = fmtCall('ratio', x);
     return r != null ? r : x.toFixed(1) + TIMES;
   }
+  // Calendar labels come from MC.time's display mapping (§11.1); never ticks.
+  function tm(name) { return MC.time && typeof MC.time[name] === 'function' ? MC.time[name] : null; }
   function dayShort(d) {
+    if (!fin(d)) return DASH;
+    var f = tm('dayLabel');
+    if (f) return f(d, { style: 'short' });
     var r = fmtCall('dayShort', d);
-    if (r != null) return r;
-    var u = MC.charts && MC.charts.util;
-    return u && u.shortDay ? u.shortDay(d) : 'Day ' + d;
+    return r != null ? r : DASH;
   }
-  function stamp(t) { var r = fmtCall('stamp', t); return r != null ? r : 'Tick ' + t; }
-  function clock(t) { var r = fmtCall('clock', t); return r != null ? r : stamp(t); }
+  function stamp(t) {
+    if (!fin(t)) return DASH;
+    var f = tm('stampLabel');
+    if (f) return f(t);
+    var r = fmtCall('stamp', t);
+    return r != null ? r : DASH;
+  }
 
   /* ---------------- metrics ---------------- */
   var METRICS = [
@@ -99,10 +112,10 @@
 
   var RANGES = [
     { value: '14', label: 'Last 14 days' }, { value: '30', label: '30 days' },
-    { value: '60', label: '60 days' }, { value: 'all', label: 'Since sim start' }
+    { value: '60', label: '60 days' }, { value: 'all', label: 'All history' }
   ];
   function rangeValue(v) { return v === 'all' ? 'all' : (Number(v) || 30); }
-  function rangeLabel(r) { return r === 'all' ? 'since the sim started' : 'over the last ' + r + ' days'; }
+  function rangeLabel(r) { return r === 'all' ? 'across all history' : 'over the last ' + r + ' days'; }
 
   function CH() { return MC.CH || { ALL: ['email', 'sms', 'push', 'social', 'web'], OWNED: ['email', 'sms', 'push'], PAID: ['social', 'web'], IDX: { email: 0, sms: 1, push: 2, social: 3, web: 4 }, LABEL: { email: 'Email', sms: 'SMS', push: 'Push', social: 'Social ads', web: 'Web ads' } }; }
   function chLabel(ch) { return CH().LABEL[ch] || ch; }
@@ -255,10 +268,12 @@
     if (K) return html`<${K} tone=${p.tone || 'neutral'}>${p.children}<//>`;
     return html`<span className=${'an-pill an-tone-' + (p.tone || 'neutral')}>${p.children}</span>`;
   }
+  // Agent attribution is a small dot with the name beside it in plain text; no pill. showName={false} leaves the dot
+  // alone (name stays in the hover title and for screen readers).
   function Chip(p) {
-    var K = kit('AgentChip');
-    if (K) return html`<${K} agentId=${p.agentId} size="sm" />`;
-    return html`<span className="an-agent-chip"><span className="an-agent-dot" aria-hidden="true"></span>${agentName(p.agentId)}</span>`;
+    var name = agentName(p.agentId);
+    return html`<span className="an-agent" title=${name}><span className="an-agent-dot" aria-hidden="true"></span>${p.showName === false
+      ? html`<span className="an-visually-hidden">${name}</span>` : html`<span className="an-agent-name">${name}</span>`}</span>`;
   }
   function Confirm(p) {
     var K = kit('InlineConfirm');
@@ -352,34 +367,30 @@
   /* ---------------- filter bar ---------------- */
   function FilterBar(p) {
     var fo = p.focus, ids = fo.campaignIds || [];
-    var ChipT = kit('ChipToggle');
     function set(patch) { if (MC.uiStore && MC.uiStore.setFocus) MC.uiStore.setFocus('analytics', patch); }
-    function toggle(cid) {
-      var next = ids.indexOf(cid) >= 0 ? ids.filter(function (x) { return x !== cid; }) : ids.concat([cid]);
-      var order = p.campaigns.map(function (c) { return c.id; });
-      next.sort(function (a, b) { return order.indexOf(a) - order.indexOf(b); });
-      set({ campaignIds: next });
-    }
     var metricOpts = METRICS.slice();
     if (!METRICS.some(function (m) { return m.value === fo.metric; }) && EXTRA_METRICS[fo.metric]) metricOpts.push({ value: fo.metric, label: EXTRA_METRICS[fo.metric] });
+    var React = R();
+    var active = (ids.length ? 1 : 0) + (fo.channel && fo.channel !== 'all' ? 1 : 0) + (fo.metric && fo.metric !== 'revenue' ? 1 : 0) + (fo.showAgents === false ? 1 : 0);
+    var os = React.useState(null), setOpen = os[1];
+    var shown = os[0] === null ? active > 0 : os[0];
     return html`<div className="an-filters" role="group" aria-label="Analytics filters">
       <div className="an-filter">
         <span className="an-filter-label" id="analytics-range-label">Range</span>
         <${Seg} id="analytics-range" label="Date range" value=${String(fo.range)} options=${RANGES}
           onChange=${function (v) { set({ range: rangeValue(v) }); }} />
       </div>
+      <button type="button" id="analytics-filters-toggle" className="an-filters-toggle" aria-expanded=${shown ? 'true' : 'false'} aria-controls="analytics-filters-more"
+          onClick=${function () { setOpen(!shown); }}>${'Filters' + (active ? ' (' + active + ' on)' : '')}</button>
+      <div id="analytics-filters-more" className="an-filters-more" hidden=${!shown}>
       <div className="an-filter an-filter-camps">
-        <span className="an-filter-label" id="analytics-campaigns-label">Campaigns</span>
-        <div id="analytics-campaigns" className="an-chips" role="group" aria-labelledby="analytics-campaigns-label">
-          <button type="button" className=${'an-chip' + (ids.length ? '' : ' is-on')} aria-pressed=${ids.length ? 'false' : 'true'}
-            onClick=${function () { set({ campaignIds: [] }); }}>All campaigns</button>
-          ${p.campaigns.map(function (c) {
-            var on = ids.indexOf(c.id) >= 0;
-            if (ChipT) return html`<${ChipT} key=${c.id} id=${'analytics-campaign-' + c.id} label=${c.name} checked=${on} onChange=${function () { toggle(c.id); }} />`;
-            return html`<button key=${c.id} id=${'analytics-campaign-' + c.id} type="button" className=${'an-chip' + (on ? ' is-on' : '')}
-              aria-pressed=${on ? 'true' : 'false'} onClick=${function () { toggle(c.id); }}>${c.name}</button>`;
-          })}
-        </div>
+        <label className="an-filter-label" htmlFor="analytics-campaigns">Campaign</label>
+        <select id="analytics-campaigns" className="an-select" value=${ids.length === 1 ? ids[0] : (ids.length ? '__many' : '')}
+            onChange=${function (e) { var v = e.target.value; if (v !== '__many') set({ campaignIds: v ? [v] : [] }); }}>
+          <option value="">All campaigns</option>
+          ${ids.length > 1 ? html`<option value="__many">${ids.length + ' campaigns'}</option>` : null}
+          ${p.campaigns.map(function (c) { return html`<option key=${c.id} value=${c.id}>${c.name}</option>`; })}
+        </select>
       </div>
       <div className="an-filter">
         <label className="an-filter-label" htmlFor="analytics-channel">Channel</label>
@@ -397,7 +408,8 @@
       <div className="an-filter an-filter-toggle">
         <input id="analytics-show-agents" type="checkbox" className="an-check" checked=${fo.showAgents !== false}
           onChange=${function (e) { set({ showAgents: e.target.checked }); }} />
-        <label htmlFor="analytics-show-agents">Show agent actions</label>
+        <label htmlFor="analytics-show-agents">Show agent changes</label>
+      </div>
       </div>
     </div>`;
   }
@@ -499,7 +511,9 @@
       }
       var lo = actual.length ? actual[0].day : 0;
       var hi = points.length ? points[points.length - 1].day : (actual.length ? actual[actual.length - 1].day : 0);
-      ((MC.time && MC.time.EVENTS) || EMPTY).forEach(function (ev) {
+      // Sale-event markers sit on the internal calendar; show them only when display dates match it.
+      var evOk = !(MC.time && typeof MC.time.displayOffset === 'function' && MC.time.displayOffset() !== 0);
+      (evOk && MC.time && MC.time.EVENTS || EMPTY).forEach(function (ev) {
         if (ev.day >= lo && ev.day <= hi) out.push({ x: ev.day, kind: 'event', label: ev.label });
       });
       (markersRaw || EMPTY).forEach(function (m) {
@@ -516,7 +530,7 @@
       else if (!FC) chart = html`<${NoChart} />`;
       else {
         var goal = fc && fin(fc.goal) ? { y: fc.goal, label: 'Daily pace for goal ' + vf(fc.goal) } : null;
-        chart = html`<${FC} actual=${actual} forecast=${points} goal=${goal} markers=${markers} yFormat=${axisFmt(metric)}
+        chart = html`<${FC} actual=${actual} forecast=${points} goal=${goal} markers=${markers} yFormat=${axisFmt(metric)} xFormat=${dayShort}
           height=${260} labels=${{ actual: metricLabel(metric), forecast: 'Forecast (14 days)' }} label=${metricLabel(metric)} />`;
       }
     } else if (!LC) chart = html`<${NoChart} />`;
@@ -526,7 +540,7 @@
         return { id: e.id, label: e.label, color: e.color, points: pts };
       }).filter(function (s) { return s.points.some(function (q) { return q.y; }); });
       chart = ser.length
-        ? html`<${LC} series=${ser} markers=${markers.filter(function (m) { return m.kind !== 'anomaly'; })} yFormat=${axisFmt(metric)} height=${260}
+        ? html`<${LC} series=${ser} markers=${markers.filter(function (m) { return m.kind !== 'anomaly'; })} yFormat=${axisFmt(metric)} xFormat=${dayShort} height=${260}
             ariaLabel=${metricLabel(metric) + ' by ' + split + ', ' + rangeLabel(f.range)} />`
         : html`<${Empty} title="No sends in this range yet." />`;
     }
@@ -549,7 +563,7 @@
       ${chart}
       ${openP ? html`<div className="an-callout" role="region" aria-label="Agent change details">
           <div className="an-callout-head"><strong>Agent change</strong><${Btn} kind="ghost" onClick=${function () { setOpenP(null); }}>Close<//></div>
-          ${PC ? html`<${PC} id=${openP} showTarget=${true} />` : html`<p className="an-note">${openP}</p>`}
+          ${PC ? html`<${PC} id=${openP} showTarget=${true} flat=${true} />` : html`<p className="an-note">${openP}</p>`}
         </div>` : null}
     <//>`;
   }
@@ -589,15 +603,6 @@
       });
       return { expected: e, realized: r };
     }, [rows, imp, ids]);
-    var liftIds = React.useMemo(function () {
-      if (!campaigns) return EMPTY;
-      var base = ids.length ? ids : campaigns.order;
-      return base.filter(function (id) { var c = campaigns.byId[id]; return c && c.status !== 'draft' && c.status !== 'scheduled'; });
-    }, [campaigns, ids]);
-    var lifts = H.useSelect(React.useCallback(function (w) {
-      return liftIds.map(function (id) { return has(sel(), 'liftVsControl') ? sel().liftVsControl(w, id) : null; });
-    }, [liftIds]), sameItems);
-
     var sorted = rows.slice().sort(function (a, b) { return (b.appliedTick - a.appliedTick) || (a.proposalId < b.proposalId ? -1 : 1); });
     var shown = showAll ? sorted : sorted.slice(0, 8);
     var since = dayShort(0);
@@ -625,18 +630,42 @@
           rowKey=${function (r) { return r.proposalId; }} sortKey="applied" sortDir="desc" />` : null}
       ${sorted.length > 8 ? html`<div className="an-actions"><${Btn} kind="ghost" onClick=${function () { setShowAll(!showAll); }}>
           ${showAll ? 'Show fewer' : 'Show all ' + sorted.length}<//></div>` : null}
-      <h3 className="an-subhead">Control group lift</h3>
-      <ul className="an-lifts">
-        ${liftIds.map(function (id, k) {
-          var l = lifts ? lifts[k] : null, c = campaigns.byId[id];
-          var body;
-          if (!l) body = html`<span className="an-muted">Control group needs 100 sends before lift is measured.</span>`;
-          else if (!fin(l.lift)) body = html`<span className="an-muted">No ${l.metric} in the control group yet.</span>`;
-          else body = html`<span><strong className="num">${signedPct(l.lift)}</strong> ${l.metric} vs control <span className="an-muted num">(95% range ${signedPct(l.lo)} to ${signedPct(l.hi)}; ${num(l.trt.n)} vs ${num(l.ctl.n)} sends)</span></span>`;
-          return html`<li key=${id} className="an-lift"><span className="an-lift-name">${c ? c.name : id}</span>${body}</li>`;
-        })}
-        ${liftIds.length ? null : html`<li className="an-muted">No live or completed campaigns in this filter.</li>`}
-      </ul>
+    <//>`;
+  }
+
+  /* ---------------- Lift vs control ---------------- */
+  function LiftSection(p) {
+    var React = R(), H = hooks(), ids = p.f.campaignIds || EMPTY;
+    var campaigns = H.useSelect(selCampaigns);
+    var liftIds = React.useMemo(function () {
+      if (!campaigns) return EMPTY;
+      return (ids.length ? ids : campaigns.order).filter(function (id) { var c = campaigns.byId[id]; return c && c.status !== 'draft' && c.status !== 'scheduled'; });
+    }, [campaigns, ids]);
+    var lifts = H.useSelect(React.useCallback(function (w) {
+      return liftIds.map(function (id) { return has(sel(), 'campaignLift') ? sel().campaignLift(w, id) : null; });
+    }, [liftIds]), sameItems) || EMPTY;
+    var rows = liftIds.map(function (id, k) { return { id: id, name: campaigns.byId[id].name, status: campaigns.byId[id].status, lift: lifts[k] }; });
+    var cols = [
+      { key: 'name', label: 'Campaign', sortValue: function (r) { return r.name; }, firstDir: 'asc', render: function (r) { return html`<span className="an-change">${r.name}</span>`; } },
+      { key: 'treated', label: 'Revenue per person', align: 'right', sortValue: function (r) { return r.lift ? r.lift.treated : null; },
+        render: function (r) { return r.lift && fin(r.lift.treated) ? money(r.lift.treated, { cents: true }) : DASH; } },
+      { key: 'control', label: 'Control group', align: 'right', sortValue: function (r) { return r.lift ? r.lift.control : null; },
+        render: function (r) { return r.lift && fin(r.lift.control) ? money(r.lift.control, { cents: true }) : DASH; } },
+      { key: 'lift', label: 'Lift', align: 'right', sortValue: function (r) { return r.lift && r.lift.ready ? r.lift.liftPct : null; }, render: function (r) {
+        var l = r.lift;
+        if (!l || !l.ready) return html`<span className="an-muted">Not enough yet</span>`;
+        var big = l.hi > 1000;
+        return html`<span><strong className="num">${signedPct(l.liftPct / 100)}</strong><span className="an-sub-num">${signedPct(l.lo / 100) + ' to ' + (big ? 'more than +1,000%' : signedPct(l.hi / 100))}</span></span>`;
+      } },
+      { key: 'people', label: 'People', align: 'right', sortValue: function (r) { return r.lift ? r.lift.nControl : null },
+        render: function (r) { return r.lift ? html`<span className="num">${num(r.lift.nTreated)} vs ${num(r.lift.nControl)}</span>` : DASH; } },
+      { key: 'note', label: 'Read', render: function (r) { return html`<span className="an-muted">${r.lift ? r.lift.note : ''}</span>`; } }
+    ];
+    return html`<${Card} id="analytics-lift" title="Lift vs control"
+        sub="Revenue per person for everyone a campaign reached, against the 10% control group that stays on the original plan.">
+      ${rows.length ? html`<${Table} id="analytics-lift-table" caption="Lift vs control by campaign" columns=${cols} rows=${rows}
+          rowKey=${function (r) { return r.id; }} sortKey="name" sortDir="asc" />`
+        : html`<${Empty} title="No live or finished campaigns in this filter." />`}
     <//>`;
   }
 
@@ -648,17 +677,16 @@
     var args = React.useMemo(function () { return { range: f.range, campaignIds: f.campaignIds, channel: ch }; }, [f, ch]);
     var stages = H.useSelect(React.useCallback(function (w) { return has(sel(), 'funnel') ? sel().funnel(w, args) : EMPTY; }, [args]));
     var FN = chartOr('Funnel');
-    var st = stages || EMPTY, sent = st[0] ? st[0].value : 0, conv = st[4] ? st[4].value : 0;
-    var worst = null;
-    for (var i = 1; i < st.length; i++) {
-      var prev = st[i - 1].value;
-      if (prev > 0) { var r = st[i].value / prev; if (!worst || r < worst.r) worst = { r: r, from: st[i - 1].label, to: st[i].label }; }
-    }
+    var st = stages || EMPTY, sent = st[0] ? st[0].value : 0, conv = st[st.length - 1] ? st[st.length - 1].value : 0;
+    var byKey = {};
+    st.forEach(function (x) { byKey[x.key] = x; });
+    var clk = byKey.clicked, cv = byKey.converted;
     var opts = [{ value: 'all', label: 'All' }].concat(CH().OWNED.map(function (c) { return { value: c, label: chLabel(c) }; }));
-    return html`<${Card} id="analytics-funnel" title="Funnel" sub=${'Owned-channel messages ' + rangeLabel(f.range) + ', stage by stage.'}
+    return html`<${Card} id="analytics-funnel" title="Funnel" sub=${'Email, SMS and push messages ' + rangeLabel(f.range) + '. Each rate is out of the step before it.'}
         actions=${html`<${Seg} id="analytics-funnel-channel" label="Funnel channel" value=${ch} options=${opts} onChange=${setCh} />`}>
-      ${sent > 0 ? html`<p className="an-headline">Of <strong className="num">${num(sent)}</strong> messages sent, <strong className="num">${num(conv)}</strong> converted (<span className="num">${pct(conv / sent, 2)}</span>).
-          ${worst ? html` The steepest drop is ${worst.from.toLowerCase()} ${'→'} ${worst.to.toLowerCase()}: <span className="num">${pct(worst.r)}</span> continue.` : null}</p>` : null}
+      ${sent > 0 ? html`<p className="an-headline">Of <strong className="num">${num(sent)}</strong> messages sent, <strong className="num">${num(conv)}</strong> led to an order
+          (<span className="num">${pct(conv / sent, 2)}</span>).
+          ${clk && cv && fin(clk.rateOfPrev) && fin(cv.rateOfPrev) ? html` <span className="num">${pct(clk.rateOfPrev)}</span> of delivered messages were clicked, and <span className="num">${pct(cv.rateOfPrev)}</span> of those clicks became orders.` : null}</p>` : null}
       ${sent > 0 ? (FN ? html`<${FN} stages=${st} format="num" ariaLabel=${'Funnel: ' + num(sent) + ' sent, ' + num(conv) + ' converted'} />` : html`<${NoChart} />`)
         : html`<${Empty} title="No sends in this range yet." body="Owned channels (email, SMS, push) feed this funnel." />`}
     <//>`;
@@ -981,7 +1009,7 @@
             <select id="analytics-whatif-campaign" className="an-select" value=${cid || ''} onChange=${function (e) { setLocalCid(e.target.value); }}>
               ${candidates.map(function (id) { return html`<option key=${id} value=${id}>${campaigns.byId[id].name}</option>`; })}
             </select></div>` : null}>
-      ${!cid ? html`<${Empty} title="Nothing is live right now." body="The simulator works on live or paused campaigns with spend history." />`
+      ${!cid ? html`<${Empty} title="Nothing is live right now." body="What-if works on live or paused campaigns with spend history." />`
         : data ? html`<${WhatIfBody} key=${cid} data=${data} />` : null}
     <//>`;
   }
@@ -1026,16 +1054,16 @@
     }
     function askPacer() {
       var r = dispatch({ type: 'agent/runNow', payload: { id: 'pacer' } });
-      setMsg(r.ok ? { tone: 'agent', text: 'Queued for next tick. Budget Pacer will evaluate ' + data.name + ' and post any proposal to Approvals.' }
+      setMsg(r.ok ? { tone: 'agent', text: 'Budget Pacer will review ' + data.name + ' shortly and post any proposal to Approvals.' }
         : { tone: 'crit', text: r.error || 'Could not queue Budget Pacer.' });
     }
-    if (L <= 0) return html`<${Empty} title="This campaign has no days left to simulate." />`;
+    if (L <= 0) return html`<${Empty} title="This campaign has no days left to plan." />`;
     if (!sim.fitted) return html`<${Empty} title="Not enough spend history to fit response curves yet." body="Curves need at least one complete day of spend on a channel." />`;
     var dSpend = (sim.newSpend - sim.nowSpend) / L;
     var nowRoas = sim.nowSpend > 0 ? sim.nowRev / sim.nowSpend : null, newRoas = sim.newSpend > 0 ? sim.newRev / sim.newSpend : null;
     var summary = 'Predicted revenue ' + moneyC(sim.newRev) + ' (' + moneyC(sim.lo) + EN + moneyC(sim.hi) + ') vs ' + moneyC(sim.nowRev) + ' now';
     var bc = byChannel();
-    var confirmText = 'Set ' + data.name + ' budgets to ' + data.channels.map(function (c) { return chLabel(c.ch) + ' ' + money(bc[c.ch]); }).join(MID) + '? Agents see the new totals at the next tick.';
+    var confirmText = 'Set ' + data.name + ' budgets to ' + data.channels.map(function (c) { return chLabel(c.ch) + ' ' + money(bc[c.ch]); }).join(MID) + '? Agents work from the new totals at their next run.';
     return html`<div className="an-whatif">
       <div className="an-whatif-summary">
         <p className="an-headline"><span className="num">${summary}</span>${MID}Return <span className="num">${ratio(nowRoas) + ARROW + ratio(newRoas)}</span></p>
@@ -1080,7 +1108,9 @@
   var MONTH_ARGS = { metric: 'revenue', month: true };
   var ANALYST_KINDS = { kinds: ['goal-risk', 'roi', 'pacing'] };
   function goEvidence(patch, target) {
-    if (MC.uiStore && MC.uiStore.setFocus) MC.uiStore.setFocus('analytics', patch || {});
+    var sec = SECTION_OF[target];
+    patch = Object.assign({}, patch || {}, sec ? { section: sec } : {});
+    if (MC.uiStore && MC.uiStore.setFocus) MC.uiStore.setFocus('analytics', patch);
     var id = (target || 'analytics-performance') + '-title';
     setTimeout(function () {
       var el = document.getElementById(id);
@@ -1090,6 +1120,13 @@
   function Narratives(p) {
     var React = R(), H = hooks(), f = p.f;
     var month = H.useSelect(React.useCallback(function (w) { return has(sel(), 'forecast') ? sel().forecast(w, MONTH_ARGS) : null; }, []));
+    var gf = H.useSelect(React.useCallback(function (w) { return has(sel(), 'goalFor') ? sel().goalFor(w) : null; }, []));
+    var pacing = H.useSelect(React.useCallback(function (w) {
+      if (!has(sel(), 'campaignPacing')) return EMPTY;
+      return w.campaigns.order.filter(function (id) { return w.campaigns.byId[id].status === 'live'; })
+        .map(function (id) { return { id: id, name: w.campaigns.byId[id].name, pc: sel().campaignPacing(w, id) }; });
+    }, []), sameItemsDeep) || EMPTY;
+    var mo = React.useState(false), showMore = mo[0], setShowMore = mo[1];
     var chArgs = React.useMemo(function () { return { range: f.range, campaignIds: f.campaignIds }; }, [f]);
     var chans = H.useSelect(React.useCallback(function (w) { return has(sel(), 'channelCompare') ? sel().channelCompare(w, chArgs) : EMPTY; }, [chArgs])) || EMPTY;
     var trendArgs = React.useMemo(function () { return { metric: f.metric, range: 15, campaignIds: f.campaignIds, channel: f.channel }; }, [f]);
@@ -1099,12 +1136,27 @@
     var analyst = H.useSelect(React.useCallback(function (w) { return has(sel(), 'insights') ? sel().insights(w, ANALYST_KINDS) : EMPTY; }, [])) || EMPTY;
     var cards = [];
 
-    if (month && fin(month.goal) && month.cumulative && month.cumulative.projected) {
-      var pr = month.cumulative.projected, gap = pr.mean / month.goal - 1;
-      cards.push({ id: 'n-month', tone: month.p >= 0.7 ? 'good' : (month.p >= 0.4 ? 'warn' : 'crit'), label: 'Forecast',
-        text: (month.month ? month.month.name || month.month.label : 'This month') + ' revenue is on pace for ' + moneyC(pr.mean) + ' (' + moneyC(pr.lo80) + EN + moneyC(pr.hi80) + '), ' +
-          pct(Math.abs(gap), 0) + (gap >= 0 ? ' above' : ' below') + ' the ' + moneyC(month.goal) + ' goal' + (fin(month.p) ? ' (' + pct(month.p, 0) + ' chance of hitting it).' : '.'),
-        evidence: { label: 'Show revenue trend', patch: { metric: 'revenue', campaignIds: [], channel: 'all' } } });
+    if (gf && fin(gf.target)) {
+      var pr = month && month.cumulative ? month.cumulative.projected : null, mname = gf.label.split(' ')[0];
+      if (gf.status === 'early' || !pr) {
+        cards.push({ id: 'n-month', tone: 'neutral', label: 'Forecast',
+          text: mname + ' is too early to call: ' + moneyC(gf.actual) + ' so far against a ' + moneyC(gf.target) + ' goal, with ' + moneyC(gf.expectedByNow) + ' expected by now. A forecast shows after a week of results.',
+          evidence: { label: 'Show revenue trend', patch: { metric: 'revenue', campaignIds: [], channel: 'all' } } });
+      } else {
+        var gap = pr.mean / gf.target - 1;
+        cards.push({ id: 'n-month', tone: gf.status === 'behind' ? 'warn' : (gf.status === 'ahead' ? 'good' : 'neutral'), label: 'Forecast',
+          text: mname + ' revenue is on pace for ' + moneyC(pr.mean) + ' (' + moneyC(pr.lo80) + EN + moneyC(pr.hi80) + '), ' +
+            pct(Math.abs(gap), 0) + (gap >= 0 ? ' above' : ' below') + ' the ' + moneyC(gf.target) + ' goal' + (fin(gf.p) ? ' (' + pct(gf.p, 0) + ' chance of hitting it).' : '.'),
+          evidence: { label: 'Show revenue trend', patch: { metric: 'revenue', campaignIds: [], channel: 'all' } } });
+      }
+    }
+    var lagging = pacing.filter(function (x) { return x.pc && x.pc.status === 'behind'; })
+      .sort(function (x, y) { return (x.pc.actual / (x.pc.expectedByNow || 1)) - (y.pc.actual / (y.pc.expectedByNow || 1)); })[0];
+    if (lagging) {
+      var pc = lagging.pc;
+      cards.push({ id: 'n-pacing', tone: 'warn', label: 'Campaign pacing',
+        text: lagging.name + ' is at ' + pct(pc.actual / pc.expectedByNow, 0) + ' of where it should be by now.' + (pc.recoverNote ? ' ' + pc.recoverNote : ''),
+        evidence: { label: 'Show campaign', patch: { campaignIds: [lagging.id] } } });
     }
     var complete = trend.filter(function (q) { return !q.partial; });
     if (complete.length >= 14) {
@@ -1122,7 +1174,7 @@
     if (spendCh.length >= 2) {
       var hi = spendCh[0], lo = spendCh[spendCh.length - 1];
       cards.push({ id: 'n-channel', tone: 'neutral', label: 'Channels',
-        text: (hi.label || chLabel(hi.ch)) + ' returned ' + ratio(hi.roas) + ' on ' + moneyC(hi.cost) + ' of spend ' + rangeLabel(f.range) + ', vs ' + ratio(lo.roas) + ' on ' + (lo.label || chLabel(lo.ch)) + '. Try the what-if simulator before moving budget.',
+        text: (hi.label || chLabel(hi.ch)) + ' returned ' + ratio(hi.roas) + ' on ' + moneyC(hi.cost) + ' of spend ' + rangeLabel(f.range) + ', vs ' + ratio(lo.roas) + ' on ' + (lo.label || chLabel(lo.ch)) + '. Try the what-if planner before moving budget.',
         evidence: { label: 'Compare channels', patch: {}, target: 'analytics-channels' } });
     }
     var rs = segs.filter(function (s) { return fin(s.roas); }).slice().sort(function (x, y) { return (y.roas - x.roas) || (x.id < y.id ? -1 : 1); });
@@ -1140,7 +1192,8 @@
           moneySigned(imp.totals.expected) + ' expected' + (meas ? ', with ' + meas + ' still measuring.' : '.'),
         evidence: { label: 'See agent impact', patch: {}, target: 'analytics-agent-impact' } });
     }
-    analyst.slice(0, 4).forEach(function (ins) {
+    // Pacing comes from campaignPacing above, so Analyst pacing narratives are not repeated with a second calculation.
+    analyst.filter(function (ins) { return ins.kind !== 'pacing' || !has(sel(), 'campaignPacing'); }).slice(0, 4).forEach(function (ins) {
       var cid = ins.entity && ins.entity.kind === 'campaign' ? ins.entity.id : null;
       cards.push({ id: ins.id, tone: ins.severity === 'crit' ? 'crit' : (ins.severity === 'warn' ? 'warn' : 'agent'), label: 'Insight Analyst', agentId: 'analyst',
         text: ins.title ? ins.title + (ins.body ? ' ' + ins.body : '') : ins.body, insightId: ins.id,
@@ -1148,29 +1201,78 @@
     });
 
     function dismiss(id) { dispatch({ type: 'insight/dismiss', payload: { id: id } }); }
-    return html`<${Card} id="analytics-insights" title="Insights" sub="Plain-language readouts of the numbers below, refreshed as the simulation runs.">
-      ${cards.length ? html`<ul className="an-insights">
-          ${cards.map(function (c) {
-            return html`<li key=${c.id} className=${'an-insight an-tone-' + c.tone}>
-              <span className="an-insight-label">${c.agentId ? html`<${Chip} agentId=${c.agentId} />` : c.label}</span>
-              <p className="an-insight-text num">${c.text}</p>
-              <span className="an-actions">
-                ${c.evidence ? html`<button type="button" className="an-link" onClick=${function () { goEvidence(c.evidence.patch, c.evidence.target); }}>${c.evidence.label}</button>` : null}
-                ${c.insightId ? html`<button type="button" className="an-link" onClick=${function () { dismiss(c.insightId); }}>Dismiss</button>` : null}
-              </span>
-            </li>`;
-          })}
-        </ul>` : html`<${Empty} title="Insights appear as data comes in." body="The first readouts need a week of complete days." />`}
+    var RANK = { crit: 0, warn: 1 };
+    cards = cards.map(function (c, i) { return { c: c, i: i }; })
+      .sort(function (x, y) { return ((RANK[x.c.tone] !== undefined ? RANK[x.c.tone] : 2) - (RANK[y.c.tone] !== undefined ? RANK[y.c.tone] : 2)) || (x.i - y.i); })
+      .map(function (x) { return x.c; });
+    function item(c) {
+      return html`<li key=${c.id} className=${'an-insight an-tone-' + c.tone}>
+        <span className="an-insight-label">${c.agentId ? html`<${Chip} agentId=${c.agentId} />` : c.label}</span>
+        <p className="an-insight-text num">${c.text}</p>
+        <span className="an-actions">
+          ${c.evidence ? html`<button type="button" className="an-link" onClick=${function () { goEvidence(c.evidence.patch, c.evidence.target); }}>${c.evidence.label}</button>` : null}
+          ${c.insightId ? html`<button type="button" className="an-link" onClick=${function () { dismiss(c.insightId); }}>Dismiss</button>` : null}
+        </span>
+      </li>`;
+    }
+    var top = cards.slice(0, 3), rest = cards.slice(3);
+    return html`<${Card} id="analytics-insights" title="Insights" sub="What changed in your numbers, in plain words.">
+      ${cards.length ? html`<ul className="an-insights">${top.map(item)}</ul>` : html`<${Empty} title="Insights appear as data comes in." body="The first readouts need a week of complete days." />`}
+      ${rest.length ? html`<div className="an-more-insights">
+        <button type="button" className="an-link" aria-expanded=${showMore ? 'true' : 'false'} aria-controls="analytics-more-insights"
+          onClick=${function () { setShowMore(!showMore); }}>${showMore ? 'Show fewer' : 'More (' + rest.length + ')'}</button>
+        ${showMore ? html`<ul id="analytics-more-insights" className="an-insights">${rest.map(item)}</ul>` : null}
+      </div>` : null}
     <//>`;
   }
 
   /* ---------------- the view ---------------- */
+  // §11.4: the view opens on the performance overview and insights; deeper analysis sits behind tabs.
+  var SECTIONS = [
+    { id: 'channels', label: 'Channels' },
+    { id: 'lift', label: 'Lift vs control' },
+    { id: 'impact', label: 'Agent impact' },
+    { id: 'anomalies', label: 'Anomalies' },
+    { id: 'attribution', label: 'Attribution' },
+    { id: 'audiences', label: 'Audiences' },
+    { id: 'whatif', label: 'What-if budget' }
+  ];
+  var SECTION_OF = { 'analytics-channels': 'channels', 'analytics-funnel': 'channels', 'analytics-agent-impact': 'impact', 'analytics-lift': 'lift',
+    'analytics-anomalies': 'anomalies', 'analytics-attribution': 'attribution', 'analytics-audiences': 'audiences', 'analytics-whatif': 'whatif' };
+  function sectionBody(id, f) {
+    if (id === 'lift') return html`<${LiftSection} f=${f} />`;
+    if (id === 'impact') return html`<${AgentImpact} f=${f} />`;
+    if (id === 'anomalies') return html`<${AnomaliesSection} f=${f} />`;
+    if (id === 'attribution') return html`<${AttributionSection} f=${f} />`;
+    if (id === 'audiences') return html`<${AudienceSection} />`;
+    if (id === 'whatif') return html`<${WhatIf} f=${f} />`;
+    return html`<div className="an-grid an-grid-inner">
+      <div className="an-cell an-span-7"><${ChannelsSection} f=${f} /></div>
+      <div className="an-cell an-span-5"><${FunnelSection} f=${f} /></div>
+    </div>`;
+  }
+  function MoreAnalysis(p) {
+    var Tabs = MC.ui && typeof MC.ui.Tabs === 'function' ? MC.ui.Tabs : null;
+    var cur = SECTIONS.some(function (x) { return x.id === p.section; }) ? p.section : 'channels';
+    function pick(id) { if (MC.uiStore && MC.uiStore.setFocus) MC.uiStore.setFocus('analytics', { section: id }); }
+    return html`<section className="an-more" aria-labelledby="analytics-more-title">
+      <h2 id="analytics-more-title" className="an-more-title">Deeper analysis</h2>
+      ${Tabs ? html`<${Tabs} id="analytics-sections" label="Deeper analysis" tabs=${SECTIONS} value=${cur} onChange=${pick} panelId="analytics-section-panel" />`
+        : html`<div className="an-more-tabs" role="group" aria-label="Deeper analysis">${SECTIONS.map(function (x) {
+            return html`<button key=${x.id} type="button" className=${'an-link' + (x.id === cur ? ' is-on' : '')} aria-pressed=${x.id === cur ? 'true' : 'false'}
+              onClick=${function () { pick(x.id); }}>${x.label}</button>`;
+          })}</div>`}
+      <div id="analytics-section-panel" role="tabpanel" aria-labelledby=${'analytics-sections-' + cur} className="an-more-panel">${sectionBody(cur, p.f)}</div>
+    </section>`;
+  }
   var DEFAULT_FOCUS = { range: 30, campaignIds: [], channel: 'all', metric: 'revenue', showAgents: true };
   function selFocus(s) { return s && s.focus ? s.focus.analytics : undefined; }
   function selReady(w) { return !!(w && w.meta); }
   function AsOf() {
     var tick = hooks().useSelect(selTick);
-    return html`<p className="an-asof"><span>Fernway Outfitters</span>${MID}<span className="an-pill an-tone-neutral">Sample data</span>${MID}<span className="num">through ${clock(tick)}</span></p>`;
+    var f = tm('dateLabel'), tl = tm('timeLabel');
+    var when = fin(tick) && f && tl ? f(tick) + ', ' + tl(tick) : stamp(tick);
+    return html`<p className="an-asof">Fernway Outfitters${MID}<span className="num">through ${when}</span></p>`;
   }
   function AnalyticsView() {
     var React = R(), H = hooks();
@@ -1182,7 +1284,7 @@
       var ids = (raw.campaignIds || EMPTY).filter(function (id) { return campaigns && campaigns.byId[id]; });
       var metric = raw.metric && (METRICS.some(function (m) { return m.value === raw.metric; }) || EXTRA_METRICS[raw.metric]) ? raw.metric : 'revenue';
       var ch = raw.channel && (raw.channel === 'all' || CH().ALL.indexOf(raw.channel) >= 0) ? raw.channel : 'all';
-      return { range: r, campaignIds: ids, channel: ch, metric: metric, showAgents: raw.showAgents !== false };
+      return { range: r, campaignIds: ids, channel: ch, metric: metric, showAgents: raw.showAgents !== false, section: raw.section || 'channels' };
     }, [raw, campaigns]);
     var idsKey = focus.campaignIds.join(',');
     var f = React.useMemo(function () {
@@ -1196,7 +1298,7 @@
     }, [campaigns]);
     if (!ready) {
       return html`<section className="v-analytics"><h1 id="page-title" tabIndex="-1" className="an-h1">Analytics</h1>
-        <p className="an-muted">Generating the Fernway sample world${ELL}</p></section>`;
+        <p className="an-muted">Loading Fernway Outfitters${ELL}</p></section>`;
     }
     return html`<section className="v-analytics">
       <header className="an-pagehead">
@@ -1207,14 +1309,8 @@
       <div className="an-grid">
         <div className="an-cell an-span-12"><${Performance} f=${f} showAgents=${focus.showAgents} /></div>
         <div className="an-cell an-span-12"><${Narratives} f=${f} /></div>
-        <div className="an-cell an-span-7"><${AgentImpact} f=${f} /></div>
-        <div className="an-cell an-span-5"><${AnomaliesSection} f=${f} /></div>
-        <div className="an-cell an-span-5"><${FunnelSection} f=${f} /></div>
-        <div className="an-cell an-span-7"><${ChannelsSection} f=${f} /></div>
-        <div className="an-cell an-span-6"><${AttributionSection} f=${f} /></div>
-        <div className="an-cell an-span-6"><${AudienceSection} /></div>
-        <div className="an-cell an-span-12"><${WhatIf} f=${f} /></div>
       </div>
+      <${MoreAnalysis} section=${focus.section} f=${f} />
     </section>`;
   }
 

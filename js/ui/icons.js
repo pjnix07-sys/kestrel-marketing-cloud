@@ -1,4 +1,4 @@
-/* Kestrel Marketing Cloud - inline SVG icons (MC.icons: name -> 24x24 stroke path data),
+/* Marketing Cloud - inline SVG icons (MC.icons: name -> 24x24 stroke path data),
    MC.ui.Icon and MC.ui.Scene (the six synthetic Fernway product illustrations).
    Colors come from currentColor or CSS tokens only. */
 (function () {
@@ -20,8 +20,8 @@
     audiences: c(9, 8, 3.2) + 'M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6' + c(17, 9, 2.4) + 'M16 14.2c2.8.2 5 2.5 5 5.3',
     analytics: 'M4 4v16h16M8 16v-4M12 16V8M16 16v-6',
     agents: 'M12 3l1.8 4.4L18 9l-4.2 1.6L12 15l-1.8-4.4L6 9l4.2-1.6zM18.5 14.5l.9 2.1 2.1.9-2.1.9-.9 2.1-.9-2.1-2.1-.9 2.1-.9zM5.5 15.5l.7 1.6 1.6.7-1.6.7-.7 1.6-.7-1.6-1.6-.7 1.6-.7z',
-    // brand mark: stylised kestrel in a stoop
-    kestrel: 'M3 9.5c3.2-.4 5.7.4 7.6 2.2L14 8.2c1-1 2.4-1.5 3.8-1.3l3.2.5-2.6 1.6.4 2.2c.2 1.6-.6 3.2-2 4l-4.3 2.4-5.6 3.4 2.6-4.4-3.4.4 2.4-2.6C6.7 12.3 5 10.6 3 9.5zM16.6 9.2h.01',
+    // brand mark: a customer journey drawn as an M (full-colour version: assets/mark.svg)
+    mark: 'M4 20L7 6l5 7 5-9 3 16',
     // actions
     check: 'M5 12.5l4.5 4.5L19 7.5',
     x: 'M6 6l12 12M18 6 6 18',

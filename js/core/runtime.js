@@ -1,4 +1,4 @@
-/* Kestrel Marketing Cloud - MC.runtime: the agent runtime. Registry of agent definitions, cadence
+/* Marketing Cloud - MC.runtime: the agent runtime. Registry of agent definitions, cadence
    scheduling on the simulated clock, seeded rng forks per run, proposals with guardrails and
    autonomy routing (Off / Suggest / Autopilot), apply and undo through the action catalog,
    realized-impact measurement and a chained audit log with FNV-1a digests. Everything here works
@@ -172,7 +172,9 @@
       if (x <= ph) next = ph;
       else { var r = (x - ph) % cad; next = r === 0 ? x : x + cad - r; }
     }
-    return { state: state, lastRun: a.lastRunTick, nextRun: next, cadence: cadenceOf(world, id), phase: phaseOf(id) };
+    var out = { state: state, lastRun: a.lastRunTick, nextRun: next, cadence: cadenceOf(world, id), phase: phaseOf(id) };
+    if (a.aiAwait) { out.awaiting = true; out.runId = a.aiAwait; }
+    return out;
   };
 
   /* ======================= guardrails ======================= */
@@ -441,6 +443,12 @@
   }
   function targetEnt(p) { return p.target && p.target.id ? { kind: p.target.kind, id: p.target.id } : undefined; }
   function toneOf(sev) { return sev === 'crit' ? 'crit' : (sev === 'warn' ? 'warn' : 'agent'); }
+  // A run can only raise a change's risk above what the rule engine computed, never lower it.
+  function floorRisk(given, computed) {
+    var g = RISK_RANK[given] === undefined ? null : given, c = RISK_RANK[computed] === undefined ? 'low' : computed;
+    return g && RISK_RANK[g] > RISK_RANK[c] ? g : c;
+  }
+  function lowerFirst(t) { t = String(t || ''); return /^[A-Z][a-z]/.test(t) ? t.charAt(0).toLowerCase() + t.slice(1) : t; }
   function rank(r) { return RISK_RANK[r] === undefined ? 2 : RISK_RANK[r]; }
 
   RT.runAgent = function (world, id, t, reason) {
@@ -462,10 +470,24 @@
 
     var mode = a.autonomy;
     if (reason === 'runNow' && (a.autonomy === 'off' || a.status === 'paused')) mode = 'suggest';
+    var drafts = err ? [] : (Array.isArray(out.proposals) ? out.proposals : []);
+    var insights = err ? [] : (Array.isArray(out.insights) ? out.insights : []);
+
+    // §12.5: with the Haiku fleet on (a logged world fact), the run waits for its verdict.
+    if (!err && aiActive(world, a)) return startAwait(world, def, id, t, reason, mode, inDigest, obs, drafts, insights, trace);
+    return commitRun(world, { def: def, id: id, t: t, now: t, reason: reason, mode: mode, inDigest: inDigest, drafts: drafts,
+      insights: insights, trace: trace, err: err, t0: t0, ai: null });
+  };
+
+  // Proposal creation, routing, insights, audit chain, stats and feed (§10.9 steps 4–9). `t` names the
+  // run (ids, proposal tick, expiry); `now` is when the result lands (equal to t for rule-based runs).
+  function commitRun(world, R) {
+    var def = R.def, id = R.id, t = R.t, now = R.now, mode = R.mode, trace = R.trace, err = R.err, ai = R.ai;
+    var view = RT.observeView(world);
     var maxRisk = rank(def.autopilotMaxRisk), minMat = def.materiality.min || 0;
     var created = [], autoIds = [], dispatched = [], gRows = [], aRows = [], k = 0;
 
-    (err ? [] : (Array.isArray(out.proposals) ? out.proposals : [])).forEach(function (draft) {
+    R.drafts.forEach(function (draft) {
       if (!draft || typeof draft.kind !== 'string') return;
       var key = MC.catalog.cooldownKey(draft);
       var imp = draft.impact || {};
@@ -474,7 +496,7 @@
         return;
       }
       var cur = agentOf(world, id), cd = cur.cooldowns && cur.cooldowns[key];
-      if (isNum(cd) && cd > t) { gRows.push({ proposal: draft.title || draft.kind, result: 'Skipped: cooling down until ' + MC.fmt.stamp(cd) }); return; }
+      if (isNum(cd) && cd > now) { gRows.push({ proposal: draft.title || draft.kind, result: 'Skipped: cooling down until ' + MC.fmt.stamp(cd) }); return; }
       var actsDig = U().digest(draft.actions || []), same = [], dupe = false;
       ((world.proposals && world.proposals.open) || []).forEach(function (pid) {
         var op = prop(world, pid);
@@ -484,18 +506,23 @@
       if (dupe) { gRows.push({ proposal: draft.title || draft.kind, result: 'Unchanged: already waiting for review' }); return; }
       var pid = id + '-' + t + '-' + k;
       k++;
-      same.forEach(function (op) { supersede(world, op, t, pid); });
+      same.forEach(function (op) { supersede(world, op, now, pid); });
 
       var ids = targetIds(world, draft.actions, draft.target);
       var p = {
         id: pid, agentId: id, tick: t, kind: draft.kind, target: draft.target || null, title: draft.title || draft.kind,
         rationale: draft.rationale || '', evidence: draft.evidence || [], impact: draft.impact || null,
-        risk: draft.risk || (typeof def.risk === 'function' ? def.risk(draft, view) : 'low') || 'low',
+        risk: floorRisk(draft.risk, typeof def.risk === 'function' ? def.risk(draft, view) : 'low'),
         guardrails: [], actions: U().clone(draft.actions || []), inverse: null, diff: draft.diff || [],
         baseVer: versOf(world, ids), status: 'pending', reason: '', decidedTick: null, expiresTick: t + 48,
         realized: null, horizon: isNum(draft.horizon) ? draft.horizon : def.horizon, mustQueue: !!draft.mustQueue,
         appliedTick: null, postVer: null
       };
+      if (ai) {
+        p.ai = ai.mode;
+        if (draft._why) p.why = draft._why;
+        if (isNum(draft._confidence)) p.confidence = draft._confidence;
+      }
       p.guardrails = evalGuards(world, p, def);
       var bf = firstBlocking(p.guardrails);
       gRows.push({ proposal: p.title, result: bf ? 'Blocked by ' + bf.label : 'All guardrails pass' });
@@ -508,7 +535,7 @@
       if (autoOk) {
         var r = applyProposal(world, pid, 'agent:' + id, true);
         if (r.ok) {
-          close(world, prop(world, pid), { status: 'auto', reason: 'Applied on Autopilot', decidedTick: t });
+          close(world, prop(world, pid), { status: 'auto', reason: 'Applied on Autopilot', decidedTick: now });
           autoIds.push(pid); applied = true;
           aRows.push({ proposal: p.title, result: 'Applied on Autopilot' });
         } else aRows.push({ proposal: p.title, result: 'Couldn’t apply: ' + r.error });
@@ -528,18 +555,18 @@
     if (aRows.length) trace.push({ step: 'apply', text: autoIds.length ? 'Applied ' + autoIds.length + ' on Autopilot.' : 'Queued for review.', rows: aRows.slice(0, CAP.traceRows) });
 
     /* insights */
-    var createdIns = [], ki = 0, today = T().dayOf(t);
-    (err ? [] : (Array.isArray(out.insights) ? out.insights : [])).forEach(function (ins) {
+    var createdIns = [], ki = 0, today = T().dayOf(now);
+    R.insights.forEach(function (ins) {
       if (!ins || !ins.key) return;
       var exists = (world.insights || []).some(function (x) { return x.key === ins.key && T().dayOf(x.tick) === today; });
       if (exists || createdIns.some(function (x) { return x.key === ins.key; })) return;
-      var item = { id: id + '-' + t + '-i' + ki, tick: t, agentId: id, kind: ins.kind || 'insight', title: ins.title || '',
+      var item = { id: id + '-' + t + '-i' + ki, tick: now, agentId: id, kind: ins.kind || 'insight', title: ins.title || '',
         body: ins.body || '', severity: ins.severity || 'info', dismissed: false, key: ins.key };
       if (ins.entity) item.entity = ins.entity;
       ki++;
       var list = [item].concat(world.insights || []);
       world.insights = list.length > CAP.insights ? list.slice(0, CAP.insights) : list;
-      addFeed(world, { tick: t, kind: item.kind === 'anomaly' ? 'anomaly' : 'insight', agentId: id, insightId: item.id,
+      addFeed(world, { tick: now, kind: item.kind === 'anomaly' ? 'anomaly' : 'insight', agentId: id, insightId: item.id,
         entity: item.entity, text: item.title, tone: toneOf(item.severity) });
       createdIns.push(item);
     });
@@ -549,29 +576,186 @@
     var outDigest = U().digest({ proposals: created.map(function (pid) { return prop(world, pid); }), insights: createdIns });
     var A = world.audit || { entries: [], head: '00000000' };
     var prev = A.head || '00000000';
-    var chain = U().hex8(U().fnv1a(prev + '|' + inDigest + '|' + outDigest));
-    var entry = { id: 'run-' + id + '-' + t, agentId: id, tick: t, reason: reason, mode: mode, inDigest: inDigest, outDigest: outDigest,
+    var chain = U().hex8(U().fnv1a(prev + '|' + R.inDigest + '|' + outDigest));
+    var entry = { id: 'run-' + id + '-' + t, agentId: id, tick: t, reason: R.reason, mode: mode, inDigest: R.inDigest, outDigest: outDigest,
       prev: prev, chain: chain, proposals: created.slice(), insights: createdIns.map(function (x) { return x.id; }),
-      dispatched: dispatched, trace: trace, error: err ? String(err && err.message ? err.message : err) : null, _ms: U().now() - t0 };
+      dispatched: dispatched, trace: trace, error: err ? String(err && err.message ? err.message : err) : null, _ms: U().now() - R.t0,
+      engine: ai && ai.mode === 'haiku' ? 'ai' : 'rules' };
+    if (ai) {
+      entry.ai = ai.mode; entry.landedTick = now;
+      if (ai.model) entry.model = ai.model;
+      if (isNum(ai.ms)) entry.aiMs = ai.ms;
+      if (ai.summary) entry.summary = ai.summary;
+      if (ai.why) entry.fallbackReason = ai.why;
+    }
     var entries = [entry].concat(A.entries || []);
     if (entries.length > CAP.audit) entries = entries.slice(0, CAP.audit);
     world.audit = { entries: entries, head: chain };
 
     patchAgent(world, id, function (ag) {
       var s = assign({}, ag.stats); s.runs = (s.runs || 0) + 1; s.proposed = (s.proposed || 0) + created.length;
-      return { lastRunTick: t, runRequested: false, stats: s };
+      var patch = { lastRunTick: t, runRequested: ai ? ag.runRequested : false, stats: s };
+      if (ai) patch.aiAwait = null;
+      return patch;
     });
 
     if (created.length) {
       var first = prop(world, autoIds[0] || created[0]), name = def.name, q = created.length - autoIds.length, text;
-      if (created.length === 1) text = (autoIds.length ? name + ' applied: ' : name + ' suggests: ') + first.title;
-      else if (autoIds.length) text = name + ' applied ' + autoIds.length + (autoIds.length === 1 ? ' change' : ' changes') + (q ? ' and has ' + q + ' waiting for you' : '');
-      else text = name + ' has ' + q + ' suggestions waiting for you';
-      addFeed(world, { tick: t, kind: autoIds.length ? 'agent-applied' : 'agent-proposed', agentId: id, proposalId: first.id,
+      if (created.length === 1) text = autoIds.length ? 'Applied: ' + first.title : first.title;
+      else if (autoIds.length) text = name + ' applied ' + autoIds.length + (autoIds.length === 1 ? ' change' : ' changes') + (q ? ' and has ' + q + ' for you' : '');
+      else text = q + ' suggestions for you';
+      if (ai && ai.mode === 'haiku' && ai.summary) text = ai.summary;
+      addFeed(world, { tick: now, kind: autoIds.length ? 'agent-applied' : 'agent-proposed', agentId: id, proposalId: first.id,
         entity: targetEnt(first), text: text, tone: 'agent' });
     }
     return entry;
+  }
+
+  /* ======================= Haiku fleet integration (§12.5) ======================= */
+  // Whether a run goes through the fleet. Reads only logged world facts (world.ai.on via ai/setEnabled,
+  // agent.aiMode 'auto'|'rules' via agent/setAiMode; default auto), so live and replay take the same branch.
+  function aiActive(world, a) {
+    return !!(world.ai && world.ai.on && a && a.aiMode !== 'rules');
+  }
+  RT.aiActive = function (world, id) { return aiActive(world, agentOf(world, id)); };
+
+  function isLive(world) {
+    try { return !!(MC.store && typeof MC.store.getState === 'function' && MC.store.getState() === world); } catch (e) { return false; }
+  }
+
+  function startAwait(world, def, id, t, reason, mode, inDigest, obs, drafts, insights, trace) {
+    var runId = 'run-' + id + '-' + t;
+    var cands = [];
+    drafts.forEach(function (d) { if (d && typeof d.kind === 'string') cands.push(U().clone(d)); });
+    var job = { runId: runId, agentId: id, tick: t, reason: reason, mode: mode, inDigest: inDigest,
+      drafts: cands, insights: U().clone(insights), trace: trace.slice() };
+    var AI = world.ai || { on: true, pending: {} }, pend = assign({}, AI.pending || {});
+    pend[runId] = job;
+    world.ai = assign({}, AI, { pending: pend });
+    patchAgent(world, id, function () { return { lastRunTick: t, runRequested: false, aiAwait: runId }; });
+    // Only the live world talks to the fleet; replay waits for the logged agent/aiRun result instead.
+    if (isLive(world) && MC.ai && MC.ai.fleet && typeof MC.ai.fleet.enqueue === 'function') {
+      try {
+        MC.ai.fleet.enqueue({ runId: runId, agentId: id, tick: t, obs: U().clone(obs === undefined ? null : obs), candidates: cands,
+          insights: job.insights, trace: job.trace, mode: mode, reason: reason });
+      } catch (e) { report(e); }
+    }
+    return { id: runId, agentId: id, tick: t, awaiting: true };
+  }
+
+  RT.awaiting = function (world) {
+    var P = (world && world.ai && world.ai.pending) || {};
+    return sortedKeys(P).map(function (k) { return P[k]; });
   };
+
+  function str(x, max) { var s = typeof x === 'string' ? x : ''; return max && s.length > max ? s.slice(0, max) : s; }
+  function entityKindOf(world, eid) {
+    if (typeof eid !== 'string' || !eid) return null;
+    if (world.campaigns && world.campaigns.byId[eid]) return 'campaign';
+    if (world.variants && world.variants.byId[eid]) return 'variant';
+    if (world.segments && world.segments.byId[eid]) return 'segment';
+    return null;
+  }
+
+  // Validates the shape of an agent/aiRun payload against the pending run (catalog validate).
+  RT.aiRunErr = function (world, p) {
+    if (!p || typeof p.runId !== 'string') return 'Missing run.';
+    var job = world.ai && world.ai.pending && world.ai.pending[p.runId];
+    if (!job) return 'That agent run already finished.';
+    if (p.agentId !== job.agentId) return 'That run belongs to another agent.';
+    if (p.fallback) return null;
+    if (!Array.isArray(p.decisions)) return 'Missing decisions.';
+    return null;
+  };
+
+  // Reducer of agent/aiRun: completes an awaiting run with Haiku's (already validated) verdict, or with the
+  // rule-based drafts when p.fallback is set. Deterministic over (world, payload).
+  RT.resolveAiRun = function (world, p) {
+    var job = world.ai && world.ai.pending && world.ai.pending[p.runId];
+    var def = job && registry[job.agentId];
+    if (!job || !def || !agentOf(world, job.agentId)) return null;
+    var pend = assign({}, world.ai.pending);
+    delete pend[p.runId];
+    world.ai = assign({}, world.ai, { pending: pend });
+    var now = world.meta.tick, trace = (job.trace || []).slice(), drafts, insights;
+    var ai = { mode: p.fallback ? 'fallback' : 'haiku', model: str(p.model, 60) || null, ms: isNum(p.ms) ? Math.round(p.ms) : null,
+      summary: p.fallback ? '' : str(p.summary, 240), why: p.fallback ? str(p.reason, 60) || 'unavailable' : '' };
+    if (p.fallback) {
+      drafts = job.drafts; insights = job.insights;
+      trace.push({ step: 'decide', text: drafts.length ? 'Went with the standard playbook for this run.' : 'Nothing needed a decision this run.' });
+    } else {
+      var built = applyVerdict(world, def, job, p);
+      drafts = built.drafts; insights = built.insights;
+      trace.push({ step: 'decide', text: built.text, rows: built.rows.slice(0, CAP.traceRows) });
+      if (ai.summary) trace.push({ step: 'decide', text: ai.summary });
+    }
+    return commitRun(world, { def: def, id: job.agentId, t: job.tick, now: now, reason: job.reason, mode: job.mode, inDigest: job.inDigest,
+      drafts: drafts, insights: insights, trace: trace, err: null, t0: U().now(), ai: ai });
+  };
+
+  function applyVerdict(world, def, job, p) {
+    var byCand = {}, rows = [], drafts = [], proposed = 0, skipped = 0, replaced = {};
+    (p.decisions || []).forEach(function (d) { if (d && typeof d.candidate === 'string' && byCand[d.candidate] === undefined) byCand[d.candidate] = d; });
+    (Array.isArray(p.extra) ? p.extra : []).forEach(function (x) { if (x && typeof x.replaces === 'string') replaced[x.replaces] = true; });
+    job.drafts.forEach(function (cand, i) {
+      var cid = 'c' + i, d = byCand[cid];
+      if (!d || d.verdict !== 'propose') {
+        skipped++;
+        rows.push({ proposal: cand.title || cand.kind, result: 'Set aside' + (d && d.why ? ': ' + str(d.why, 300) : '') });
+        return;
+      }
+      if (replaced[cid]) { rows.push({ proposal: cand.title || cand.kind, result: 'Rewritten (see below)' }); return; }
+      var draft = U().clone(cand);
+      if (d.adjust && typeof d.adjust === 'object' && MC.ai && MC.ai.fleet && typeof MC.ai.fleet.applyAdjust === 'function') {
+        try { draft = MC.ai.fleet.applyAdjust(job.agentId, draft, d.adjust) || draft; } catch (e) { report(e); }
+      }
+      if (d.title) draft.title = str(d.title, 140);
+      if (d.why) { draft._why = str(d.why, 600); draft.rationale = draft._why + (cand.rationale ? '\n\n' + cand.rationale : ''); }
+      if (isNum(d.confidence)) draft._confidence = Math.max(0, Math.min(1, d.confidence));
+      drafts.push(draft); proposed++;
+      rows.push({ proposal: draft.title || draft.kind, result: 'Proposed' });
+    });
+    (Array.isArray(p.extra) ? p.extra : []).forEach(function (x) {
+      if (!x || typeof x.kind !== 'string' || !Array.isArray(x.actions) || !x.actions.length) return;
+      var okTypes = x.actions.every(function (a) { return a && def.emits.indexOf(a.type) >= 0; });
+      if (!okTypes) { rows.push({ proposal: str(x.title, 140) || x.kind, result: 'Dropped: not a change this agent makes' }); return; }
+      var base = null;
+      if (typeof x.replaces === 'string' && /^c\d+$/.test(x.replaces)) base = job.drafts[+x.replaces.slice(1)] || null;
+      var draft = base ? U().clone(base) : { kind: x.kind, target: x.target || null, evidence: [], impact: null, diff: [] };
+      draft.kind = x.kind;
+      if (x.target) draft.target = x.target;
+      draft.actions = U().clone(x.actions);
+      if (Array.isArray(x.diff)) draft.diff = U().clone(x.diff);
+      if (x.risk === 'low' || x.risk === 'medium' || x.risk === 'high') draft.risk = floorRisk(x.risk, draft.risk || 'low');
+      if (x.mustQueue) draft.mustQueue = true;
+      if (isNum(x.horizon)) draft.horizon = x.horizon;
+      draft.title = str(x.title, 140) || draft.title || x.kind;
+      if (x.why) { draft._why = str(x.why, 600); draft.rationale = draft._why + (base && base.rationale ? '\n\n' + base.rationale : ''); }
+      drafts.push(draft); proposed++;
+      rows.push({ proposal: draft.title, result: base ? 'Proposed with new wording' : 'Proposed (original)' });
+    });
+    // Insights: refs i0..in rewrite the rule insights' words; new ones need a title and body.
+    var ins = U().clone(job.insights || []), extraIns = [], day = T().dayOf(world.meta.tick);
+    (Array.isArray(p.insights) ? p.insights : []).forEach(function (x) {
+      if (!x || !str(x.title)) return;
+      var sev = x.severity === 'crit' || x.severity === 'warn' ? x.severity : 'info';
+      if (typeof x.ref === 'string' && /^i\d+$/.test(x.ref) && ins[+x.ref.slice(1)]) {
+        var it = ins[+x.ref.slice(1)];
+        it.title = str(x.title, 140); if (str(x.body)) it.body = str(x.body, 900);
+        return;
+      }
+      if (!str(x.body)) return;
+      var item = { kind: 'insight', title: str(x.title, 140), body: str(x.body, 900), severity: sev,
+        key: 'ai|' + job.agentId + '|' + U().digest(str(x.title, 140)) + '|' + day };
+      var ek = entityKindOf(world, x.entityId);
+      if (ek) item.entity = { kind: ek, id: x.entityId };
+      extraIns.push(item);
+    });
+    var n = job.drafts.length;
+    var text = n ? 'Weighed ' + n + (n === 1 ? ' option' : ' options') + ': proposed ' + proposed + ', set aside ' + skipped + '.'
+      : (proposed ? 'Proposed ' + proposed + (proposed === 1 ? ' original change.' : ' original changes.') : 'Nothing needed a change this run.');
+    return { drafts: drafts, insights: ins.concat(extraIns.slice(0, 5)), rows: rows, text: text };
+  }
 
   /* ======================= scheduling ======================= */
   // Engine step 8: expire, realize, then every due agent in def.order.
@@ -583,6 +767,7 @@
     RT.defs().forEach(function (def) {
       var a = agentOf(world, def.id);
       if (!a) return;
+      if (a.aiAwait) return;      // a run is waiting on its verdict (AI fleet only)
       if (a.runRequested) { RT.runAgent(world, def.id, t, 'runNow'); ran.push(def.id); return; }
       if (a.status === 'active' && a.autonomy !== 'off' && isDue(world, def.id, t)) { RT.runAgent(world, def.id, t, 'schedule'); ran.push(def.id); }
     });

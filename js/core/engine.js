@@ -1,15 +1,20 @@
-/* Kestrel Marketing Cloud - MC.engine: boots the Fernway Outfitters sample world and drives the
-   simulated clock. One tick = one simulated hour. The wall-clock scheduler is a setTimeout chain
-   (pause / 1x / 4x / 16x) that runs regardless of which view is open; each fire advances exactly
-   one tick inside a single store batch, so subscribers see one notify per tick. advance(world) is
-   the shared tick pipeline used by both the live world and replay. */
+/* Marketing Cloud - MC.engine: boots the Fernway Outfitters sample world and keeps it moving.
+   One tick = one hour of world time. The wall-clock scheduler is a setTimeout chain that runs
+   continuously at one default pace (PACE_MS) regardless of which view is open; each fire advances
+   exactly one tick inside a single store batch, so subscribers see one notify per tick.
+   Pacing lives only here (§11.1): the UI exposes no speed or clock. setSpeed/getSpeed/step remain for
+   internal and dev use (headless tests pause; the overflow menu's "Jump ahead" calls step).
+   advance(world) is the shared tick pipeline used by both the live world and replay. */
 (function () {
   'use strict';
   var MC = window.MC = window.MC || {};
   var E = MC.engine = MC.engine || {};
 
   var assign = Object.assign;
-  E.SPEEDS = { pause: 0, '1x': 1200, '4x': 300, '16x': 75 };
+  // Default pace: one world hour every 1.2 s (a day in about 29 s). Other keys are dev-only.
+  E.PACE_MS = 1200;
+  E.DEFAULT_SPEED = '1x';
+  E.SPEEDS = { pause: 0, '1x': E.PACE_MS, '4x': E.PACE_MS / 4, '16x': E.PACE_MS / 16 };
   E.SPEED_KEYS = ['pause', '1x', '4x', '16x'];
   E.PHASES = [
     { id: 'profiles', label: 'Generating 6,000 sample customer profiles' },
@@ -63,7 +68,7 @@
     E.setSpeed('pause');
     try {
       if (MC.uiStore && MC.uiStore.addToast) {
-        MC.uiStore.addToast({ text: 'The simulation hit a problem and paused. Your work is safe; reload to start a fresh sample world.', tone: 'crit' });
+        MC.uiStore.addToast({ text: "Live updates stopped after a problem. Your work is safe; reload the page to start fresh.", tone: 'crit' });
       }
     } catch (e2) { report(e2); }
   }
@@ -115,7 +120,7 @@
   E.getSpeed = function () { return speed; };
   E.isBooted = function () { return booted; };
 
-  // Advances n ticks synchronously (typically while paused) with a single notify.
+  // Advances n ticks (1..168) synchronously with a single notify; the live pace then continues.
   E.step = function (n) {
     n = Math.max(1, Math.min(24 * 7, (n | 0) || 1));
     if (!MC.store.getState()) return null;
@@ -173,15 +178,45 @@
   }
   E.generateWorld = generateWorld;
 
+  // Fast-forwards a freshly generated world to the real current date and hour, so the sample season
+  // (Nov 7 - Dec 31, 2026, on its real calendar) reads as "today". Outside the season it stays at the start.
+  E.LAST_DAY = 54; // Dec 31, 2026
+  E.catchUpTarget = function (now) {
+    var d = now || new Date();
+    var day = MC.time.simDayOfYmd(d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2));
+    if (day === null || day < 0 || day > E.LAST_DAY) return 0;
+    return MC.time.tickOf(day, d.getHours());
+  };
+  function catchUp(w, target, onPhase) {
+    return new Promise(function (resolve, reject) {
+      if (!(target > (w.meta.tick || 0))) return resolve(w);
+      try { if (onPhase) onPhase('catchup', { index: 4, total: 5, label: 'Catching up to today' }); } catch (e) { report(e); }
+      (function chunk() {
+        try {
+          var stop = Math.min(target, w.meta.tick + 12);
+          while (w.meta.tick < stop) w = E.advance(w);
+        } catch (e) { return reject(e); }
+        if (w.meta.tick >= target) resolve(w); else yieldThen(chunk);
+      })();
+    });
+  }
+  E.catchUp = catchUp;
+
   E.boot = function (opts) {
     opts = opts || {};
     if (bootPromise) return bootPromise;
     var seed = opts.seed === undefined ? MC.SEED : opts.seed;
+    // Pin the display calendar before any text is generated (catch-up writes feed and insight text).
+    try { if (MC.time && MC.time.anchorDisplay) MC.time.anchorDisplay('2026-11-07', 0); } catch (e) { report(e); }
     bootPromise = generateWorld(seed, opts.onPhase).then(function (w) {
+      return opts.catchUp === false ? w : catchUp(w, E.catchUpTarget(opts.now), opts.onPhase);
+    }).then(function (w) {
       E.checkpoints = {};
+      // Display dates are the season's real calendar (Black Friday = Fri, Nov 27, 2026), so digests never depend on the boot date.
+      try { if (MC.time && MC.time.anchorDisplay) MC.time.anchorDisplay('2026-11-07', 0); } catch (e) { report(e); }
       MC.store.init(w);
       booted = true;
-      E.setSpeed(opts.speed && E.SPEEDS[opts.speed] !== undefined ? opts.speed : '1x');
+      E.setSpeed(opts.speed && E.SPEEDS[opts.speed] !== undefined ? opts.speed : E.DEFAULT_SPEED);
       emit();
       return w;
     }, function (e) { bootPromise = null; throw e; });
@@ -207,18 +242,20 @@
     UI.set(patch);
   }
 
-  // Pauses, regenerates the world (clearing the log, checkpoints and toasts) and resumes at 1x.
+  // Pauses, regenerates the world (clearing the log, checkpoints and toasts) and resumes at the default pace.
   E.restart = function (seed, onPhase) {
     E.setSpeed('pause');
     var s = seed === undefined || seed === null ? MC.SEED : seed;
     return generateWorld(s, onPhase).then(function (w) {
+      return catchUp(w, E.catchUpTarget(), onPhase);
+    }).then(function (w) {
       E.checkpoints = {};
       E.lastError = null;
       try { if (MC.uiStore && MC.uiStore.clearToasts) MC.uiStore.clearToasts(); } catch (e) { report(e); }
       MC.store.init(w);
       booted = true;
       resetFocus(w);
-      E.setSpeed('1x');
+      E.setSpeed(E.DEFAULT_SPEED);
       emit();
       return w;
     });

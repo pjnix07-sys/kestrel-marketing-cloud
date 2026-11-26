@@ -1,4 +1,4 @@
-/* Kestrel Marketing Cloud - MC.select: memoized derived selectors shared by every view.
+/* Marketing Cloud - MC.select: memoized derived selectors shared by every view.
    Each selector is keyed on the world, the relevant world.rev counters / slice references and its
    arguments, so repeated calls inside one tick return the same object (safe for useSelect). */
 (function () {
@@ -127,6 +127,33 @@
   }
   function nonNeg(metric) { return !RATIO[metric] || metric === 'roas'; }
 
+  // Month goals: world.meta.monthGoal is either one flat object ({revenue, conversions, roas, unsubRate}) or
+  // a map of those keyed by month ('2026-11', '11', 'nov', 'november', or under .byMonth / .months).
+  var MONTH_NAMES = ['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december'];
+  function isGoalObj(o) { return !!o && typeof o === 'object' && (typeof o.revenue === 'number' || typeof o.conversions === 'number'); }
+  function monthGoalObj(w, m) {
+    var g = w.meta && w.meta.monthGoal;
+    if (!g) return {};
+    if (isGoalObj(g)) return g;
+    var src = g.byMonth || g.months || g;
+    var mm = m.m, name = MONTH_NAMES[mm - 1], keys = [m.y + '-' + (mm < 10 ? '0' : '') + mm, String(mm), (mm < 10 ? '0' : '') + mm,
+      name, name.slice(0, 3), name.charAt(0).toUpperCase() + name.slice(1), m.label, m.y + '-' + mm];
+    for (var i = 0; i < keys.length; i++) if (isGoalObj(src[keys[i]])) return src[keys[i]];
+    return {};
+  }
+  function monthSpan(w, monthKey) {
+    var t = today(w);
+    if (monthKey === undefined || monthKey === null) return MC.time.monthOf(t);
+    var day = typeof monthKey === 'number' ? monthKey : MC.time.dayOfYmd(String(monthKey).length === 7 ? monthKey + '-01' : String(monthKey));
+    return day === null || day === undefined ? MC.time.monthOf(t) : MC.time.monthOf(day);
+  }
+  function monthKeyOf(m) { return m.y + '-' + (m.m < 10 ? '0' : '') + m.m; }
+  var MIN_DAYS = 7;   // days of month data before a goal probability or pacing status is shown
+  function completeDaysIn(w, m) {
+    var t = today(w), from = Math.max(m.fromDay, DAY0()), to = Math.min(m.toDay + 1, t);
+    return Math.max(0, to - from);
+  }
+
   function targetCampaignId(w, p) {
     var t = p && p.target;
     if (t) {
@@ -195,13 +222,15 @@
       });
       var sdT = Math.sqrt(sumVar), mean = actualToDate + sumMean;
       var goalKey = metric === 'conversions' ? 'conversions' : 'revenue';
-      var goal = w.meta.monthGoal ? w.meta.monthGoal[goalKey] : undefined;
+      var goal = monthGoalObj(w, m)[goalKey];
+      var early = completeDaysIn(w, m) < MIN_DAYS;
       var projected = { mean: mean, lo80: Math.max(actualToDate, mean - Z80 * sdT), hi80: mean + Z80 * sdT,
         lo95: Math.max(actualToDate, mean - Z95 * sdT), hi95: mean + Z95 * sdT };
       return {
         actual: actual, points: points,
         cumulative: { actualToDate: actualToDate, projected: projected, actual: cumActual, points: cumPts },
-        goal: goal, p: fc && goal ? goalProb(actualToDate, raw, goal, sumMean, sumVar) : (goal ? goalProb(actualToDate, null, goal, sumMean, sumVar) : undefined),
+        goal: goal, early: early,
+        p: early ? null : (fc && goal ? goalProb(actualToDate, raw, goal, sumMean, sumVar) : (goal ? goalProb(actualToDate, null, goal, sumMean, sumVar) : undefined)),
         month: { label: m.label, name: m.name, fromDay: m.fromDay, toDay: m.toDay }, today: t, ready: !!fc && !fc.fallback
       };
     });
@@ -249,11 +278,41 @@
     for (var d = Math.max(DAY0(), t - 14); d < t; d++) out.push(metricValue(aggDay(w, d, f, newFact()), f.metric));
     return out;
   }
-  function pStatus(p) { return p === undefined || p === null ? 'risk' : (p >= 0.7 ? 'on' : (p >= 0.4 ? 'risk' : 'off')); }
+  function pStatus(p) { return p === undefined || p === null ? 'early' : (p >= 0.7 ? 'on' : (p >= 0.4 ? 'risk' : 'off')); }
+  function goalStatus(p) { return p >= 0.8 ? 'ahead' : (p >= 0.4 ? 'on' : 'behind'); }
+  var EARLY_NOTE = 'Goal tracking starts after a week of results.';
+
+  // One month's goal and pace. Current month: target, actual to date, what the plan expects by now (the share of
+  // the target a month that lands on it would already have), the gap, and the chance of finishing at or above target.
+  SEL.goalFor = function (w, monthKey) {
+    var t = today(w), m = monthSpan(w, monthKey), key = monthKeyOf(m);
+    return memo('goalFor', [w, rv(w, 'metrics'), w.meta.tick, w.meta.monthGoal], key, function () {
+      var target = monthGoalObj(w, m).revenue;
+      if (typeof target !== 'number') target = null;
+      var from = Math.max(m.fromDay, DAY0()), to = Math.min(m.toDay, t);
+      var actual = to >= from ? metricValue(aggRange(w, { metric: 'revenue' }, from, to), 'revenue') : 0;
+      var elapsed = completeDaysIn(w, m), out = { key: key, label: m.name + ' ' + m.y, target: target, actual: actual, expectedByNow: null,
+        delta: null, status: 'early', p: null, days: { elapsed: elapsed, total: m.days }, note: null };
+      if (t > m.toDay) {            // finished month
+        out.expectedByNow = target; out.delta = target === null ? null : actual - target; out.p = target === null ? null : (actual >= target ? 1 : 0);
+        out.status = target === null ? 'early' : goalStatus(out.p); out.days.elapsed = m.days;
+        return out;
+      }
+      var linear = target === null ? null : target * MC.util.clamp((w.meta.tick / 24 - m.fromDay) / m.days, 0, 1);
+      out.expectedByNow = linear;
+      if (elapsed < MIN_DAYS || target === null) { out.note = EARLY_NOTE; out.delta = linear === null ? null : actual - linear; return out; }
+      var mf = monthForecast(w, 'revenue'), proj = mf.cumulative.projected.mean;
+      out.p = typeof mf.p === 'number' ? mf.p : null;
+      if (proj > 0 && actual > 0) out.expectedByNow = Math.min(target, target * actual / proj);
+      out.delta = actual - out.expectedByNow;
+      out.status = out.p === null ? 'early' : goalStatus(out.p);
+      return out;
+    });
+  };
 
   SEL.kpis = function (w) {
     return memo('kpis', [w, rv(w, 'metrics'), w.meta.tick, w.meta.monthGoal], '', function () {
-      var t = today(w), m = MC.time.monthOf(t), goal = w.meta.monthGoal || {};
+      var t = today(w), m = MC.time.monthOf(t), goal = monthGoalObj(w, m), early = completeDaysIn(w, m) < MIN_DAYS;
       function tile(metric, goalKey) {
         var f = { metric: metric };
         var mf = monthForecast(w, metric);
@@ -261,7 +320,7 @@
         return {
           value: value, goal: goal[goalKey],
           projected: { mean: mf.cumulative.projected.mean, lo80: mf.cumulative.projected.lo80, hi80: mf.cumulative.projected.hi80 },
-          p: mf.p, status: pStatus(mf.p), delta7: weekDelta(w, f), spark14: spark(w, f)
+          p: early ? null : mf.p, status: early ? 'early' : pStatus(mf.p), early: early, delta7: weekDelta(w, f), spark14: spark(w, f)
         };
       }
       var rf = { metric: 'roas', campaignsOnly: true };
@@ -270,16 +329,17 @@
       var roasT = goal.roas;
       var uf = { metric: 'unsubRate' };
       var uFact = aggRange(w, uf, Math.max(m.fromDay, DAY0()), t);
-      var uV = uFact[F().DELIV] > 0 ? uFact[F().UNSUB] / uFact[F().DELIV] : 0;
+      var uV = uFact[F().DELIV] > 0 ? uFact[F().UNSUB] / uFact[F().DELIV] : null;
       var uT = goal.unsubRate;
+      var uEarly = early || !(uFact[F().DELIV] >= 1000);
       return {
-        month: { label: m.label, name: m.name, fromDay: m.fromDay, toDay: m.toDay },
+        month: { label: m.label, name: m.name, fromDay: m.fromDay, toDay: m.toDay }, early: early, earlyNote: early ? EARLY_NOTE : null,
         revenue: tile('revenue', 'revenue'),
         conversions: tile('conversions', 'conversions'),
         roas: { value: roasV, target: roasT, delta7: weekDelta(w, rf), spark14: spark(w, rf),
-          status: roasV === null ? 'on' : (roasV >= roasT ? 'on' : (roasV >= 0.85 * roasT ? 'risk' : 'off')) },
+          status: roasV === null || early ? 'early' : (roasV >= roasT ? 'on' : (roasV >= 0.85 * roasT ? 'risk' : 'off')) },
         unsubRate: { value: uV, target: uT, delta7: weekDelta(w, uf), spark14: spark(w, uf),
-          status: uV <= uT ? 'on' : (uV <= 1.3 * uT ? 'risk' : 'off') }
+          status: uV === null || uEarly ? 'early' : (uV <= uT ? 'on' : (uV <= 1.3 * uT ? 'risk' : 'off')) }
       };
     });
   };
@@ -318,7 +378,8 @@
       var todayVal = (t >= startDay && t <= lastDay) ? dayValue(w, t, cid, idx) : 0;
       var actualToDate = valueAll - todayVal;
       var daysLeft = (c.status === 'completed') ? 0 : Math.max(0, lastDay - Math.max(t, startDay) + 1);
-      var out = { type: c.goal.type, target: target, value: valueAll, metric: GOAL_METRIC_NAME[c.goal.type], outlookPct: null, p: null, projected: null, daysLeft: daysLeft };
+      var out = { type: c.goal.type, target: target, value: valueAll, metric: GOAL_METRIC_NAME[c.goal.type], outlookPct: null, p: null, projected: null, daysLeft: daysLeft,
+        elapsedDays: complete.length, early: c.status !== 'completed' && complete.length < 3 };
       if (daysLeft === 0) {
         out.outlookPct = target > 0 ? valueAll / target : null;
         out.p = valueAll >= target ? 1 : 0;
@@ -330,7 +391,7 @@
       if (fc) {
         pts = fc.forecast;
         pts.forEach(function (p) { var sd = ptSd(p); sumMean += Math.max(0, p.mean); sumVar += sd * sd; });
-      } else if (complete.length) {
+      } else if (complete.length >= 3) {
         var md = MC.util.mean(complete), sdd = MC.util.sd(complete);
         sumMean = md * daysLeft; sumVar = daysLeft * Math.max(sdd * sdd, md);
       } else {
@@ -343,15 +404,39 @@
     });
   };
 
+  // Applied changes (autopilot or approved) in the last `hours` hours, filtered. Same window as agentActivity.
   function changes24h(w, filterFn) {
     var t = w.meta.tick, n = 0, order = w.proposals.order;
     for (var i = 0; i < order.length; i++) {
       var p = w.proposals.byId[order[i]];
-      if (!p || (p.status !== 'applied' && p.status !== 'auto') || !(p.appliedTick >= t - 24)) continue;
+      if (!p || (p.status !== 'applied' && p.status !== 'auto') || !(p.appliedTick > t - 24)) continue;
       if (filterFn(p)) n++;
     }
     return n;
   }
+
+  // Applied, proposed and waiting agent work over a recent window, in total and per agent.
+  SEL.agentActivity = function (w, o) {
+    o = o || {};
+    var hours = o.hours > 0 ? o.hours : 24;
+    return memo('agentActivity', [w, w.proposals, w.agents, w.meta.tick], String(hours), function () {
+      var t = w.meta.tick, from = t - hours, by = {}, applied = 0, proposed = 0, pending = 0;
+      function slot(id) { return by[id] || (by[id] = { applied: 0, proposed: 0, lastTick: null }); }
+      (w.agents && w.agents.order || EMPTY).forEach(function (id) { slot(id); });
+      w.proposals.order.forEach(function (id) {
+        var p = w.proposals.byId[id];
+        if (!p) return;
+        var a = slot(p.agentId);
+        if (p.status === 'pending') pending++;
+        if (p.tick > from) { proposed++; a.proposed++; if (a.lastTick === null || p.tick > a.lastTick) a.lastTick = p.tick; }
+        if ((p.status === 'applied' || p.status === 'auto') && p.appliedTick > from) {
+          applied++; a.applied++;
+          if (a.lastTick === null || p.appliedTick > a.lastTick) a.lastTick = p.appliedTick;
+        }
+      });
+      return { applied: applied, proposed: proposed, pending: pending, byAgent: by };
+    });
+  };
 
   SEL.campaignRows = function (w) {
     return memo('campaignRows', [w, rv(w, 'metrics'), w.campaigns, w.proposals, w.variants, w.meta.tick], '', function () {
@@ -364,7 +449,7 @@
         return {
           id: cid, name: c.name, status: c.status, channels: c.channels, startTick: c.startTick, endTick: c.endTick,
           spend: campaignTotals(w, cid).tot[F().COST], budget: c.budget.total,
-          goal: { type: g.type, target: g.target, value: g.value, outlookPct: g.outlookPct, p: g.p },
+          goal: { type: g.type, target: g.target, value: g.value, outlookPct: g.outlookPct, p: g.p, early: g.early, status: SEL.campaignPacing(w, cid).status },
           agentChanges24h: changes24h(w, function (p) { return targetCampaignId(w, p) === cid; }),
           spark14: sp
         };
@@ -396,6 +481,133 @@
         spentByCh: spentByCh, budgetByCh: c.budget.byChannel, dailyBudgetByCh: dailyByCh,
         pace: expected > 0 ? cost / expected : null, daysLeft: g ? g.daysLeft : 0, goal: g
       };
+    });
+  };
+
+  /* ---------------- campaign pacing, lift, load, collisions ---------------- */
+  function goalMoney(c, v) {
+    var type = c.goal.type;
+    if (type === 'revenue') return MC.fmt.money(v, { compact: true });
+    return MC.fmt.num(v, { compact: true }) + (type === 'reactivation' ? ' reactivations' : (type === 'engagement' ? ' clicks' : ' conversions'));
+  }
+  // The one pacing calculation. Outlook %, status and the "expected by now" figure all derive from campaignGoal's
+  // projection, so Outlook, Insight Analyst and the campaign cards agree: outlook % = actual / expectedByNow.
+  SEL.campaignPacing = function (w, cid) {
+    var c = camp(w, cid);
+    if (!c) return null;
+    return memo('campaignPacing', [w, rv(w, 'metrics'), c, w.meta.tick], cid, function () {
+      var g = SEL.campaignGoal(w, cid), target = g.target, actual = g.value;
+      var span = Math.max(1, c.endTick - c.startTick);
+      var linear = target * MC.util.clamp((w.meta.tick - c.startTick) / span, 0, 1);
+      var out = { target: target, actual: actual, expectedByNow: linear, delta: actual - linear, status: 'early', recoverNote: null };
+      if (c.status === 'draft' || c.status === 'scheduled') { out.expectedByNow = 0; out.delta = 0; return out; }
+      if (g.early || g.projected === null || !(g.projected > 0) || !(target > 0)) return out;
+      var ratio = g.projected / target;
+      out.expectedByNow = Math.min(target, target * actual / g.projected);
+      out.delta = actual - out.expectedByNow;
+      out.status = ratio >= 1.05 ? 'ahead' : (ratio >= 0.9 ? 'on' : 'behind');
+      if (out.status === 'behind' && g.daysLeft > 0) {
+        var gap = target - g.projected;
+        out.recoverNote = 'On track to finish about ' + goalMoney(c, gap) + ' short. Closing that takes about ' + goalMoney(c, gap / g.daysLeft) +
+          ' more a day for the last ' + g.daysLeft + (g.daysLeft === 1 ? ' day.' : ' days.');
+      }
+      return out;
+    });
+  };
+
+  // True when profile idx is in the universal holdout: a fixed share of people (world.meta.universalHoldoutPct, 5 by
+  // default) that no campaign messages on owned channels. Same hash the simulation uses.
+  SEL.inUniversalHoldout = function (w, idx) {
+    var pct = (w.meta && typeof w.meta.universalHoldoutPct === 'number') ? w.meta.universalHoldoutPct : 5;
+    return (MC.util.fnv1a(w.profiles.id[idx] + '|uh') % 100) < pct;
+  };
+
+  // Revenue per person over the campaign window: audience members who were messaged vs audience members in the
+  // universal holdout (never messaged, still exposed to organic and paid). Everything they spent counts, so the
+  // difference is what the campaign added. Percent units (13.5 = 13.5%), 95% interval from the per-person variance
+  // (log-ratio delta method). The per-campaign control group used to judge agent changes is not used here.
+  SEL.campaignLift = function (w, cid) {
+    var c = camp(w, cid);
+    if (!c) return null;
+    return memo('campaignLift', [w, rv(w, 'enroll'), rv(w, 'metrics'), c, w.meta.tick], cid, function () {
+      var E = w.enroll && w.enroll[cid];
+      var out = { ready: false, metric: 'revenue per person', treated: null, control: null, liftPct: null, lo: null, hi: null, nTreated: 0, nControl: 0, note: '' };
+      if (!E || !E.step || !E.all) { out.note = c.status === 'draft' || c.status === 'scheduled' ? 'Starts when the campaign goes live.' : 'No results yet.'; return out; }
+      var n = [0, 0], s1 = [0, 0], s2 = [0, 0], buyers = [0, 0];
+      for (var i = 0; i < E.step.length; i++) {
+        if (E.step[i] === -1) continue;
+        var k = SEL.inUniversalHoldout(w, i) ? 1 : 0, r = E.all[i];
+        n[k]++; s1[k] += r; s2[k] += r * r; if (r > 0) buyers[k]++;
+      }
+      out.nTreated = n[0]; out.nControl = n[1];
+      if (n[1] < 30) { out.note = 'Only ' + n[1] + ' people in this audience are held out from all messages so far. Lift shows once there are 30.'; return out; }
+      if (n[0] < 30) { out.note = 'Not enough people have been messaged yet.'; return out; }
+      var mt = s1[0] / n[0], mc = s1[1] / n[1];
+      out.treated = mt; out.control = mc;
+      if (buyers[1] < 3 || buyers[0] < 3 || !(mc > 0)) { out.note = 'Only ' + buyers[1] + (buyers[1] === 1 ? ' held-out person has' : ' held-out people have') + ' bought so far. Lift needs at least 3.'; return out; }
+      var vt = Math.max(0, s2[0] / n[0] - mt * mt) / n[0], vc = Math.max(0, s2[1] / n[1] - mc * mc) / n[1];
+      var lr = Math.log(mt > 0 ? mt / mc : 1e-9), se = Math.sqrt(vt / (mt * mt || 1) + vc / (mc * mc));
+      out.liftPct = (mt / mc - 1) * 100;   // percent units (13.5 = 13.5%)
+      out.lo = (mt > 0 ? Math.exp(lr - Z95 * se) - 1 : -1) * 100;
+      out.hi = (mt > 0 ? Math.exp(lr + Z95 * se) - 1 : -1) * 100;
+      out.ready = true;
+      out.note = out.lo > 0 ? 'Clearly above the held-out group.' : (out.hi < 0 ? 'Clearly below the held-out group.' : 'Too close to call: the range includes no lift.');
+      return out;
+    });
+  };
+
+  // How many messages people got across all owned channels. days is capped at the 7 the profile store keeps.
+  SEL.messageLoad = function (w, o) {
+    o = o || {};
+    var days = Math.max(1, Math.min(7, Math.round(o.days > 0 ? o.days : 7)));
+    return memo('messageLoad', [w, w.meta.tick, w.guardrails], String(days), function () {
+      var P = w.profiles, t = today(w), counts = {}, over = 0, cap = ((w.guardrails && w.guardrails.freqCap) || { email: 4 }).email || 4;
+      var slots = [];
+      for (var q = 0; q < days; q++) slots.push((((t - q) % 7) + 7) % 7);
+      for (var i = 0; i < P.n; i++) {
+        var tot = 0;
+        for (var ci = 0; ci < 3; ci++) for (var j = 0; j < slots.length; j++) tot += P.sent7[i * 21 + ci * 7 + slots[j]];
+        counts[tot] = (counts[tot] || 0) + 1;
+        if (tot > cap) over++;
+      }
+      var dist = Object.keys(counts).map(Number).sort(function (a, b) { return a - b; }).map(function (k) { return { sends: k, profiles: counts[k] }; });
+      var by = {}, ids = w.campaigns.order, f = F();
+      for (var d = Math.max(DAY0(), t - days + 1); d <= t; d++) {
+        var e = entry(w, d);
+        if (!e || !e.c) continue;
+        ids.forEach(function (cid) {
+          var cd = e.c[cid];
+          if (!cd || !cd.ch) return;
+          MC.CH.OWNED.forEach(function (ch) { if (cd.ch[ch]) by[cid] = (by[cid] || 0) + cd.ch[ch][f.SENT]; });
+        });
+      }
+      return { days: days, cap: cap, people: P.n, distribution: dist, overCap: over, byCampaign: by };
+    });
+  };
+
+  // overlapPct is in percent units (13.5 = 13.5%). Live or scheduled campaigns sharing both audience and a channel with `cid` on overlapping days.
+  SEL.collisions = function (w, cid) {
+    var c = camp(w, cid);
+    if (!c) return EMPTY;
+    return memo('collisions', [w, w.campaigns, w.segments, rv(w, 'segCounts'), w.profiles], cid, function () {
+      var out = [], S = MC.segments;
+      if (!S || typeof S.audienceOf !== 'function') return out;
+      var a = S.audienceOf(w, c), na = 0, n = a.length, i;
+      for (i = 0; i < n; i++) na += a[i];
+      var fromA = Math.floor(c.startTick / 24), toA = Math.floor((c.endTick - 1) / 24);
+      w.campaigns.order.forEach(function (oid) {
+        var o = camp(w, oid);
+        if (!o || oid === cid || (o.status !== 'live' && o.status !== 'scheduled') || na === 0) return;
+        var from = Math.max(fromA, Math.floor(o.startTick / 24)), to = Math.min(toA, Math.floor((o.endTick - 1) / 24));
+        if (from > to) return;
+        var shared = c.channels.filter(function (ch) { return o.channels.indexOf(ch) >= 0 && MC.CH.OWNED.indexOf(ch) >= 0; });
+        if (!shared.length) return;
+        var b = S.audienceOf(w, o), both = 0;
+        for (i = 0; i < n; i++) if (a[i] && b[i]) both++;
+        if (!both) return;
+        shared.forEach(function (ch) { out.push({ otherId: oid, otherName: o.name, channel: ch, overlapPct: both / na * 100, fromDay: from, toDay: to }); });
+      });
+      return out;
     });
   };
 
@@ -458,19 +670,26 @@
   };
 
   /* ---------------- analytics ---------------- */
+  // Owned channels only (email, SMS, push): paid clicks have no send or open to compare against. Opened is shown only
+  // for email and push, and only when it sits above clicks. Each stage carries its rate against the stage before
+  // (rateOfPrev) and against everyone sent (rateOfSent).
   SEL.funnel = function (w, f) {
     f = f || {};
     return memo('funnel', [w, rv(w, 'metrics')], argKey(f), function () {
-      var r = resolveRange(w, f);
-      var g = assign({}, f, { campaignsOnly: true });
-      var x = aggRange(w, g, r.from, r.to), k = F();
-      return [
-        { key: 'sent', label: 'Sent', value: x[k.SENT] },
-        { key: 'delivered', label: 'Delivered', value: x[k.DELIV] },
-        { key: 'opened', label: 'Opened', value: x[k.OPEN] },
-        { key: 'clicked', label: 'Clicked', value: x[k.CLICK] },
-        { key: 'converted', label: 'Converted', value: x[k.CONV] }
-      ];
+      var r = resolveRange(w, f), k = F(), x = newFact();
+      var chs = f.channel && f.channel !== 'all' ? [f.channel] : MC.CH.OWNED;
+      chs.forEach(function (ch) {
+        if (MC.CH.OWNED.indexOf(ch) >= 0) add(x, aggRange(w, { campaignIds: f.campaignIds, channel: ch, metric: 'revenue' }, r.from, r.to));
+      });
+      var withOpen = chs.length === 1 && chs[0] !== 'sms' && x[k.OPEN] >= x[k.CLICK];
+      var st = [{ key: 'sent', label: 'Sent', value: x[k.SENT] }, { key: 'delivered', label: 'Delivered', value: x[k.DELIV] }];
+      if (withOpen) st.push({ key: 'opened', label: 'Opened', value: x[k.OPEN] });
+      st.push({ key: 'clicked', label: 'Clicked', value: x[k.CLICK] }, { key: 'converted', label: 'Converted', value: x[k.CONV] });
+      st.forEach(function (s, i) {
+        s.rateOfPrev = i > 0 && st[i - 1].value > 0 ? s.value / st[i - 1].value : null;
+        s.rateOfSent = i > 0 && st[0].value > 0 ? s.value / st[0].value : null;
+      });
+      return st;
     });
   };
 
@@ -621,7 +840,7 @@
           id: id, name: def.name || id, short: def.short || '', icon: def.icon || null,
           status: st.state, agentStatus: a.status, autonomy: a.autonomy, cadence: a.cadence,
           lastRun: st.lastRun !== undefined ? st.lastRun : a.lastRunTick, nextRun: st.nextRun,
-          changes24h: changes24h(w, function (p) { return p.agentId === id; }),
+          changes24h: SEL.agentActivity(w, { hours: 24 }).byAgent[id] ? SEL.agentActivity(w, { hours: 24 }).byAgent[id].applied : 0,
           pending: pending, stats: a.stats, ranThisTick: a.lastRunTick === t
         };
       });
@@ -742,7 +961,14 @@
       var steps = c.journey.steps, out = {}, counts = new Array(steps.length);
       for (var s = 0; s < steps.length; s++) counts[s] = 0;
       var en = w.enroll && w.enroll[cid];
-      if (en && en.step) for (var i = 0; i < en.step.length; i++) { var x = en.step[i]; if (x >= 0 && x < steps.length) counts[x]++; }
+      var exitIdx = -1, completed = 0;
+      for (var q = 0; q < steps.length; q++) if (steps[q].type === 'exit') { exitIdx = q; break; }
+      if (en && en.step) for (var i = 0; i < en.step.length; i++) {
+        var x = en.step[i];
+        if (x >= 0 && x < steps.length) counts[x]++;
+        else if (x === -2) completed++;   // finished the journey (exited)
+      }
+      if (exitIdx >= 0) counts[exitIdx] += completed;
       var te = entry(w, today(w)), tcd = te && te.c && te.c[cid];
       var yes = {}, no = {}, days = w.metrics.days;
       for (var d = 0; d < days.length; d++) {
@@ -751,7 +977,7 @@
         sortedKeys(cd.steps).forEach(function (sid) { yes[sid] = (yes[sid] || 0) + cd.steps[sid][1]; no[sid] = (no[sid] || 0) + cd.steps[sid][2]; });
       }
       steps.forEach(function (st, idx) {
-        var row = { inStep: counts[idx], sentToday: tcd && tcd.steps && tcd.steps[st.id] ? tcd.steps[st.id][0] : 0 };
+        var row = { inStep: counts[idx], completed: idx === exitIdx ? completed : undefined, sentToday: tcd && tcd.steps && tcd.steps[st.id] ? tcd.steps[st.id][0] : 0 };
         if (st.type === 'decide') {
           var y = yes[st.id] || 0, n = no[st.id] || 0;
           row.yesPct = y + n > 0 ? y / (y + n) : null;

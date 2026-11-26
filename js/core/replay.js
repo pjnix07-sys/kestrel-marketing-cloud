@@ -1,4 +1,4 @@
-/* Kestrel Marketing Cloud - MC.replay and MC.dev.selfTest. Digests the world in canonical form,
+/* Marketing Cloud - MC.replay and MC.dev.selfTest. Digests the world in canonical form,
    replays seed + tick-stamped user action log headlessly (chunked, never blocking the page) and
    verifies that the replay reaches the same state and audit chain as the live session. */
 (function () {
@@ -41,7 +41,7 @@
       var cps = opts.checkpoints || null, i = 0, first = null, diverged = null, t = 1;
       function apply(stamp) {
         while (i < log.length && log[i].tick <= stamp) {
-          var r = MC.catalog.dispatchUser(w, { type: log[i].type, payload: log[i].payload });
+          var r = MC.catalog.dispatchUser(w, { type: log[i].type, payload: log[i].payload, by: log[i].by || null, note: log[i].note });
           if (!r.ok && diverged === null) diverged = { tick: stamp, seq: log[i].seq, type: log[i].type, error: r.error };
           i++;
         }

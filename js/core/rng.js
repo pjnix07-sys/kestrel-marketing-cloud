@@ -1,4 +1,4 @@
-/* Kestrel Marketing Cloud - MC.rng: seeded sfc32 generators and keyed forks.
+/* Marketing Cloud - MC.rng: seeded sfc32 generators and keyed forks.
    Every random draw in the simulation, agents and data generation comes from here. */
 (function () {
   'use strict';

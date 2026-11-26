@@ -1,4 +1,4 @@
-/* Kestrel Marketing Cloud - MC.sim: the hourly simulation step for the Fernway Outfitters sample
+/* Marketing Cloud - MC.sim: the hourly simulation step for the Fernway Outfitters sample
    world (synthetic data). Journey engine for owned channels, paid-media response curves, organic
    orders, attribution, the day roll, go-live enrollment and the hidden "latent truth" that agents
    never see. Columnar data is mutated in place and followed by a rev bump; entity changes go
@@ -44,6 +44,7 @@
     return a;
   })();
   SIM.HOUR_SHAPE = HOUR_SHAPE;
+  var HOUR_CUM = (function () { var a = new Float64Array(25); for (var i = 0; i < 24; i++) a[i + 1] = a[i] + HOUR_SHAPE[i]; return a; })();
 
   /* ======================= small helpers ======================= */
   function U() { return MC.util; }
@@ -265,7 +266,7 @@
     if (!E) {
       var n = world.profiles.n;
       E = { step: new Int16Array(n), due: new Int32Array(n), ctl: new Uint8Array(n), flags: new Uint8Array(n),
-        rev: new Float32Array(n), order: new Int32Array(0), entered: 0, exited: 0 };
+        rev: new Float32Array(n), all: new Float32Array(n), order: new Int32Array(0), entered: 0, exited: 0 };
       E.step.fill(-1);
       world.enroll[cid] = E;
     }
@@ -277,6 +278,20 @@
     for (var k = 0; k < steps.length; k++) if (steps[k].type === 'entry') return k;
     return 0;
   }
+
+  // Universal holdout: a fixed share of profiles (stable hash of the profile id) that no campaign messages on owned
+  // channels. They still see organic and paid. The flag array is cached on the world under a "_" key (not digested).
+  function universalHoldoutBits(world) {
+    var P = world.profiles, n = P.n, pct = (world.meta && typeof world.meta.universalHoldoutPct === 'number') ? world.meta.universalHoldoutPct : 5;
+    var u = world._uh;
+    if (u && u.n === n && u.pct === pct && u.id === P.id) return u.bits;
+    var bits = new Uint8Array(n), fnv = U().fnv1a;
+    for (var i = 0; i < n; i++) bits[i] = (fnv(P.id[i] + '|uh') % 100) < pct ? 1 : 0;
+    world._uh = { n: n, pct: pct, id: P.id, bits: bits };
+    return bits;
+  }
+  SIM.universalHoldoutBits = universalHoldoutBits;
+  SIM.inUniversalHoldout = function (world, i) { return universalHoldoutBits(world)[i] === 1; };
 
   function holdoutOf(world, c) {
     if (typeof c.holdoutPct === 'number') return c.holdoutPct;
@@ -416,7 +431,13 @@
     P.aov[i] = P.orders[i] > 0 ? P.spend[i] / P.orders[i] : rev;
     // "Purchased" decisions in every journey the profile is in.
     var en = world.enroll || {}, ord = world.campaigns.order;
-    for (var k = 0; k < ord.length; k++) { var E = en[ord[k]]; if (E && E.step[i] !== -1) E.flags[i] |= 4; }
+    for (var k = 0; k < ord.length; k++) {
+      var E = en[ord[k]];
+      if (!E || E.step[i] === -1) continue;
+      E.flags[i] |= 4;
+      var cc = world.campaigns.byId[ord[k]];
+      if (E.all && cc && (cc.status === 'live' || cc.status === 'paused')) E.all[i] += rev;   // everything this person spent while the campaign ran
+    }
     return react;
   }
 
@@ -443,6 +464,7 @@
     var P = world.profiles, LP = (world.latent && world.latent.profiles) || {}, g = world.guardrails || {};
     var f = F(), chIdx = CH().IDX, BIT = CH().BIT;
     var e = dayEntry(world, d), cd = campDay(e, c.id), allIdx = allIndex(world, c.id);
+    var uh = universalHoldoutBits(world);
     var quiet = g.quiet || { start: 21, end: 8, channels: ['sms', 'push'] };
     var freqCap = g.freqCap || { email: 4, sms: 2, push: 5 };
     var ctlPol = c.ctl || {};
@@ -495,6 +517,7 @@
     function trySend(i, s, k) {
       var ch = s.channel, ci = chIdx[ch], bit = BIT[ch];
       if (OWNED_NAMES.indexOf(ch) < 0 || c.channels.indexOf(ch) < 0 || pol[k].paused[ch]) return SKIP;
+      if (uh[i]) return SKIP;
       var el = eligible(k, ch);
       if (!el) return SKIP;
       if (!(P.consent[i] & bit) || (P.unsub[i] & bit)) return SKIP;
@@ -623,12 +646,27 @@
     return pi.mean || 100;
   }
 
+  // Day-to-day spend variation on paid channels: a weekday effect (index 0 is Sunday), a slow channel drift and auction noise,
+  // all deterministic per campaign, channel and day, so spend differs from the even plan and marginal
+  // returns can be compared. The remaining budget is re-spread each day, so totals still land on plan.
+  var PAID_DOW = { social: [1.10, 0.92, 0.95, 1.00, 1.00, 1.08, 1.18], web: [0.88, 1.12, 1.08, 1.04, 1.00, 0.96, 0.84] };
+  function paidDayFactor(world, c, ch, d) {
+    var dow = T().dowOfDay(d);
+    var wk = (PAID_DOW[ch] || PAID_DOW.social)[dow];
+    var rng = MC.rng.fork(seedOf(world), 'paidDay', c.id, ch, d);
+    var noise = 0.6 + 0.8 * rng.float();
+    var drift = 1 + 0.15 * Math.sin((d + (ch === 'web' ? 2 : 0)) * 0.9 + (c.id.length + ch.length));
+    // Auction spend also follows seasonal demand, which keeps spend and revenue moving together.
+    return Math.max(0.4, Math.min(1.9, wk * noise * drift * Math.pow(SIM.season(d) / 1.1, 0.8)));
+  }
+
   function paidCampaign(world, c, t, h, d) {
     var f = F(), e = dayEntry(world, d), cd = campDay(e, c.id), allIdx = allIndex(world, c.id);
     CH().PAID.forEach(function (ch) {
       if (c.channels.indexOf(ch) < 0 || (c.channelPaused && c.channelPaused[ch])) return;
       var S = SIM.dailyBudget(world, c.id, ch, d);
       if (!(S > 0)) return;
+      S = Math.min(S * paidDayFactor(world, c, ch, d), S * Math.max(1, T().dayOf(c.endTick - 1) - d + 1));
       var key = c.id + '|' + ch;
       var curve = (world.latent && world.latent.curves && world.latent.curves[key]) || SIM.curvesFor(world, c)[key];
       if (!curve) return;
@@ -647,7 +685,10 @@
       var lam = R * creativeQ * SIM.season(d) * HOUR_SHAPE[h] / Math.max(1, aov);
       var impr = spend / CONST.cpm[ch] * 1000;
       var clicks = rng.binomial(Math.round(impr), CONST.ctrPaid[ch]);
-      var conv = rng.poisson(lam);
+      // Auction demand is steadier than a pure Poisson count: orders are spread through the day by systematic
+      // sampling from a per-day offset, so the daily total tracks spend (within one order) rather than jittering.
+      var lamDay = lam / HOUR_SHAPE[h], u0 = MC.rng.fork(seedOf(world), 'paidOrd', c.id, ch, d).float();
+      var conv = Math.floor(u0 + lamDay * HOUR_CUM[h + 1]) - Math.floor(u0 + lamDay * HOUR_CUM[h]);
       var chF = fact(cd.ch, ch), facts = [cd.tot, chF, e.tot];
       add(facts, f.COST, spend); add(facts, f.IMPR, impr); add(facts, f.CLICK, clicks);
       var wsum = 0, j;
@@ -665,13 +706,13 @@
         if (tab && tab.total > 0) {
           var i = tab.idx[pickCum(tab, rng.float())];
           var prod = productFor(world, v, c, i);
-          rev = prod.price * rng.lognormal(0, CONST.revSd) * disc;
+          rev = prod.price * rng.lognormal(0, CONST.revSd * 0.5) * disc;
           pushTouch(world, i, allIdx, CH().IDX[ch], t);
           react = bookOrder(world, i, rev, d);
           if (E) E.rev[i] += rev;
           attribute(world, i, rev, t, e);
         } else {
-          rev = aov * rng.lognormal(0, CONST.revSd) * disc;
+          rev = aov * rng.lognormal(0, CONST.revSd * 0.5) * disc;
         }
         var cf = v ? [cd.tot, chF, e.tot, fact(cd.v, v.id)] : facts;
         add(cf, f.CONV, 1); add(cf, f.REV, rev); add(cf, f.REACT, react);

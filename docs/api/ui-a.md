@@ -23,7 +23,7 @@ boot card, fault card, dev check), kit classes (`k-*`), chart and agent polish h
 `html.k-lock` scroll lock, reduced-motion rule removing transitions/animations.
 
 ## js/ui/icons.js
-`MC.icons` name → SVG path data (nav, status, channel, agent and action glyphs, `kestrel` mark).
+`MC.icons` name → SVG path data (nav, status, channel, agent and action glyphs, `mark` (journey line)).
 `MC.ui.Icon({name, size=16, title})` (aria-hidden unless titled). `MC.ui.Scene({imageId, title})` renders the six
 synthetic `MC.copy.IMAGES` illustrations (scene-summit/forest/campfire/trail/snow/lake) with token colors.
 

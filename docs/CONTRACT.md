@@ -1,6 +1,6 @@
 > **Binding build contract.** Derived from the marketer-workflow architecture proposal. Section 10 (Amendments), when present, overrides anything earlier in this document.
 
-# Kestrel Marketing Cloud: Architecture Proposal (Marketer-Workflow Lens)
+# Marketing Cloud: Architecture Proposal (Marketer-Workflow Lens)
 
 This is a binding contract for 13 parallel builders (lanes in §10.1). It covers the whole system and goes deepest on what the marketer sees and does. **Read §10 before writing any code**; it resolves every known inconsistency below.
 
@@ -91,7 +91,7 @@ js/app.js                      ui      shell, router, top bar, drawer, toasts, t
 **index.html (order summary only; the complete literal file is §10.2 and binds)**
 
 ```html
-<title>Kestrel Marketing Cloud</title>
+<title>Marketing Cloud</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
@@ -1103,7 +1103,7 @@ Rules every lane follows:
 No doctype/html/head/body, no inline scripts, no `defer`/`async` (classic scripts must execute in this order). The viewport meta tag is required so phone emulation lays out at device width. Every file in §2 appears exactly once.
 
 ```html
-<title>Kestrel Marketing Cloud</title>
+<title>Marketing Cloud</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -1849,7 +1849,7 @@ Live dispatches are stamped with `world.meta.tick` and are processed before tick
   notify:{ [agentId]:'all'|'changes'|'silent' } }
 ```
 
-- localStorage key `kestrel.ui.v1` holds `{theme, route, sampleDismissed, notify}`. Every read and write is wrapped in try/catch, and a failure falls back to the defaults.
+- localStorage key `mc.ui.v1` holds `{theme, route, sampleDismissed, notify}`. Every read and write is wrapped in try/catch, and a failure falls back to the defaults.
 - Routing:
   - Only `#home`, `#campaigns`, `#content`, `#audiences`, `#analytics` and `#agents` are valid. Unknown or empty hashes render home.
   - `MC.nav.go` sets focus, then `location.hash`. A `hashchange` listener updates `route`.
@@ -1991,6 +1991,8 @@ Direction from the user: a wow-factor prototype that does not overwhelm; the sim
 - No gradients, no glow shadows (one subtle elevation for overlays and drawers only), no emoji, icons only in nav and on actions, not beside every label.
 - No walls of stat tiles: Command Center leads with at most 4 KPIs; other views lead with their object, not tiles.
 - One primary button per region; everything else quiet or text style.
+- No glassmorphism: no backdrop-filter blur, no translucent or frosted panels, bars or overlays (a plain scrim behind modal drawers is the only translucency).
+- No curved or rounded left-edge bars or accent stripes on buttons, banners, cards, rows or nav items; selection and status use background, weight or one small dot.
 
 ### 11.3 Calm agentic surfacing
 - One "What changed" feed (home) narrates agent actions in plain English with inline View and Undo.

@@ -1,4 +1,4 @@
-/* Kestrel Marketing Cloud - hand-written SVG charts (MC.charts.*, ch- classes).
+/* Marketing Cloud - hand-written SVG charts (MC.charts.*, ch- classes).
    Colors come only from CSS custom properties (tokens.css). Every chart is safe on
    empty / NaN input, sizes from its container width, carries role="img" with an
    aria-label summary, and (except Sparkline / ScoreRing) offers "View as table". */
@@ -70,6 +70,7 @@
   }
   function shortDay(d) {
     if (!fin(d)) return DASH;
+    if (window.MC && MC.time && typeof MC.time.dayLabel === 'function') return MC.time.dayLabel(d, { style: 'short' });
     var c = calDay(d);
     return MONTHS[c.m] + ' ' + c.d;
   }
@@ -496,7 +497,7 @@
       var railY = H - 10;
       var evK = 0;
 
-      var svg = html`<svg ref=${svgRef} role="img" aria-label=${ariaLabel} viewBox=${'0 0 ' + W + ' ' + H} width=${W} height=${H} style=${S.svg}
+      var svg = html`<svg ref=${svgRef} role="group" aria-label=${ariaLabel} viewBox=${'0 0 ' + W + ' ' + H} width=${W} height=${H} style=${S.svg}
           onPointerMove=${onMove} onPointerLeave=${function () { setHx(null); }}>
         <title>${ariaLabel}</title>
         ${yt.ticks.map(function (t, k) {
@@ -555,7 +556,7 @@
               role=${act ? 'button' : null} tabIndex=${act ? 0 : null} aria-label=${m.label || 'Agent action'}
               onClick=${fire} onKeyDown=${function (e) { if (act && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); fire(e); } }}
               style=${{ cursor: act ? 'pointer' : 'default' }}>
-            <circle cx=${x} cy=${railY} r="11" style=${{ fill: 'transparent' }} />
+            <circle cx=${x} cy=${railY} r="13" style=${{ fill: 'transparent' }} />
             <circle cx=${x} cy=${railY} r="5" strokeWidth="2" style=${{ fill: 'var(--agent)', stroke: 'var(--surface)' }} />
             <title>${m.label || 'Agent action'}</title>
           </g>`;
@@ -996,7 +997,7 @@
       var colLabH = Math.min(110, Math.max.apply(null, cols.map(function (c) { return textW(truncate(lab(c), 18), 11); })) * 0.72 + 14);
       var Wt = labW + cell * cols.length + Math.max(4, Math.round(colLabH * 0.95) - cell / 2), Ht = colLabH + cell * rows.length;
       return html`<div className="k-scroll-x" style=${{ overflowX: 'auto', maxWidth: '100%' }}>
-        <svg role="img" aria-label=${aria} viewBox=${'0 0 ' + Wt + ' ' + Ht} width=${Wt} height=${Ht} style=${{ display: 'block', minWidth: Wt }}>
+        <svg role=${typeof p.onCell === 'function' ? 'group' : 'img'} aria-label=${aria} viewBox=${'0 0 ' + Wt + ' ' + Ht} width=${Wt} height=${Ht} style=${{ display: 'block', minWidth: Wt }}>
           <title>${aria}</title>
           ${cols.map(function (c, ci) {
             var x = labW + ci * cell + cell / 2;

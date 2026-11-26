@@ -1,4 +1,4 @@
-/* Kestrel Marketing Cloud · Audiences view (#audiences)
+/* Marketing Cloud · Audiences view (#audiences)
    Tabs: Segments · Builder · Profiles · Overlap. Owner: audiences lane.
    Drafts (rule builder, names, search) live in local state only; the store is written only on explicit actions. */
 (function () {
@@ -35,8 +35,9 @@
   }
   function fmtRatio(x) { return fin(x) ? (MC.fmt && MC.fmt.ratio ? MC.fmt.ratio(x) : x.toFixed(1) + TIMES) : DASH; }
   function fmtHour(hr) { return fin(hr) ? (MC.fmt && MC.fmt.hour ? MC.fmt.hour(hr) : hr + ':00') : DASH; }
-  function fmtStamp(t) { return fin(t) ? (MC.fmt && MC.fmt.stamp ? MC.fmt.stamp(t) : 'tick ' + t) : DASH; }
-  function fmtDayShort(d) { return fin(d) ? (MC.fmt && MC.fmt.dayShort ? MC.fmt.dayShort(d) : 'day ' + d) : DASH; }
+  // Calendar labels come from MC.time's display mapping (§11.1).
+  function fmtStamp(t) { return fin(t) ? (MC.time && MC.time.stampLabel ? MC.time.stampLabel(t) : (MC.fmt && MC.fmt.stamp ? MC.fmt.stamp(t) : DASH)) : DASH; }
+  function fmtDayShort(d) { return fin(d) ? (MC.time && MC.time.dayLabel ? MC.time.dayLabel(d, { style: 'short' }) : (MC.fmt && MC.fmt.dayShort ? MC.fmt.dayShort(d) : DASH)) : DASH; }
   function plural(n, one, many) { return fmtNum(n) + ' ' + (n === 1 ? one : many); }
   function chLabel(ch) { return (MC.CH && MC.CH.LABEL && MC.CH.LABEL[ch]) || ch; }
 
@@ -555,18 +556,19 @@
           placeholder="e.g. lapsed hikers in the Pacific Northwest with high predicted LTV"
           onChange=${function (e) { p.onText(e.target.value); }}
           onKeyDown=${function (e) { if (e.key === 'Enter') { e.preventDefault(); p.onBuild(); } }} />
-        <${Btn} kind="primary" id="aud-describe-build" onClick=${p.onBuild} disabled=${!canParse || !p.text.trim()}>Build rules<//>
+        <${Btn} kind="primary" id="aud-describe-build" onClick=${p.onBuild} disabled=${!canParse || !p.text.trim() || p.reading}>${p.reading ? 'Reading…' : 'Build rules'}<//>
       </div>
+      <p className="aud-muted aud-reading" role="status" aria-live="polite">${p.reading ? 'Reading your description…' : ''}</p>
       ${!canParse ? h`<p className="aud-muted">The phrase parser is still loading; you can build rules by hand below.</p>` : null}
       ${parsed ? h`<div className="aud-parsed">
         ${parsed.matched && parsed.matched.length ? h`<div className="aud-parsed-row"><span className="aud-parsed-k">Understood:</span>
-          <ul className="aud-chips">${parsed.matched.map(function (m, i) {
-            return h`<li key=${i + '-' + m.phrase} className="aud-chip"><span className="aud-chip-phrase">${m.phrase}</span> ${ARROW} ${m.label}</li>`;
-          })}</ul></div>` : h`<p className="aud-msg aud-msg-warn">Nothing in that description matched an attribute. Try words like “lapsed”, “hikers”, “Pacific Northwest”, “Summit tier” or “high predicted LTV”.</p>`}
+          <ul className="aud-plainlist">${parsed.matched.map(function (m, i) {
+            return h`<li key=${i + '-' + m.phrase}><span className="aud-chip-phrase">${m.phrase}</span>: ${m.label}</li>`;
+          })}</ul></div>` : parsed.why ? h`<p className="aud-muted aud-why">${parsed.why}</p>` : h`<p className="aud-msg aud-msg-warn">Nothing in that description matched an attribute. Try words like “lapsed”, “hikers”, “Pacific Northwest”, “Summit tier” or “high predicted LTV”.</p>`}
         ${parsed.ignored && parsed.ignored.length ? h`<div className="aud-parsed-row"><span className="aud-parsed-k">Ignored:</span>
-          <ul className="aud-chips">${parsed.ignored.map(function (t, i) { return h`<li key=${i + '-' + t} className="aud-chip aud-chip-ign">“${t}”</li>`; })}</ul></div>` : null}
+          <p className="aud-muted">${parsed.ignored.map(function (t) { return '“' + t + '”'; }).join(', ')}</p></div>` : null}
         <div className="aud-parsed-foot">
-          ${fin(parsed.confidence) ? h`<span className="aud-muted num">Confidence ${fmtPct(parsed.confidence)}</span>` : null}
+          ${fin(parsed.confidence) && parsed.matched && parsed.matched.length ? h`<span className="aud-muted num">Confidence ${fmtPct(parsed.confidence)}</span>` : null}
           ${p.canUndo ? h`<span className="aud-muted">Replaces current rules ${DOT} </span>` : null}
           ${p.canUndo ? h`<button type="button" className="aud-link" id="aud-describe-undo" onClick=${p.onUndo}>Undo</button>` : null}
         </div>
@@ -601,6 +603,7 @@
     var segments = useSel(function (w) { return w.segments; });
     var campaigns = useSel(function (w) { return w.campaigns; });
     var msgSt = React.useState(null), msg = msgSt[0], setMsg = msgSt[1];
+    var rdSt = React.useState(false), reading = rdSt[0], setReading = rdSt[1];
     var useSt = React.useState(''), useCid = useSt[0], setUseCid = useSt[1];
     var debounced = MC.hooks.useDebounced(b.rule, 150);
     var ruleKey = JSON.stringify(debounced);
@@ -628,15 +631,27 @@
 
     function setRule(fn) { update(function (s) { return { rule: fn(s.rule) }; }); setMsg(null); }
     function build() {
-      if (!has(seg(), 'parse') || !b.text.trim()) return;
+      if (!has(seg(), 'parse') || !b.text.trim() || reading) return;
+      var text = b.text;
+      function apply(res) {
+        if (!res || !res.rule) return;
+        var suggested = !b.name.trim() && (res.name || (has(seg(), 'nameFor') && res.matched && res.matched.length ? seg().nameFor(res.rule) : null));
+        update(function (s) {
+          return { prevRule: s.rule, rule: clone(res.rule), parsed: res, name: (s.name && s.name.trim()) ? s.name : (suggested || s.name) };
+        });
+        setMsg(null);
+      }
+      var tasks = MC.ai && MC.ai.tasks;
+      if (tasks && typeof tasks.segmentFromText === 'function' && MC.ai.isOn && MC.ai.isOn()) {
+        setReading(true);
+        setMsg(null);
+        tasks.segmentFromText(text).then(function (res) { setReading(false); apply(res); },
+          function () { setReading(false); setMsg({ tone: 'crit', text: 'Couldn’t read that description. Try again, or build the rules by hand below.' }); });
+        return;
+      }
       var res;
-      try { res = seg().parse(b.text, world()); } catch (e) { setMsg({ tone: 'crit', text: 'Couldn’t read that description: ' + ((e && e.message) || e) }); return; }
-      if (!res || !res.rule) return;
-      var suggested = !b.name.trim() && has(seg(), 'nameFor') && res.matched && res.matched.length ? seg().nameFor(res.rule) : null;
-      update(function (s) {
-        return { prevRule: s.rule, rule: clone(res.rule), parsed: res, name: suggested || s.name };
-      });
-      setMsg(null);
+      try { res = seg().parse(text, world()); } catch (e) { setMsg({ tone: 'crit', text: 'Couldn’t read that description: ' + ((e && e.message) || e) }); return; }
+      apply(res);
     }
     function undoParse() { update(function (s) { return s.prevRule ? { rule: s.prevRule, prevRule: null } : {}; }); }
     function startNew() { update({ rule: emptyRule(), name: '', editingId: null, parsed: null, prevRule: null, text: '' }); setMsg(null); }
@@ -685,7 +700,7 @@
     var removed = b.editingId && segments && !segments.byId[b.editingId];
 
     return h`<div className="aud-builder">
-      <${Describe} text=${b.text} parsed=${b.parsed} canUndo=${!!b.prevRule}
+      <${Describe} text=${b.text} parsed=${b.parsed} reading=${reading} canUndo=${!!b.prevRule}
         onText=${function (t) { update({ text: t }); }} onBuild=${build} onUndo=${undoParse} />
       <div className="aud-builder-grid">
         <section className="aud-rules aud-card" aria-labelledby="aud-rules-title">
@@ -761,12 +776,14 @@
       builderListeners.forEach(function (fn) { fn(); });
       p.onTab('builder');
     }
+    var alt = p.alt;
     return h`<article className="aud-scout-card" aria-labelledby=${'aud-scout-' + pr.id}>
       <div className="aud-scout-top"><${Chip} agentId=${pr.agentId} />
         ${pr.risk ? h`<${Pill} tone=${pr.risk === 'low' ? 'good' : (pr.risk === 'high' ? 'crit' : 'warn')}>${pr.risk === 'low' ? 'Low risk' : pr.risk === 'high' ? 'High risk' : 'Medium risk'}<//>` : null}
-        ${includes ? h`<${Pill} tone="agent">Also adds to a campaign<//>` : null}
+
       </div>
       <h3 className="aud-h3" id=${'aud-scout-' + pr.id}>${(s && s.name) || pr.title}</h3>
+      ${includes ? h`<p className="aud-muted aud-small">Also adds it to a campaign.</p>` : null}
       ${pr.rationale ? h`<p className="aud-scout-why">${pr.rationale}</p>` : null}
       ${evidence.length ? h`<dl className="aud-evidence">${evidence.slice(0, 4).map(function (e, i) {
         return h`<div key=${i + '-' + e.label}><dt>${e.label}</dt><dd className="num">${String(e.value)}</dd></div>`;
@@ -775,29 +792,46 @@
       <div className="aud-scout-actions">
         <${Btn} kind="primary" size="sm" id=${'aud-scout-' + pr.id + '-create'} onClick=${approve}>${includes ? 'Approve' : 'Create segment'}<//>
         <${Btn} kind="ghost" size="sm" id=${'aud-scout-' + pr.id + '-dismiss'} onClick=${dismiss}>Dismiss<//>
-        ${s ? h`<${Btn} kind="ghost" size="sm" id=${'aud-scout-' + pr.id + '-edit'} onClick=${edit}>Copy into builder<//>` : null}
+        ${s ? h`<${Btn} kind="ghost" size="sm" id=${'aud-scout-' + pr.id + '-edit'} onClick=${edit}>Edit in builder<//>` : null}
         ${PC ? h`<button type="button" className="aud-link" aria-expanded=${more ? 'true' : 'false'} onClick=${function () { setMore(!more); }}>${more ? 'Hide details' : 'Details'}</button>` : null}
       </div>
+      ${alt ? h`<p className="aud-muted aud-small">${'A similar suggestion uses a different cutoff. '}<button type="button" className="aud-link" onClick=${alt.onClick}>${'See ' + alt.label}</button></p>` : null}
       ${err ? h`<p className="aud-msg aud-msg-crit" role="alert">${err}</p>` : null}
-      ${more && PC ? h`<div className="aud-scout-more"><${PC} id=${pr.id} /></div>` : null}
+      ${more && PC ? h`<div className="aud-scout-more"><${PC} id=${pr.id} flat=${true} /></div>` : null}
     </article>`;
   }
 
   function ScoutPanel(p) {
+    var React = R();
     var proposals = useSel(function (w) { return w.proposals; });
     var status = useSel(function (w) { var a = w.agents && w.agents.byId.scout; return a ? a.status + '|' + a.autonomy : ''; });
     var list = proposals ? (proposals.open || []).map(function (id) { return proposals.byId[id]; })
       .filter(function (x) { return x && x.agentId === 'scout' && x.status === 'pending'; }) : [];
+    var ps = React.useState({}), pick = ps[0], setPick = ps[1];
+    // Near-duplicates (same name before the first comma) collapse into one card with a link to the other version.
+    var groups = [], byKey = {};
+    list.forEach(function (pr) {
+      var sg = segAction(pr);
+      var k = String((sg && sg.name) || pr.title || pr.id).split(',')[0].trim().toLowerCase();
+      if (!byKey[k]) { byKey[k] = { key: k, items: [] }; groups.push(byKey[k]); }
+      byKey[k].items.push(pr);
+    });
     var parts = (status || '').split('|');
     var note = parts[0] === 'paused' ? 'Segment Scout is paused.' : parts[1] === 'off' ? 'Segment Scout is off.' :
       parts[1] === 'autopilot' ? 'Segment Scout is on Autopilot: low-risk segments are created for you and show up in the table with its badge.' :
-      'Segment Scout looks for high-response pockets every two sim days and queues them here.';
+      'Segment Scout looks for high-response pockets every two days and queues them here.';
     return h`<section className="aud-scout" aria-labelledby="aud-scout-title">
       <div className="aud-card-head">
-        <h2 id="aud-scout-title" className="aud-h2">Suggested by Segment Scout</h2>
+        <h2 id="aud-scout-title" className="aud-h3">Suggested by Segment Scout</h2>
         <button type="button" className="aud-link" onClick=${function () { go('agents', { tab: 'roster', agentId: 'scout' }); }}>Agent settings</button>
       </div>
-      ${list.length ? h`<div className="aud-scout-grid">${list.map(function (pr) { return h`<${ScoutCard} key=${pr.id} proposal=${pr} onTab=${p.onTab} />`; })}</div>`
+      ${groups.length ? h`<div className="aud-scout-grid">${groups.map(function (g) {
+        var i = (pick[g.key] || 0) % g.items.length, pr = g.items[i];
+        var other = g.items.length > 1 ? g.items[(i + 1) % g.items.length] : null;
+        var os = other && segAction(other);
+        var alt = other ? { label: (os && os.name) || other.title, onClick: function () { var n = {}; n[g.key] = i + 1; setPick(Object.assign({}, pick, n)); } } : null;
+        return h`<${ScoutCard} key=${g.key} proposal=${pr} alt=${alt} onTab=${p.onTab} />`;
+      })}</div>`
         : h`<p className="aud-muted">No suggestions waiting. ${note}</p>`}
     </section>`;
   }
@@ -851,7 +885,6 @@
       setFocus({ segmentId: null });
     }
     return h`<div className="aud-segments">
-      <${ScoutPanel} onTab=${p.onTab} />
       <section className="aud-card" aria-labelledby="aud-seg-title">
         <div className="aud-card-head">
           <h2 id="aud-seg-title" className="aud-h2">Segments <span className="aud-muted num">${fmtNum(rows.length)}</span></h2>
@@ -891,6 +924,7 @@
         </div>
         <${Msg} msg=${msg} />
       </section>` : null}
+      <${ScoutPanel} onTab=${p.onTab} />
     </div>`;
   }
 
@@ -933,8 +967,7 @@
     var segList = segments ? segments.order.map(function (id) { return segments.byId[id]; }).filter(Boolean) : EMPTY;
     var filterMissing = p.segFilter && segments && !segments.byId[p.segFilter];
     return h`<section className="aud-card aud-profiles" aria-labelledby="aud-prof-title">
-      <div className="aud-card-head"><h2 id="aud-prof-title" className="aud-h2">Profiles</h2>
-        <${Pill} tone="neutral">Sample profiles<//></div>
+      <div className="aud-card-head"><h2 id="aud-prof-title" className="aud-h2">Profiles</h2></div>
       <div className="aud-toolbar">
         <div className="aud-field">
           <label className="aud-label" htmlFor="aud-prof-search">Search by name or id</label>
@@ -1053,7 +1086,6 @@
     return h`<div className="aud-profile">
       <div className="aud-profile-head">
         <span className="aud-mono">${r.id}</span>
-        <${Pill} tone="neutral">Sample profile<//>
       </div>
       <p className="aud-muted">${[r.stateLabel || r.state, r.regionLabel, r.tierLabel ? r.tierLabel + ' tier' : null, fin(r.age) ? 'age ' + r.age : null].filter(Boolean).join(' ' + DOT + ' ')}</p>
       <dl className="aud-facts">
@@ -1066,17 +1098,17 @@
       <ul className="aud-preds">
         ${PRED.map(function (pd) {
           var v = r[pd[0]];
-          return h`<li key=${pd[0]}><div className="aud-pred-row"><span>${pd[1]} <span className="aud-pred-badge">Predicted</span></span>
+          return h`<li key=${pd[0]}><div className="aud-pred-row"><span>${pd[1]}</span>
             <strong className="num">${pd[2] === 'pct' ? fmtPct(v, 0) : fmtMoney(v)}</strong></div>
             <${Why} idx=${i} which=${pd[0]} rev=${rev} /></li>`;
         })}
-        <li><div className="aud-pred-row"><span>Best channel <span className="aud-pred-badge">Predicted</span></span><strong>${BESTCH_LABELS[r.bestCh] || r.bestCh}</strong></div></li>
-        <li><div className="aud-pred-row"><span>Best send hour <span className="aud-pred-badge">Predicted</span></span><strong className="num">${fmtHour(r.bestHr)}</strong></div></li>
+        <li><div className="aud-pred-row"><span>Best channel</span><strong>${BESTCH_LABELS[r.bestCh] || r.bestCh}</strong></div></li>
+        <li><div className="aud-pred-row"><span>Best send hour</span><strong className="num">${fmtHour(r.bestHr)}</strong></div></li>
       </ul>
       <h3 className="aud-h3">Consent</h3>
-      <ul className="aud-badges">${CONSENT_KEYS.map(function (k) {
-        return h`<li key=${k[0]}><${Pill} tone=${r[k[0]] ? 'good' : 'neutral'}>${k[2]}: ${r[k[0]] ? 'yes' : 'no'}<//></li>`;
-      })}</ul>
+      <p className="aud-consent-line">${CONSENT_KEYS.map(function (k, j) {
+        return h`<span key=${k[0]} className=${r[k[0]] ? '' : 'aud-muted'}>${(j ? ' ' + DOT + ' ' : '') + k[2] + (r[k[0]] ? ' yes' : ' no')}</span>`;
+      })}</p>
       <h3 className="aud-h3">Fatigue</h3>
       <p><${Pill} tone=${fl.tone}>${fl.label}<//> <span className="num">${DASH} ${plural(r.sent7, 'message', 'messages')} in 7 days</span></p>
       <div className="aud-meter" role="img" aria-label=${'Fatigue score ' + r.fatigue.toFixed(1)}><span className=${'is-' + fl.tone} style=${{ width: Math.min(100, (r.fatigue / 5) * 100) + '%' }}></span></div>
@@ -1085,7 +1117,7 @@
         return h`<li key=${t.key}><span className="aud-mono aud-small">${fmtStamp(t.t)}</span> <span>${chLabel(t.ch)} ${DOT} ${t.name}</span></li>`;
       })}</ol>` : h`<p className="aud-muted">No campaign touches yet.</p>`}
       <h3 className="aud-h3">Segments</h3>
-      ${memberships.length ? h`<ul className="aud-chips">${memberships.map(function (s2) { return h`<li key=${s2.id} className="aud-chip">${s2.name}</li>`; })}</ul>`
+      ${memberships.length ? h`<p>${memberships.map(function (s2) { return s2.name; }).join(', ')}</p>`
         : h`<p className="aud-muted">Not in any saved segment.</p>`}
       <h3 className="aud-h3">Suppressions</h3>
       ${sups.length ? h`<ul className="aud-sups">${sups.map(function (ch) {
@@ -1174,7 +1206,13 @@
     var segCount = useSel(function (w) { return w.segments ? w.segments.order.length : 0; });
     var pending = useSel(function (w) {
       var pr = w.proposals; if (!pr) return 0;
-      var n = 0; (pr.open || EMPTY).forEach(function (id) { var x = pr.byId[id]; if (x && x.agentId === 'scout' && x.status === 'pending') n++; });
+      var seen = {}, n = 0;
+      (pr.open || EMPTY).forEach(function (id) {
+        var x = pr.byId[id];
+        if (!x || x.agentId !== 'scout' || x.status !== 'pending') return;
+        var sg = segAction(x), k = String((sg && sg.name) || x.title || id).split(',')[0].trim().toLowerCase();
+        if (!seen[k]) { seen[k] = 1; n++; }
+      });
       return n;
     });
     var tab = TAB_IDS.indexOf(focus.tab) >= 0 ? focus.tab : 'segments';
@@ -1186,6 +1224,11 @@
     var profileName = useSel(function (w) { return openIdx !== null && w.profiles && openIdx < w.profiles.n ? w.profiles.name[openIdx] : null; });
 
     function setTab(t) { setFocus({ tab: t }); }
+    // Mode changes triggered from inside the view move focus to the page heading.
+    function jumpTab(t) {
+      setTab(t);
+      setTimeout(function () { var el = document.getElementById('page-title'); if (el && el.focus) { try { el.focus({ preventScroll: true }); } catch (e) { el.focus(); } } }, 0);
+    }
     function setSegFilter(id) { viewMemo.segFilter = id; setSegFilterSt(id); }
     function setOverlap(ids) { viewMemo.overlap = ids; setOverlapSt(ids); }
     function openProfile(i) { setFocus({ profileIdx: i }); }
@@ -1196,21 +1239,21 @@
       return t;
     });
     var body = null;
-    if (!ready) body = h`<p className="aud-empty">Loading the Fernway sample audience${ELL}</p>`;
+    if (!ready) body = h`<p className="aud-empty">Loading Fernway Outfitters customers${ELL}</p>`;
     else if (tab === 'builder') body = h`<${Builder} onOpenProfile=${openProfile} />`;
     else if (tab === 'profiles') body = h`<${ProfilesTab} segFilter=${segFilter} setSegFilter=${setSegFilter} openIdx=${openIdx} onOpen=${openProfile} />`;
     else if (tab === 'overlap') body = h`<${OverlapTab} chosen=${overlap} setChosen=${setOverlap} />`;
-    else body = h`<${SegmentsTab} onTab=${setTab}
-      onProfilesFor=${function (id) { setSegFilter(id); setTab('profiles'); }}
-      onOverlapWith=${function (id) { var next = overlap.indexOf(id) >= 0 ? overlap : [id].concat(overlap).slice(0, MAX_OVERLAP); setOverlap(next); setTab('overlap'); }} />`;
+    else body = h`<${SegmentsTab} onTab=${jumpTab}
+      onProfilesFor=${function (id) { setSegFilter(id); jumpTab('profiles'); }}
+      onOverlapWith=${function (id) { var next = overlap.indexOf(id) >= 0 ? overlap : [id].concat(overlap).slice(0, MAX_OVERLAP); setOverlap(next); jumpTab('overlap'); }} />`;
 
     return h`<section className="v-audiences">
       <header className="aud-header">
         <div>
           <h1 id="page-title" tabIndex="-1" className="aud-title">Audiences</h1>
-          <p className="aud-sub">Segment Fernway Outfitters customers with rules, plain-language descriptions and predicted traits. Sample data.</p>
+          <p className="aud-sub">Segment Fernway Outfitters customers with rules, plain-language descriptions and predicted traits.</p>
         </div>
-        ${pending ? h`<button type="button" className="aud-scout-flag" onClick=${function () { setTab('segments'); }}>
+        ${pending ? h`<button type="button" className="aud-scout-flag" onClick=${function () { jumpTab('segments'); }}>
           ${plural(pending, 'segment suggestion', 'segment suggestions')} from Segment Scout</button>` : null}
       </header>
       <div className="aud-tabs-wrap">

@@ -1,4 +1,4 @@
-/* Kestrel Marketing Cloud - MC.segments: audience rules over the columnar profile store.
+/* Marketing Cloud - MC.segments: audience rules over the columnar profile store.
    ATTRS catalogue, validation, closure-compiled evaluation into Uint8Array bitsets, per-day
    member caches, plain-language descriptions and names, a phrase-lexicon parser for
    "Describe your audience", trait summaries, overlap and per-condition eliminations.

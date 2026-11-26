@@ -1,6 +1,14 @@
-/* Kestrel Marketing Cloud - design tokens (palette, type, spacing, radii, motion).
+/* Marketing Cloud - design tokens (palette, type, spacing, radii, motion).
    Full light palette on bare :root. Dark mode only redefines tokens: once for the system
    preference (unless the person picked Light) and once for an explicit Dark choice. */
+
+@font-face {
+  font-family: "Schibsted Grotesk";
+  src: url("../assets/fonts/schibsted-grotesk-latin-wght-normal.woff2") format("woff2");
+  font-weight: 400 900;
+  font-style: normal;
+  font-display: swap;
+}
 
 :root {
   color-scheme: light;
@@ -11,9 +19,10 @@
   --surface-2: #F8F7F4;
   --ink: #1C2329;
   --ink-2: #3E4A55;
-  --ink-3: #65717C;
+  --ink-3: #5B6772;
   --line: #E2DFD8;
   --line-strong: #C9C4BA;
+  --control-border: #857F74; /* input and checkbox borders: >= 3:1 on surfaces (WCAG 1.4.11) */
 
   /* brand accent (slate blue) */
   --accent: #2F5D86;
@@ -26,7 +35,7 @@
   --on-agent: #FFFFFF;
 
   /* status */
-  --good: #2E7D4F;
+  --good: #276C46;
   --good-soft: #E1F1E6;
   --warn: #8A5D0C;
   --warn-soft: #F6ECD6;
@@ -48,16 +57,24 @@
   --shadow-pop: 0 8px 24px rgba(28, 35, 41, 0.14);
   --scrim: rgba(28, 35, 41, 0.38);
 
-  /* type */
-  --font-display: "Bricolage Grotesque", "Segoe UI", system-ui, sans-serif;
-  --font-ui: "IBM Plex Sans", "Segoe UI", system-ui, -apple-system, sans-serif;
-  --font-mono: "IBM Plex Mono", ui-monospace, Consolas, monospace;
-  --text-xs: 11px;
-  --text-sm: 12px;
+  /* type: one self-hosted family (Schibsted Grotesk, variable). Scale 12/13/14/16/20/28/40. */
+  --font-display: "Schibsted Grotesk", "Segoe UI", system-ui, sans-serif;
+  --font-ui: "Schibsted Grotesk", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Consolas, monospace; /* code blocks only; never chips or numbers */
+  --text-xs: 12px;
+  --text-sm: 13px;
   --text-md: 14px;
   --text-lg: 16px;
   --text-xl: 20px;
   --text-2xl: 28px;
+  --text-3xl: 40px;
+  --lh-tight: 1.15;
+  --lh-body: 1.5;
+  --track-display: -0.02em;
+
+  /* selected state: one ring for every selectable card, option and tile */
+  --ring-selected: 0 0 0 1.5px var(--accent);
+  --ring-selected-inset: inset 0 0 0 1.5px var(--accent);
 
   /* spacing scale 4/8/12/16/24/32/48 */
   --space-1: 4px;
@@ -103,6 +120,7 @@
     --ink-3: #8C99A6;
     --line: #2C3640;
     --line-strong: #3D4A56;
+    --control-border: #74818E;
     --accent: #8DB4DC;
     --accent-soft: #1E2E3F;
     --on-accent: #0E1620;
@@ -139,6 +157,7 @@
   --ink-3: #8C99A6;
   --line: #2C3640;
   --line-strong: #3D4A56;
+  --control-border: #74818E;
   --accent: #8DB4DC;
   --accent-soft: #1E2E3F;
   --on-accent: #0E1620;

@@ -1,4 +1,4 @@
-/* Kestrel Marketing Cloud - MC.data: the synthetic Fernway Outfitters sample world (sample data only).
+/* Marketing Cloud - MC.data: the synthetic Fernway Outfitters sample world (sample data only).
    Taxonomy, journey templates, 6,000 profiles with a hidden latent truth, 60 days of aggregate history
    (organic orders and the completed Fall Trail Running Sale), model fit and scores, nine seeded
    segments, six seeded campaigns with generated variants, and agent entities. Pure function of the
@@ -264,13 +264,13 @@
   function trsSetup(world, seed, members) {
     var P = world.profiles, F = MC.F, days = world.metrics.days, n = P.n;
     var E = { step: new Int16Array(n), due: new Int32Array(n), ctl: new Uint8Array(n), flags: new Uint8Array(n),
-      rev: new Float32Array(n), order: new Int32Array(0), entered: 0, exited: 0 };
+      rev: new Float32Array(n), all: new Float32Array(n), order: new Int32Array(0), entered: 0, exited: 0 };
     E.step.fill(-1);
     var emailable = [], adsW = [], adsIdx = [], fnv = U().fnv1a, i;
     for (var m = 0; m < members.length; m++) {
       i = members[m];
       E.step[i] = -2; E.ctl[i] = (fnv(P.id[i] + '|' + TRS.id) % 100) < 10 ? 1 : 0;
-      if ((P.consent[i] & 1) && !(P.unsub[i] & 1)) emailable.push(i);
+      if ((P.consent[i] & 1) && !(P.unsub[i] & 1) && (fnv(P.id[i] + '|uh') % 100) >= 5) emailable.push(i);
       if ((P.consent[i] & 8) && !E.ctl[i]) { adsIdx.push(i); adsW.push(Math.exp(world.latent.profiles.p0[i])); }
     }
     E.entered = E.exited = members.length;
@@ -428,12 +428,13 @@
   function tk(d, h) { return d * 24 + (h || 0); }
   D.CAMPAIGNS_SEED = [
     { id: 'c-wll', name: 'Winter Layering Launch', status: 'live', goal: { type: 'revenue', target: 38000 }, start: 0, end: tk(21), segmentId: 's-layer',
-      channels: ['email', 'push', 'social'], tone: 'adventurous', offer: 'none', productFocus: 'p-insulated-jacket',
-      budget: { email: 900, push: 300, social: 7800 }, sendHour: { email: 9, push: 18 }, created: tk(-12, 10), eventDay: null,
+      channels: ['email', 'push', 'social', 'web'], tone: 'adventurous', offer: 'none', productFocus: 'p-insulated-jacket',
+      budget: { email: 900, push: 300, social: 4400, web: 3400 }, sendHour: { email: 9, push: 18 }, created: tk(-12, 10), eventDay: null,
       brief: 'Launch the winter layering collection to cold-weather shoppers before the first frost, led by the Summit Insulated Jacket. Social ads build reach while email and push convert.' },
     { id: 'c-lhw', name: 'Lapsed Hiker Win-back', status: 'live', goal: { type: 'reactivation', target: 75 }, start: 0, end: tk(26), segmentId: 's-lapsed',
       channels: ['email', 'sms', 'social'], tone: 'warm', offer: 'pct15', productFocus: 'p-trail-boot',
       budget: { email: 400, sms: 900, social: 4700 }, sendHour: { email: 10, sms: 12 }, created: tk(-10, 14), eventDay: null,
+      program: { trigger: 'No order in 120 days', exit: 'Places an order', reentryDays: 90 },
       brief: 'Win back hikers who haven’t ordered in over 120 days with 15% off the Ridgeline Trail Boot. A text nudges anyone who skips the first email.' },
     { id: 'c-cks', name: 'Camp Kitchen Bundle', status: 'scheduled', goal: { type: 'conversions', target: 195 }, start: 10, end: tk(14), segmentId: 's-campers',
       channels: ['email', 'push', 'social'], tone: 'practical', offer: 'freeship', productFocus: 'p-camp-stove',
@@ -491,7 +492,7 @@
         segmentId: s.segmentId, suppress: [], include: [], channels: s.channels.slice(), productFocus: s.productFocus,
         tone: s.tone, offer: s.offer, budget: { total: total, byChannel: byChannel }, alloc: alloc, sendHour: sendHour,
         channelPaused: {}, journey: { steps: D.journeyTemplate(s.goal.type, s.channels) }, holdoutPct: 10, createdBy: 'user',
-        brief: s.brief, createdTick: s.created, eventDay: s.eventDay, updatedBy: 'user', updatedTick: s.created,
+        brief: s.brief, program: s.program ? clone(s.program) : undefined, createdTick: s.created, eventDay: s.eventDay, updatedBy: 'user', updatedTick: s.created,
         ctl: { alloc: clone(alloc), sendHour: clone(sendHour), channelPaused: {} }
       };
       order.push(s.id);
@@ -523,11 +524,16 @@
 
   /* ---------------- assembly ---------------- */
   // Calibrated so November lands at about 90-95% of goal with agents Off (§5.3, §10.10 calibration).
-  D.MONTH_GOAL = { revenue: 230000, conversions: 1700, roas: 4.0, unsubRate: 0.003 };
+  // Separate November and December targets (keyed 'YYYY-MM'). November: about 93% of goal with agents off;
+  // December needs the Holiday Gift Guide to launch and the season to hold, so it is a stretch without agents.
+  D.MONTH_GOAL = { byMonth: {
+    '2026-11': { revenue: 222000, conversions: 1620, roas: 4.0, unsubRate: 0.003 },
+    '2026-12': { revenue: 126000, conversions: 860, roas: 3.6, unsubRate: 0.003 }
+  } };
 
   function skeleton(seed) {
     return {
-      meta: { seed: seed, tick: 0, tenant: 'Fernway Outfitters', sample: true, day0: DAY0, monthGoal: clone(D.MONTH_GOAL) },
+      meta: { seed: seed, tick: 0, tenant: 'Fernway Outfitters', sample: true, day0: DAY0, monthGoal: clone(D.MONTH_GOAL), universalHoldoutPct: 5 },
       modelState: { coef: new Float64Array(8), snap: null, snapDay: -8 },
       seq: 0,
       rev: { profiles: 0, metrics: 0, enroll: 0, segCounts: 0 },

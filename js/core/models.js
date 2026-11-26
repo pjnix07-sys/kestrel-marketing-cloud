@@ -1,4 +1,4 @@
-/* Kestrel Marketing Cloud - MC.models: predictive models on visible profile attributes.
+/* Marketing Cloud - MC.models: predictive models on visible profile attributes.
    Propensity (logistic, batch GD), churn, LTV, best channel/hour, Holt forecasts with
    prediction intervals, goal probability, EWMA anomalies, saturating response curves,
    Thompson P(best) and attribution roll-ups. Pure functions of their inputs; no clock,

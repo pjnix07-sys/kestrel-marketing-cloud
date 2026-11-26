@@ -1,4 +1,4 @@
-/* Kestrel Marketing Cloud - agent UI components (attached to MC.ui):
+/* Marketing Cloud - agent UI components (attached to MC.ui):
    AgentChip, ProposalCard, GuardrailList, DiffTable, AllocationBar, ImpactBadge,
    TraceView, AgentPulse, AutonomyControl. Token colors only; store reads via
    narrow MC.hooks.useSelect selectors; drafts and menus live in local state. */
@@ -123,12 +123,12 @@
     var Kit = MC.ui.Button;
     if (typeof Kit === 'function' && !p.raw) {
       return html`<${Kit} kind=${p.kind || 'secondary'} size=${p.size || 'sm'} onClick=${p.onClick} disabled=${p.disabled}
-        title=${p.title} type="button">${p.children}<//>`;
+        title=${p.title} id=${p.id} aria-expanded=${p['aria-expanded']} type="button">${p.children}<//>`;
     }
     var st = Object.assign({}, BTN.base, p.kind === 'primary' ? BTN.primary : (p.kind === 'ghost' ? BTN.ghost : null),
       p.disabled ? { opacity: 0.55, cursor: 'not-allowed' } : null);
-    return html`<button type="button" className=${'ag-btn ag-btn-' + (p.kind || 'secondary')} onClick=${p.onClick} disabled=${p.disabled}
-      title=${p.title} aria-expanded=${p['aria-expanded']} style=${st}>${p.children}</button>`;
+    return html`<button type="button" data-ag-dismiss=${p['data-ag-dismiss']} className=${'ag-btn ag-btn-' + (p.kind || 'secondary')} onClick=${p.onClick} disabled=${p.disabled}
+      title=${p.title} id=${p.id} aria-expanded=${p['aria-expanded']} style=${st}>${p.children}</button>`;
   }
   function Glyph(p) {
     var k = p.kind, s = p.size || 14;
@@ -151,8 +151,9 @@
     var name = isUser ? 'You' : agentName(id);
     var style = {
       display: 'inline-flex', alignItems: 'center', gap: 6, maxWidth: '100%', minWidth: 0,
-      padding: md ? '3px 10px' : '1px 8px', borderRadius: 999, fontSize: md ? 13 : 12, fontWeight: 600, lineHeight: 1.5,
-      background: isUser ? 'var(--surface-2)' : 'var(--agent-soft)', color: isUser ? 'var(--ink-2)' : 'var(--agent)', whiteSpace: 'nowrap'
+      // Calm attribution (§11.3): a dot and the name in plain text, no filled pill.
+      padding: 0, fontSize: md ? 13 : 12, fontWeight: 600, lineHeight: 1.5,
+      background: 'none', color: isUser ? 'var(--ink-2)' : 'var(--agent)', whiteSpace: 'nowrap'
     };
     return html`<span className=${'ag-chip' + (isUser ? ' is-user' : '')} title=${p.title || name} style=${style}>
       <span aria-hidden="true" style=${{ width: md ? 8 : 7, height: md ? 8 : 7, borderRadius: '50%', flex: 'none', background: isUser ? 'var(--ink-3)' : 'var(--agent)' }}></span>
@@ -180,7 +181,7 @@
           <span style=${{ paddingTop: 2 }}><${Glyph} kind=${st} label=${st === 'pass' ? 'Passes' : (st === 'fail' ? 'Fails' : 'Warning')} /></span>
           <span style=${{ minWidth: 0, overflowWrap: 'anywhere' }}>
             <span style=${{ color: 'var(--ink)', fontWeight: 500 }}>${it.label || it.id}</span>
-            ${it.detail ? html`<span className="num" style=${{ color: 'var(--ink-2)', fontVariantNumeric: 'tabular-nums' }}>${compact ? ' (' + it.detail + ')' : ' ' + DASH + ' ' + it.detail}</span>` : null}
+            ${it.detail ? html`<span style=${{ color: 'var(--ink-2)' }}>${compact ? ' (' + it.detail + ')' : ' ' + DASH + ' ' + it.detail}</span>` : null}
             ${it.locked ? html`<span style=${{ color: 'var(--ink-3)' }}> ${DOT} always enforced</span>` : null}
           </span>
         </li>`;
@@ -243,13 +244,13 @@
     return html`<div className="ag-alloc" style=${{ display: 'grid', gap: 4, minWidth: 0 }}>
       ${hasPrev ? bar(function (x) { return shareOf(p.previous, x.key); }, 6, 'Before: ' + before) : null}
       ${bar(function (x) { return x.share; }, 12, (hasPrev ? 'After: ' : 'Allocation: ') + after)}
-      <ul style=${{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexWrap: 'wrap', gap: '2px 12px', fontSize: 12, color: 'var(--ink-2)', fontVariantNumeric: 'tabular-nums' }}>
+      <ul style=${{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexWrap: 'wrap', gap: '2px 12px', fontSize: 12, color: 'var(--ink-2)' }}>
         ${parts.map(function (x, i) {
           var pv = hasPrev ? shareOf(p.previous, x.key) : null;
           return html`<li key=${x.key} style=${{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
             <span aria-hidden="true" style=${{ width: 8, height: 8, borderRadius: 2, background: color(i) }}></span>
             <span style=${{ color: 'var(--ink)' }}>${x.label || x.key}</span>
-            <span>${hasPrev ? pct(pv, 0) + ' ' + ARROW + ' ' + pct(x.share, 0) : pct(x.share, 0)}</span>
+            <span>${hasPrev ? pct(x.share, 0) + ' (was ' + pct(pv, 0) + ')' : pct(x.share, 0)}</span>
           </li>`;
         })}
       </ul>
@@ -258,13 +259,22 @@
 
   /* ================= ImpactBadge ================= */
   var METHOD = { did: 'vs control group', diff: 'before vs after', model: 'modelled', window: 'over the window' };
+  // "(0.1 to 0.4 pp)"; nothing at all when both bounds print the same; signs only when the range crosses zero.
+  function rangeText(lo, hi, unit) {
+    if (!fin(lo) || !fin(hi)) return '';
+    var signedRange = lo < 0 && hi > 0;
+    var a = fmtUnit(lo, unit, signedRange), b = fmtUnit(hi, unit, signedRange);
+    if (a === b) return '';
+    if (unit === 'pp') a = a.replace(/ pp$/, '');
+    return ' (' + a + ' to ' + b + ')';
+  }
   function ImpactBadge(p) {
     var im = p.impact;
     if (!im || !fin(im.delta)) return html`<span className="ag-impact" style=${{ color: 'var(--ink-3)', fontSize: 13 }}>No measurable impact estimate</span>`;
     var unit = im.unit || '#';
     var main = fmtUnit(im.delta, unit, true) + ' ' + (im.metric || '');
     var horizon = fin(im.horizonDays) && im.horizonDays > 0 ? ' over ' + (Math.round(im.horizonDays * 10) / 10) + (im.horizonDays === 1 ? ' day' : ' days') : '';
-    var range = fin(im.lo) && fin(im.hi) ? ' (' + fmtUnit(im.lo, unit, false) + DASH + fmtUnit(im.hi, unit, false) + ')' : '';
+    var range = rangeText(im.lo, im.hi, unit);
     var conf = fin(im.confidence) ? ' ' + DOT + ' confidence ' + Math.round(im.confidence <= 1 ? im.confidence * 100 : im.confidence) + '%' : '';
     var to = im.tradeoff && fin(im.tradeoff.delta) ? ' ' + DOT + ' ' + (im.tradeoff.delta < 0 ? 'forgoes ~' : 'adds ~') + fmtUnit(Math.abs(im.tradeoff.delta), im.tradeoff.unit || '$', false) + ' ' + (im.tradeoff.metric || '') : '';
     var r = p.realized;
@@ -277,7 +287,7 @@
     } else if (p.measuring) {
       realized = html`<span style=${{ marginLeft: 6, fontSize: 12, color: 'var(--ink-3)' }}>${'Measuring' + '…' + (fin(p.hoursLeft) ? ' ' + p.hoursLeft + 'h left' : '')}</span>`;
     }
-    return html`<span className="ag-impact num" style=${{ fontSize: 13, color: 'var(--ink)', fontVariantNumeric: 'tabular-nums', overflowWrap: 'anywhere' }}>
+    return html`<span className="ag-impact" style=${{ fontSize: 13, color: 'var(--ink)', overflowWrap: 'anywhere' }}>
       <strong style=${{ fontWeight: 600 }}>${main}</strong><span style=${{ color: 'var(--ink-2)' }}>${horizon + range + conf + to}</span>${realized}
     </span>`;
   }
@@ -322,11 +332,26 @@
     };
   }
   var STATUS_NOTE = {
-    rejected: 'Dismissed', expired: 'Expired without a decision', superseded: 'Replaced by a newer proposal for the same target',
+    rejected: 'Dismissed', expired: 'Expired unreviewed', superseded: 'Replaced by a newer proposal for the same target',
     undone: 'Undone', stale: 'No longer applies: the campaign changed since this was proposed.'
   };
   var SEC = { display: 'grid', gridTemplateColumns: 'minmax(78px, 96px) minmax(0, 1fr)', gap: '4px 10px', alignItems: 'start' };
   var SEC_LABEL = { fontSize: 12, fontWeight: 600, color: 'var(--ink-3)', paddingTop: 2, margin: 0 };
+
+  /* One polite live region for the whole page, so a decision is announced even when the card leaves the list. */
+  function announce(text) {
+    try {
+      var el = document.getElementById('ag-live');
+      if (!el) {
+        el = document.createElement('div');
+        el.id = 'ag-live'; el.setAttribute('role', 'status'); el.setAttribute('aria-live', 'polite');
+        el.style.cssText = 'position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap';
+        document.body.appendChild(el);
+      }
+      el.textContent = '';
+      window.setTimeout(function () { el.textContent = text; }, 30);
+    } catch (e) { /* announcements are best effort */ }
+  }
 
   function ProposalCard(p) {
     var React = R();
@@ -342,6 +367,7 @@
     }, undoEq);
     var ms = React.useState(false), menuOpen = ms[0], setMenu = ms[1];
     var es = React.useState(null), err = es[0], setErr = es[1];
+    var cardRef = React.useRef(null);
     var titleId = 'proposal-' + String(id).replace(/[^a-zA-Z0-9_-]/g, '-') + '-title';
 
     if (!pr) {
@@ -362,21 +388,49 @@
       if (!r.ok) setErr(r.error || fallback);
       return r.ok;
     }
-    function approve() { act('proposal/approve', { id: id }, "Couldn't approve this change."); }
-    function reject(reason) { setMenu(false); act('proposal/reject', { id: id, reason: reason }, "Couldn't dismiss this proposal."); }
-    function undo() { act('proposal/undo', { id: id }, "Couldn't undo this change."); }
+    // After a decision the buttons that held focus are gone. Move focus to the card's status line when
+    // the card stays on screen, otherwise to the page's main region, so keyboard users are not dropped at the top.
+    function settleFocus() {
+      window.setTimeout(function () {
+        try {
+          var card = cardRef.current;
+          var st = card && card.isConnected ? card.querySelector('[data-ag-status]') : null;
+          if (st) { st.focus(); return; }
+          var cur = document.activeElement;
+          if (cur && cur !== document.body && cur.isConnected) return;
+          var m = document.getElementById('app-main');
+          if (m) m.focus({ preventScroll: true });
+        } catch (e) { /* focus is best effort */ }
+      }, 60);
+    }
+    function decide(type, payload, fallback, said) {
+      var ok = act(type, payload, fallback);
+      if (ok) { announce(said + ': ' + (pr.title || 'proposal')); settleFocus(); }
+    }
+    function approve() { decide('proposal/approve', { id: id }, "Couldn't approve this change.", 'Approved'); }
+    function reject(reason) { setMenu(false); decide('proposal/reject', { id: id, reason: reason }, "Couldn't dismiss this proposal.", 'Dismissed'); }
+    function undo() { decide('proposal/undo', { id: id }, "Couldn't undo this change.", 'Undone'); }
+    function closeMenu(restore) {
+      setMenu(false);
+      if (restore) window.setTimeout(function () { var b = cardRef.current && cardRef.current.querySelector('[data-ag-dismiss]'); if (b) b.focus(); }, 0);
+    }
+    React.useEffect(function () {
+      if (!menuOpen || !cardRef.current) return;
+      var first = cardRef.current.querySelector('[data-ag-menu] button');
+      if (first) first.focus();
+    }, [menuOpen]);
     function openTarget() {
       if (camp) go('campaigns', { mode: 'detail', id: cid, tab: 'overview' });
       else if (pr.target && pr.target.kind === 'segment') go('audiences', { tab: 'segments', segmentId: pr.target.id });
       else if (pr.target && pr.target.kind === 'variant') go('content', { variantId: pr.target.id });
     }
-    function onMenuKey(e) { if (e.key === 'Escape') { e.stopPropagation(); setMenu(false); } }
+    function onMenuKey(e) { if (e.key === 'Escape') { e.stopPropagation(); closeMenu(true); } }
 
     var header = html`<div style=${{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '4px 8px', minWidth: 0 }}>
       <${AgentChip} agentId=${pr.agentId} />
       <span style=${{ fontSize: 12, color: 'var(--ink-2)' }}>${KIND_LABEL[pr.kind] || pr.kind}</span>
-      <span style=${{ fontSize: 11, fontWeight: 600, padding: '1px 8px', borderRadius: 999, background: risk.bg, color: risk.fg }}>${risk.label}</span>
-      <span className="num" style=${{ marginLeft: 'auto', fontSize: 12, color: 'var(--ink-3)', fontVariantNumeric: 'tabular-nums' }}>${rel(pr.tick, tick)}</span>
+      <span style=${{ fontSize: 12, fontWeight: 600, color: risk.fg }}>${risk.label}</span>
+      <span style=${{ marginLeft: 'auto', fontSize: 12, color: 'var(--ink-3)' }}>${rel(pr.tick, tick)}</span>
     </div>`;
 
     var reasonLine = pending && pr.reason && pr.reason !== 'Suggested'
@@ -391,17 +445,17 @@
       var expires = fin(pr.expiresTick) ? Math.max(0, pr.expiresTick - tick) : null;
       footer = html`<div style=${{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8 }}>
         <${Btn} kind="primary" onClick=${approve}>Approve<//>
-        <${Btn} raw=${true} kind="secondary" aria-expanded=${menuOpen ? 'true' : 'false'} onClick=${function () { setMenu(!menuOpen); }}>Dismiss <span aria-hidden="true">▾</span><//>
+        <${Btn} raw=${true} kind="secondary" aria-expanded=${menuOpen ? 'true' : 'false'} data-ag-dismiss="true" onClick=${function () { if (menuOpen) closeMenu(false); else setMenu(true); }}>Dismiss <span aria-hidden="true">▾</span><//>
         ${!compact && (camp || (pr.target && (pr.target.kind === 'segment' || pr.target.kind === 'variant')))
           ? html`<${Btn} kind="ghost" onClick=${openTarget}>${camp ? 'Open campaign' : (pr.target.kind === 'segment' ? 'Open segment' : 'Open variant')}<//>` : null}
-        ${expires != null ? html`<span className="num" style=${{ marginLeft: 'auto', fontSize: 12, color: 'var(--ink-3)' }}>${'Expires in ' + expires + 'h'}</span>` : null}
+        ${expires != null ? html`<span style=${{ marginLeft: 'auto', fontSize: 12, color: 'var(--ink-3)' }}>${'Expires in ' + expires + 'h'}</span>` : null}
       </div>`;
     } else if (pr.status === 'applied' || pr.status === 'auto') {
       var canUndo = !undoState || undoState.ok;
       footer = html`<div style=${{ display: 'grid', gap: 6 }}>
         <div style=${{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8 }}>
           <${Glyph} kind="pass" label="Applied" />
-          <span style=${{ fontSize: 13, color: 'var(--ink-2)' }}>${(pr.status === 'auto' ? 'Applied automatically' : 'Approved and applied') + (fin(pr.appliedTick) ? ' at ' + hh(pr.appliedTick) : '')}</span>
+          <span data-ag-status="true" tabIndex="-1" style=${{ fontSize: 13, color: 'var(--ink-2)' }}>${(pr.status === 'auto' ? 'Applied automatically' : 'Approved and applied') + (fin(pr.appliedTick) ? ' at ' + hh(pr.appliedTick) : '')}</span>
           <span style=${{ marginLeft: 'auto', display: 'inline-flex', gap: 8 }}>
             <${Btn} kind="secondary" onClick=${undo} disabled=${!canUndo} title=${canUndo ? 'Restore the previous values' : (undoState && undoState.reason) || ''}>Undo<//>
             ${!compact && camp ? html`<${Btn} kind="ghost" onClick=${openTarget}>Open campaign<//>` : null}
@@ -411,29 +465,29 @@
       </div>`;
     } else {
       var note = pr.status === 'stale' && pr.reason ? pr.reason : (STATUS_NOTE[pr.status] || pr.status);
-      footer = html`<p style=${{ margin: 0, fontSize: 13, color: 'var(--ink-2)', display: 'flex', gap: 6, alignItems: 'center' }}>
+      footer = html`<p data-ag-status="true" tabIndex="-1" style=${{ margin: 0, fontSize: 13, color: 'var(--ink-2)', display: 'flex', gap: 6, alignItems: 'center' }}>
         <${Glyph} kind=${pr.status === 'undone' || pr.status === 'rejected' ? 'info' : 'warn'} label=${pr.status} />
         <span>${note}${fin(pr.decidedTick) ? ' ' + DOT + ' ' + stamp(pr.decidedTick) : ''}</span>
       </p>`;
     }
 
-    var menu = menuOpen && pending ? html`<div role="group" aria-label="Why dismiss this proposal?" onKeyDown=${onMenuKey}
+    var menu = menuOpen && pending ? html`<div role="group" data-ag-menu="true" aria-label="Why dismiss this proposal?" onKeyDown=${onMenuKey}
         style=${{ display: 'flex', flexWrap: 'wrap', gap: 6, padding: 8, borderRadius: 6, background: 'var(--surface-2)', border: '1px solid var(--line)' }}>
       <span style=${{ fontSize: 12, color: 'var(--ink-2)', alignSelf: 'center', marginRight: 4 }}>Reason:</span>
       <${Btn} raw=${true} kind="secondary" onClick=${function () { reject('not-now'); }}>Not now<//>
       <${Btn} raw=${true} kind="secondary" onClick=${function () { reject('wrong'); }}>Not a good idea<//>
       <${Btn} raw=${true} kind="secondary" onClick=${function () { reject('other'); }}>Other<//>
-      <${Btn} raw=${true} kind="ghost" onClick=${function () { setMenu(false); }}>Cancel<//>
+      <${Btn} raw=${true} kind="ghost" onClick=${function () { closeMenu(true); }}>Cancel<//>
     </div>` : null;
 
     var targetLine = p.showTarget && (camp || chanLabel)
       ? html`<div style=${{ fontSize: 12, color: 'var(--ink-2)' }}>${'On ' + (camp ? camp.name : 'this audience') + (chanLabel ? ' ' + DOT + ' ' + chanLabel : '')}</div>` : null;
 
-    var cardStyle = {
-      display: 'grid', gap: 8, minWidth: 0, padding: compact ? '10px 12px' : '12px 14px', borderRadius: 10,
-      background: 'var(--surface)', border: '1px solid var(--line)', borderLeft: pending ? '3px solid var(--agent)' : '1px solid var(--line)'
-    };
-    return html`<article className=${'ag-card ag-card-' + pr.status + (compact ? ' is-compact' : '')} aria-labelledby=${titleId} style=${cardStyle}>
+    // flat: for cards that already sit inside a bordered panel (no second border, background or padding)
+    var cardStyle = p.flat
+      ? { display: 'grid', gap: 8, minWidth: 0, padding: 0, background: 'transparent', border: 0 }
+      : { display: 'grid', gap: 8, minWidth: 0, padding: compact ? '10px 12px' : '12px 14px', borderRadius: 10, background: 'var(--surface)', border: '1px solid var(--line)' };
+    return html`<article ref=${cardRef} className=${'ag-card ag-card-' + pr.status + (compact ? ' is-compact' : '') + (p.flat ? ' is-flat' : '')} aria-labelledby=${titleId} style=${cardStyle}>
       ${header}
       <h3 id=${titleId} style=${{ margin: 0, fontSize: compact ? 14 : 15, fontWeight: 600, color: 'var(--ink)', lineHeight: 1.35, overflowWrap: 'anywhere' }}>${pr.title}</h3>
       ${targetLine}
@@ -463,8 +517,8 @@
   }
 
   /* ================= TraceView ================= */
-  var MONO = { fontFamily: 'var(--font-mono)', fontSize: 12 };
-  var H4 = { margin: '0 0 4px', fontSize: 12, fontWeight: 600, letterSpacing: '0.03em', textTransform: 'uppercase', color: 'var(--ink-3)' };
+  var MONO = { fontSize: 12, fontVariantNumeric: 'tabular-nums' };
+  var H4 = { margin: '0 0 4px', fontSize: 13, fontWeight: 600, color: 'var(--ink-2)' };
   function rowCells(r) {
     if (Array.isArray(r)) return r;
     if (r && typeof r === 'object') {
@@ -493,7 +547,7 @@
     if (e.id != null) bits.push('id:' + e.id);
     if (e.channel) bits.push('channel:' + e.channel);
     if (!bits.length && e.kind) bits.push(e.kind);
-    return d.type + ' {' + bits.join(', ') + '}' + (d.payloadDigest ? '  #' + d.payloadDigest : '');
+    return d.type + ' {' + bits.join(', ') + '}';
   }
   function TraceView(p) {
     var React = R();
@@ -525,12 +579,10 @@
       <div style=${{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, paddingBottom: 8 }}>
         <${AgentChip} agentId=${entry.agentId} size="md" />
         <span className="num" style=${{ fontSize: 13, color: 'var(--ink-2)' }}>${'Run at ' + stamp(entry.tick)}</span>
-        <code style=${Object.assign({ marginLeft: 'auto', color: 'var(--ink-3)' }, MONO)}>${entry.id}</code>
       </div>
       <div style=${sec}>
         <h4 style=${H4}>1 ${DOT} Observe</h4>
         ${obs.length ? obs.map(txt) : html`<div style=${{ fontSize: 13, color: 'var(--ink-3)' }}>No observations recorded.</div>`}
-        <div style=${Object.assign({ marginTop: 4, color: 'var(--ink-2)' }, MONO)}>in ${entry.inDigest || DASH}</div>
       </div>
       <div style=${sec}>
         <h4 style=${H4}>2 ${DOT} Decide</h4>
@@ -555,11 +607,6 @@
         ${disp.length ? html`<ul style=${{ listStyle: 'none', margin: 0, padding: 0, display: 'grid', gap: 2 }}>${disp.map(function (d, i) {
           return html`<li key=${'a' + i} style=${Object.assign({ color: 'var(--ink)', overflowWrap: 'anywhere' }, MONO)}>${payloadText(d)}</li>`;
         })}</ul>` : html`<div style=${{ fontSize: 13, color: 'var(--ink-3)' }}>${props.length ? 'No actions applied yet; proposals are waiting for review.' : 'No actions called.'}</div>`}
-      </div>
-      <div style=${Object.assign({}, sec, { color: 'var(--ink-2)', display: 'flex', flexWrap: 'wrap', gap: '4px 14px' }, MONO)}>
-        <span>out ${entry.outDigest || DASH}</span>
-        <span>chain ${entry.chain || DASH}</span>
-        ${fin(entry._ms) ? html`<span>${'ran in ' + (entry._ms < 10 ? entry._ms.toFixed(1) : Math.round(entry._ms)) + ' ms'}</span>` : null}
       </div>
     </section>`;
   }
@@ -610,21 +657,22 @@
     return html`<button type="button" className=${'ag-pulse' + (p.compact ? ' is-compact' : '')} onClick=${onClick} aria-label=${text + '. Open agents.'}
         style=${{ font: 'inherit', display: 'inline-flex', alignItems: 'center', gap: 8, minHeight: 36, padding: '4px 10px', borderRadius: 999, border: '1px solid var(--line)', background: 'var(--surface)', color: 'var(--ink-2)', cursor: 'pointer', minWidth: 0 }}>
       <span aria-hidden="true" style=${{ display: 'inline-flex', gap: 4 }}>
-        ${list.map(function (r) {
+        ${(p.dots ? list : []).map(function (r) {
           var st = stateOf(r), lr = lastRunTick(r), ranNow = st !== 'off' && lr != null && lr === tick && tick > 0;
           var dot = { width: 8, height: 8, borderRadius: '50%', boxSizing: 'border-box', display: 'inline-block' };
           if (st === 'off') Object.assign(dot, { background: 'var(--line-strong)' });
           else if (st === 'paused') Object.assign(dot, { background: 'transparent', border: '1.5px solid var(--agent)' });
           else Object.assign(dot, { background: 'var(--agent)', opacity: ranNow ? 1 : 0.5 });
-          if (ranNow) Object.assign(dot, { boxShadow: '0 0 0 3px var(--agent-soft)' });
-          if (!reduced) dot.transition = 'opacity 300ms ease, box-shadow 300ms ease';
+          if (ranNow) Object.assign(dot, { opacity: 1, outline: '1.5px solid var(--agent)', outlineOffset: 2 });
+          if (!reduced) dot.transition = 'opacity 300ms ease';
           var tip = (r.name || agentName(r.id)) + ' ' + DOT + ' ' + (st === 'off' ? 'off' : (st === 'paused' ? 'paused' : (lr != null ? 'ran ' + hh(lr) : 'waiting for first run'))) +
             (fin(r.changes24h) && r.changes24h > 0 ? ' ' + DOT + ' ' + r.changes24h + (r.changes24h === 1 ? ' change' : ' changes') : '');
           return html`<span key=${r.id} title=${tip} style=${dot}></span>`;
         })}
+        ${p.dots ? null : html`<span style=${{ width: 8, height: 8, borderRadius: '50%', display: 'inline-block', background: working ? 'var(--agent)' : 'var(--line-strong)' }}></span>`}
       </span>
       ${p.compact ? (need > 0 ? html`<span className="num" style=${{ fontSize: 12, fontWeight: 600, color: 'var(--agent)' }}>${need}</span>` : null)
-        : html`<span className="num" style=${{ fontSize: 12, whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums' }}>${text}</span>`}
+        : html`<span className="num" style=${{ fontSize: 12, whiteSpace: 'nowrap' }}>${text}</span>`}
     </button>`;
   }
 
