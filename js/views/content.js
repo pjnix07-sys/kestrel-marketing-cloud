@@ -141,10 +141,33 @@
     return null;
   }
 
+  var CH_WORD = { email: 'email', sms: 'SMS', push: 'push', social: 'social', web: 'web' };
+  function chWord(ch) { return CH_WORD[ch] || str(ch); }
+  // Last day an offer runs, from a campaign (null when the campaign has no offer).
+  function dayEnd(c) { return c && c.offer && c.offer !== 'none' && fin(c.end) ? Math.floor((c.end - 1) / 24) : null; }
+  function dayName(day) { try { return MC.time.dayLabel(day); } catch (e) { return ''; } }
+  function dayYmd(day) { try { return MC.time.ymd(day); } catch (e) { return ''; } }
+  function ymdDay(s) { try { var x = MC.time.dayOfYmd(s); return fin(x) ? x : null; } catch (e) { return null; } }
+
+  /* ---------------- brand edits that stay in this browser ---------------- */
+  var localBrand = { claims: null, rev: 0, subs: [] };
+  function claimsNow() { return localBrand.claims || (CP().DEFAULT_BRAND && CP().DEFAULT_BRAND.claims) || EMPTY; }
+  function setClaims(list) { localBrand.claims = list; localBrand.rev++; localBrand.subs.slice().forEach(function (fn) { fn(); }); }
+  function useBrandRev() {
+    var React = R(), st = React.useState(localBrand.rev), set = st[1];
+    React.useEffect(function () {
+      var fn = function () { set(localBrand.rev); };
+      localBrand.subs.push(fn);
+      return function () { localBrand.subs = localBrand.subs.filter(function (x) { return x !== fn; }); };
+    }, []);
+    return st[0];
+  }
+  function effectiveBrand(b) { return Object.assign({}, CP().DEFAULT_BRAND || {}, b || {}, { claims: claimsNow() }); }
+
   /* ---------------- module memory (never written to the world) ---------------- */
   var drafts = {};             // key -> {fields, baseFields, baseVer, tone, offer, productId, channel}
   var genMemo = { results: [], opts: null, n: 0, selected: {} };
-  var viewMemo = { newRev: 0 };
+  var viewMemo = { newRev: 0, reviewed: {}, tab: 'studio' };
   function draftKey(vid, ch) { return vid ? 'v:' + vid : 'new:' + (ch || 'email'); }
   function isDirtyKey(key) { var d = drafts[key]; return !!d && !sameFields(d.fields, d.baseFields); }
 
@@ -519,7 +542,7 @@
       <header className="cs-comp-head">
         <div className="cs-comp-titles">
           <h2 id="cs-composer-title" className="cs-h2">${hookLabel}</h2>
-          ${v && camp ? h`<p className="cs-sub">${camp.name}${v.status === 'live' && camp.alloc && camp.alloc[v.channel] ? ' ' + DOT + ' ' + fmtShare(camp.alloc[v.channel][v.id] || 0) + ' of ' + chLabel(v.channel).toLowerCase() + ' traffic' : ''}</p>`
+          ${v && camp ? h`<p className="cs-sub">${camp.name}${v.status === 'live' && camp.alloc && camp.alloc[v.channel] ? ' ' + DOT + ' ' + fmtShare(camp.alloc[v.channel][v.id] || 0) + ' of ' + chWord(v.channel) + ' traffic' : ''}</p>`
             : h`<p className="cs-sub">Pick a variant on the left, or generate new ones below.</p>`}
         </div>
         ${v ? (StatusPill ? h`<${StatusPill} status=${v.status} />` : h`<span className="cs-muted">${STATUS_WORD[v.status]}</span>`)
@@ -535,8 +558,16 @@
         ${!readOnly ? h`<div className="cs-tokens" role="group" aria-label="Insert a merge field">
           <span className="cs-inline-label">Insert</span>
           ${(CP().TOKENS || TOKENS_FB).map(function (t) {
-            return h`<button key=${t} type="button" className="cs-token" onMouseDown=${function (e) { e.preventDefault(); }} onClick=${function () { insert(t); }}>${t}</button>`;
+            var ins = t === '{first_name}' ? '{first_name|there}' : t;
+            return h`<button key=${t} type="button" className="cs-token" onMouseDown=${function (e) { e.preventDefault(); }} onClick=${function () { insert(ins); }}>${ins}</button>`;
           })}
+        </div>
+        <p className="cs-hint">Add a fallback after a bar, like {first_name|there}. Leave it empty to drop the name when there isn’t one.</p>` : null}
+        ${!readOnly ? h`<div className="cs-field cs-endfield">
+          <label className="cs-label" htmlFor="cs-offer-end">Offer ends</label>
+          <input id="cs-offer-end" className="k-input cs-input cs-date" type="date" value=${fin(p.endDay) ? dayYmd(p.endDay) : ''}
+            onChange=${function (e) { S.update({ offerEnd: e.target.value ? ymdDay(e.target.value) : null }); }} />
+          <p className="cs-hint">${fin(p.endDay) ? (fin(S.d.offerEnd) ? 'Set for this draft only.' : 'From the campaign dates.') + ' Deadline wording is checked against it.' : 'Add a date before using words like “last call” or “ends soon”. Urgency earns no score without one.'}</p>
         </div>` : null}
         ${d.fields.link !== undefined ? h`<${FieldRow} k="link" value=${d.fields.link} limit=${0} vlike=${vlike} readOnly=${readOnly} onChange=${S.setField} onFocusField=${onFocusField} />` : null}
         ${d.fields.imageId !== undefined ? h`<${ImagePicker} value=${d.fields.imageId} readOnly=${readOnly} onPick=${pickImage} />` : null}
@@ -548,23 +579,59 @@
   }
 
   /* ================= Generate variants ================= */
-  function featureNote(d) {
+  function featureNote(d, ctx) {
     try {
-      var s = CP().score(d);
+      var s = CP().score(d, ctx);
       var pos = (s.contributions || EMPTY).filter(function (c) { return c.delta > 0; }).slice(0, 2).map(function (c) { return c.label; });
       return pos.join(' ' + DOT + ' ');
     } catch (e) { return ''; }
   }
 
+  // Two sliders pick the voice: Practical to Adventurous, Warm to Urgent. The stronger lean leads; a real lean on
+  // the other axis gets a share of the variants.
+  function tonePlan(a, b, count) {
+    var wA = Math.abs(a - 50) / 50, wB = Math.abs(b - 50) / 50;
+    var tA = a < 50 ? 'practical' : (a > 50 ? 'adventurous' : 'practical'), tB = b < 50 ? 'warm' : 'urgent';
+    if (wA < 0.1 && wB < 0.1) return [{ tone: 'practical', count: count }];
+    var lead = wA >= wB ? { tone: tA, w: wA } : { tone: tB, w: wB }, other = wA >= wB ? { tone: tB, w: wB } : { tone: tA, w: wA };
+    if (other.w < 0.25 || count < 2) return [{ tone: lead.tone, count: count }];
+    var nOther = Math.max(1, Math.min(count - 1, Math.round(count * other.w / (lead.w + other.w))));
+    return [{ tone: lead.tone, count: count - nOther }, { tone: other.tone, count: nOther }];
+  }
+  function toneWords(plan) {
+    var L = CP().TONE_LABEL || {};
+    var lc = function (t) { return (L[t] || t).toLowerCase(); };
+    return plan.length > 1 ? 'Mostly ' + lc(plan[0].tone) + ', with some ' + lc(plan[1].tone) : 'In a ' + lc(plan[0].tone) + ' voice';
+  }
+  function slidersFor(tone) {
+    return { practical: { a: 0, b: 50 }, adventurous: { a: 100, b: 50 }, warm: { a: 50, b: 0 }, urgent: { a: 50, b: 100 } }[tone] || { a: 0, b: 50 };
+  }
+  function lean(v, lo, hi) { return v === 50 ? 'Balanced' : (v < 50 ? 'Leaning ' + lo : 'Leaning ' + hi); }
+
+  function GenField(p) {
+    var id = p.id, lim = p.limit, len = measure(p.value, p.vlike), over = lim > 0 && len > lim;
+    var common = { id: id, className: cx('k-input', MULTI[p.k] && 'k-textarea', 'cs-input', over && 'is-over'), value: p.value, 'aria-describedby': lim ? id + '-count' : null,
+      onChange: function (e) { p.onChange(p.k, e.target.value); } };
+    return h`<div className="cs-field">
+      <div className="cs-field-head">
+        <label className="cs-label" htmlFor=${id}>${fieldLabel(p.k)}</label>
+        ${lim ? h`<span id=${id + '-count'} className=${cx('cs-counter num', over && 'is-over')}>${len}/${lim}</span>` : null}
+      </div>
+      ${MULTI[p.k] ? h`<textarea ...${common} rows=${Math.min(MULTI[p.k], 4)}></textarea>` : h`<input ...${common} type="text" />`}
+    </div>`;
+  }
+
   function Generator(p) {
     var React = R();
-    var ch = p.channel, d = p.draft;
-    var Seg = MC.ui && MC.ui.Segmented;
+    var ch = p.channel, d = p.draft, brand = p.brand;
     var campaigns = useSel(function (w) { return w.campaigns; });
+    var tick = useSel(function (w) { return w.meta.tick; });
     var gs = React.useState(genMemo), g = gs[0], setG = gs[1];
     function patchG(x) { setG(function (cur) { var n = Object.assign({}, cur, x, { form: genMemo.form }); genMemo = n; return n; }); }
     var os = React.useState(function () {
-      return genMemo.form && genMemo.form.key === p.formKey ? genMemo.form.o : { tone: d.tone || 'practical', offer: d.offer || 'none', productId: d.productId || '', count: 4 };
+      if (genMemo.form && genMemo.form.key === p.formKey && genMemo.form.o && fin(genMemo.form.o.a)) return genMemo.form.o;
+      var sl = slidersFor(d.tone || 'practical');
+      return { a: sl.a, b: sl.b, offer: d.offer || 'none', productId: d.productId || '', count: 4, brief: '' };
     });
     var o = os[0], setO0 = os[1];
     function setO(fn) { setO0(function (cur) { var n = fn(cur); genMemo.form = { key: p.formKey, o: n }; return n; }); }
@@ -579,32 +646,74 @@
     var cidSt = React.useState(p.defaultCid || ''), cidPick = cidSt[0], setCid = cidSt[1];
     var shSt = React.useState(0.2), share = shSt[0], setShare = shSt[1];
     var cid = opts.some(function (c) { return c.id === cidPick; }) ? cidPick : (opts.some(function (c) { return c.id === p.defaultCid; }) ? p.defaultCid : (opts[0] ? opts[0].id : ''));
+    var camp = campaigns && cid ? campaigns.byId[cid] : null;
+    var gctx = { today: fin(tick) && MC.time ? MC.time.dayOf(tick) : undefined };
+    var ce = dayEnd(camp);
+    if (fin(d.offerEnd)) gctx.endDay = d.offerEnd; else if (ce !== null) { gctx.endDay = ce; gctx.startDay = Math.floor(camp.start / 24); }
     var lockable = fieldsFor(ch).filter(function (k) { return k !== 'imageId' && k !== 'alt' && k !== 'link' && MULTI[k] === undefined; });
     var results = (g.results || EMPTY).filter(function (r) { return r.channel === ch || (ch === 'web' && r.channel === 'social'); });
     var chosen = results.filter(function (r) { return g.selected[r.key]; });
-    var tones = (CP().TONES || ['practical', 'adventurous', 'warm', 'urgent']).map(function (t) { return { value: t, label: (CP().TONE_LABEL || {})[t] || t }; });
     var offers = CP().OFFERS || ['none'];
     var products = (MC.data && MC.data.PRODUCTS) || EMPTY;
     var cats = (MC.data && MC.data.CATEGORIES) || EMPTY;
+    var plan = tonePlan(o.a, o.b, o.count);
+    var showOpens = ch === 'email';
 
     function set(k, v) { setO(function (cur) { var n = Object.assign({}, cur); n[k] = v; return n; }); }
     function generate() {
       var lk = {};
       Object.keys(locks).forEach(function (k) { if (locks[k] && str(d.fields[k]).trim()) lk[k] = d.fields[k]; });
-      var n = g.n + 1;
-      var genOpts = { channel: ch === 'web' ? 'social' : ch, tone: o.tone, offer: o.offer, productId: o.productId || null, count: o.count, locks: lk,
-        seedKey: ['studio', ch, o.tone, o.offer, o.productId || 'any', n].join(':') };
+      var n = g.n + 1, gch = ch === 'web' ? 'social' : ch, briefText = str(o.brief).trim();
+      var live = (world() && world().variants ? Object.keys(world().variants.byId).map(function (id) { return world().variants.byId[id]; }) : EMPTY)
+        .filter(function (v) { return v.status !== 'retired' && (v.channel === gch || (ch === 'web' && v.channel === 'web')); });
       var req = ++reqRef.current;
       setBusy(true); setMsg(null);
-      runGenerate(genOpts).then(function (list) {
+      var collected = [], skipped = 0;
+      // One pass per tone; each pass asks for a few extra drafts so duplicates of live or earlier copy can be dropped.
+      function pass(idx) {
+        if (idx >= plan.length) return Promise.resolve();
+        var entry = plan[idx], need = entry.count, attempt = 0;
+        function once() {
+          var genOpts = { channel: gch, tone: entry.tone, offer: o.offer, productId: o.productId || null, count: Math.min(8, need + 3), locks: lk,
+            seedKey: ['studio', ch, entry.tone, o.offer, o.productId || 'any', n, idx, attempt].join(':') };
+          if (briefText) { genOpts.brief = briefText; genOpts.notes = briefText; }
+          return runGenerate(genOpts).then(function (list) {
+            var dd = has(CP(), 'dedupe') ? CP().dedupe(list || EMPTY, live.concat(collected)) : { kept: list || EMPTY, dropped: [] };
+            skipped += dd.dropped.length;
+            var room = entry.count - collected.filter(function (x) { return x.tone === entry.tone; }).length;
+            dd.kept.slice(0, Math.max(0, room)).forEach(function (x) { collected.push(x); });
+            attempt++;
+            var have = collected.filter(function (x) { return x.tone === entry.tone; }).length;
+            if (have < entry.count && attempt < 3) return once();
+          });
+        }
+        return once().then(function () { return pass(idx + 1); });
+      }
+      pass(0).then(function () {
         if (!aliveRef.current || req !== reqRef.current) return;
         setBusy(false);
-        var res = (list || EMPTY).map(function (x, i) { return Object.assign({}, x, { key: n + ':' + i, note: featureNote(x) }); });
+        var res = collected.map(function (x, i) { return Object.assign({}, x, { key: n + ':' + i, name: String.fromCharCode(65 + i), note: featureNote(x, gctx) }); });
         res.sort(function (a, b) { return (b.predicted ? b.predicted.score : 0) - (a.predicted ? a.predicted.score : 0); });
-        patchG({ results: res, n: n, selected: {}, opts: genOpts });
+        res.forEach(function (x, i) { x.name = String.fromCharCode(65 + i); });
+        patchG({ results: res, n: n, selected: {}, open: {}, opts: { plan: plan, skipped: skipped } });
+        if (res.length < o.count) setMsg({ tone: 'neutral', text: res.length ? 'Only ' + res.length + ' new ' + (res.length === 1 ? 'draft' : 'drafts') + ' differ from your live copy. Try another tone or product.' : 'Everything we wrote matched copy you already have. Try another tone or product.' });
       });
     }
     function toggle(key) { var s = Object.assign({}, g.selected); s[key] = !s[key]; patchG({ selected: s }); }
+    function toggleOpen(key) { var s = Object.assign({}, g.open || {}); s[key] = !s[key]; patchG({ open: s }); }
+    function editResult(key, k, val) {
+      patchG({ results: (g.results || EMPTY).map(function (r) {
+        if (r.key !== key) return r;
+        var f = Object.assign({}, r.fields); f[k] = val;
+        var nr = Object.assign({}, r, { fields: f });
+        try { var s = CP().score(nr, gctx); nr.predicted = { score: s.score, open: s.predOpen, click: s.predClick }; } catch (e) { /* keep old */ }
+        return nr;
+      }) });
+    }
+    function fixResult(key, fix) {
+      var r = (g.results || EMPTY).filter(function (x) { return x.key === key; })[0];
+      if (r && fix) editResult(key, fix.field, fix.value);
+    }
     function addChosen() {
       var ok = 0, err = null, firstId = null;
       chosen.forEach(function (r) {
@@ -613,7 +722,7 @@
       });
       if (ok) {
         var name = (opts.filter(function (c) { return c.id === cid; })[0] || {}).name || 'the campaign';
-        var keep = {}; patchG({ selected: keep });
+        patchG({ selected: {}, results: (g.results || EMPTY).filter(function (r) { return !g.selected[r.key]; }) });
         setMsg({ tone: 'good', text: 'Added ' + ok + (ok === 1 ? ' variant' : ' variants') + ' to ' + name + '.', vid: firstId });
       } else setMsg({ tone: 'crit', text: err || 'Couldn’t add the variants.' });
     }
@@ -623,13 +732,29 @@
     return h`<section className="cs-gen" aria-labelledby="cs-gen-title">
       <div className="cs-gen-head">
         <h2 id="cs-gen-title" className="cs-h2">Generate variants</h2>
-        <p className="cs-sub">Fresh ${chLabel(ch).toLowerCase()} copy in the Fernway voice. Nothing is added until you choose.</p>
+        <p className="cs-sub">Fresh ${chWord(ch)} copy in the Fernway voice. Nothing is added until you choose.</p>
       </div>
       <div className="cs-gen-controls">
+        <div className="cs-sliders cs-span-2">
+          <div className="cs-slider">
+            <div className="cs-slider-head"><label className="cs-label" htmlFor="cs-gen-a">Practical to adventurous</label><span className="cs-muted">${lean(o.a, 'practical', 'adventurous')}</span></div>
+            <input id="cs-gen-a" className="cs-range" type="range" min="0" max="100" step="5" value=${o.a} aria-valuetext=${lean(o.a, 'practical', 'adventurous')}
+              onChange=${function (e) { set('a', Number(e.target.value)); }} />
+            <div className="cs-slider-ends" aria-hidden="true"><span>Practical</span><span>Adventurous</span></div>
+          </div>
+          <div className="cs-slider">
+            <div className="cs-slider-head"><label className="cs-label" htmlFor="cs-gen-b">Warm to urgent</label><span className="cs-muted">${lean(o.b, 'warm', 'urgent')}</span></div>
+            <input id="cs-gen-b" className="cs-range" type="range" min="0" max="100" step="5" value=${o.b} aria-valuetext=${lean(o.b, 'warm', 'urgent')}
+              onChange=${function (e) { set('b', Number(e.target.value)); }} />
+            <div className="cs-slider-ends" aria-hidden="true"><span>Warm</span><span>Urgent</span></div>
+          </div>
+          <p className="cs-note" id="cs-gen-tone-note">${toneWords(plan)}.${plan.some(function (x) { return x.tone === 'urgent'; }) ? ' Urgent copy needs an offer end date to score well.' : ''}</p>
+        </div>
         <div className="cs-field cs-span-2">
-          <span className="cs-label" id="cs-gen-tone-label">Tone</span>
-          ${Seg ? h`<${Seg} id="cs-gen-tone" label="Tone" size="sm" options=${tones} value=${o.tone} onChange=${function (v) { set('tone', v); }} />`
-            : h`<select id="cs-gen-tone" className="k-select" value=${o.tone} onChange=${function (e) { set('tone', e.target.value); }}>${tones.map(function (t) { return h`<option key=${t.value} value=${t.value}>${t.label}</option>`; })}</select>`}
+          <label className="cs-label" htmlFor="cs-gen-brief">Brief <span className="cs-muted">(optional)</span></label>
+          <input id="cs-gen-brief" className="k-input cs-input" type="text" maxLength="140" value=${o.brief || ''} placeholder="One line, for example: first frost, trail runners"
+            onChange=${function (e) { set('brief', e.target.value); }} />
+          <p className="cs-hint">Read by the AI writer when it’s on. The standard writer ignores it.</p>
         </div>
         <div className="cs-field">
           <label className="cs-label" htmlFor="cs-gen-offer">Offer</label>
@@ -670,9 +795,12 @@
       </div>
       ${results.length ? h`<div className="cs-results">
         <ul className="cs-result-list">${results.map(function (r) {
-          var on = !!g.selected[r.key];
+          var on = !!g.selected[r.key], openCard = !!(g.open && g.open[r.key]);
           var sid = 'cs-gen-' + r.key.replace(/[^a-z0-9]/gi, '-');
-          return h`<li key=${r.key} className=${cx('cs-result', on && 'is-on')}>
+          var checks = openCard ? (function () { try { return CP().check(r, brand, gctx).filter(function (c) { return c.status !== 'pass'; }); } catch (e) { return EMPTY; } })() : EMPTY;
+          var rlike = { channel: r.channel, fields: r.fields, tone: r.tone, offer: r.offer, productId: r.productId };
+          var texts = fieldsFor(r.channel).filter(function (k) { return k !== 'imageId' && k !== 'alt' && k !== 'link'; });
+          return h`<li key=${r.key} className=${cx('cs-result', on && 'is-on', openCard && 'is-open')}>
             <input type="checkbox" id=${sid + '-select'} className="cs-result-check" checked=${on} onChange=${function () { toggle(r.key); }}
               aria-label=${'Select variant ' + r.name} />
             <${Ring} value=${r.predicted ? r.predicted.score : null} size=${40} />
@@ -681,15 +809,26 @@
               ${second && r.fields[second] ? h`<p className="cs-result-sub">${r.fields[second]}</p>` : null}
               ${r.note ? h`<p className="cs-result-note">${r.note}</p>` : null}
             </div>
-            <button type="button" className="cs-link" onClick=${function () { p.onEdit(r); }}>Edit</button>
+            <button type="button" className="cs-link" id=${sid + '-toggle'} aria-expanded=${openCard ? 'true' : 'false'} aria-controls=${sid + '-full'}
+              onClick=${function () { toggleOpen(r.key); }}>${openCard ? 'Hide message' : 'Full message'}</button>
+            ${openCard ? h`<div className="cs-result-full" id=${sid + '-full'}>
+              ${texts.map(function (k) {
+                return h`<${GenField} key=${k} k=${k} id=${sid + '-f-' + k} value=${str(r.fields[k])} limit=${limitFor(k, brand)} vlike=${rlike} onChange=${function (kk, val) { editResult(r.key, kk, val); }} />`;
+              })}
+              ${checks.length ? h`<ul className="cs-result-issues">${checks.map(function (c) {
+                return h`<li key=${c.id} className=${'is-' + c.status}><span><strong>${c.label}.</strong> ${c.detail}</span>
+                  ${c.fix ? h`<button type="button" className="cs-link" onClick=${function () { fixResult(r.key, c.fix); }}>Fix</button>` : null}</li>`;
+              })}</ul>` : h`<p className="cs-note">No issues found.</p>`}
+              <button type="button" className="cs-link" onClick=${function () { p.onEdit(r); }}>Open in composer</button>
+            </div>` : null}
           </li>`;
         })}</ul>
         ${compare && chosen.length ? h`<div className="k-scroll-x"><table className="cs-compare">
           <caption className="sr-only">Selected variants compared</caption>
-          <thead><tr><th scope="col">${fieldLabel(hook)}</th><th scope="col" className="is-num">Score</th><th scope="col" className="is-num">Opens</th><th scope="col" className="is-num">Clicks</th></tr></thead>
+          <thead><tr><th scope="col">${fieldLabel(hook)}</th><th scope="col" className="is-num">Score</th>${showOpens ? h`<th scope="col" className="is-num">Opens</th>` : null}<th scope="col" className="is-num">Clicks</th></tr></thead>
           <tbody>${chosen.map(function (r) {
             return h`<tr key=${r.key}><td>${str(r.fields[hook])}</td><td className="is-num num">${r.predicted ? r.predicted.score : DASH}</td>
-              <td className="is-num num">${r.predicted ? fmtPct(r.predicted.open) : DASH}</td><td className="is-num num">${r.predicted ? fmtPct(r.predicted.click, 2) : DASH}</td></tr>`;
+              ${showOpens ? h`<td className="is-num num">${r.predicted ? fmtPct(r.predicted.open) : DASH}</td>` : null}<td className="is-num num">${r.predicted ? fmtPct(r.predicted.click, 2) : DASH}</td></tr>`;
           })}</tbody></table></div>` : null}
         <div className="cs-addbar">
           <${AddControls} idPrefix="cs-add" channel=${ch} options=${opts} cid=${cid} setCid=${setCid} share=${share} setShare=${setShare} />
@@ -748,12 +887,19 @@
     var people = useSel(function (w) { return sel('previewProfiles', w); }) || EMPTY;
     var idx = p.profileIdx;
     var rendered = React.useMemo(function () {
-      try { if (has(CP(), 'render')) return CP().render(p.vlike, world(), idx); } catch (e) { /* raw */ }
+      try {
+        if (has(CP(), 'render')) {
+          if (idx === 'none') return CP().render(p.vlike, world(), -1, { name: '' });
+          if (idx === 'long') return CP().render(p.vlike, world(), -1, { name: CP().LONG_NAME || 'Maximilian-Alexander' });
+          return CP().render(p.vlike, world(), idx);
+        }
+      } catch (e) { /* raw */ }
       return p.vlike.fields;
     }, [p.fieldsKey, idx, p.vlike.productId, p.vlike.offer]);
     var score = React.useMemo(function () {
-      try { return has(CP(), 'score') ? CP().score(p.vlike) : null; } catch (e) { return null; }
-    }, [p.fieldsKey, p.vlike.tone, p.vlike.offer, p.vlike.productId]);
+      try { return has(CP(), 'score') ? CP().score(p.vlike, p.ctx) : null; } catch (e) { return null; }
+    }, [p.fieldsKey, p.vlike.tone, p.vlike.offer, p.vlike.productId, p.ctx && p.ctx.endDay]);
+    var smsInfo = p.vlike.channel === 'sms' && has(CP(), 'smsInfo') ? CP().smsInfo(str(rendered.sms)) : null;
     var hookEmpty = !str(p.vlike.fields[hookOf(p.vlike.channel)]).trim();
     if (hookEmpty) score = null;
     var contrib = score ? (score.contributions || EMPTY).slice(0, 6) : EMPTY;
@@ -764,19 +910,23 @@
         <h2 className="cs-h2" id="cs-preview-title">Preview</h2>
         <div className="cs-previewas">
           <label className="cs-inline-label" htmlFor="cs-preview-as">Preview as</label>
-          <select id="cs-preview-as" className="k-select" value=${String(idx)} onChange=${function (e) { p.setProfileIdx(Number(e.target.value)); }}>
+          <select id="cs-preview-as" className="k-select" value=${String(idx)}
+            onChange=${function (e) { var v = e.target.value; p.setProfileIdx(v === 'none' || v === 'long' ? v : Number(v)); }}>
             ${people.map(function (x) { return h`<option key=${x.idx} value=${String(x.idx)}>${x.name}</option>`; })}
+            <option value="none">No first name on file</option>
+            <option value="long">Very long first name</option>
           </select>
         </div>
       </div>
       <div className="cs-preview" aria-labelledby="cs-preview-title"><${PreviewBody} f=${rendered} channel=${ch} /></div>
+      ${smsInfo ? h`<p className=${cx('cs-sms-meta num', smsInfo.encoding === 'Unicode' && 'is-warn')}>${smsInfo.encoding} ${DOT} ${smsInfo.segments} ${smsInfo.segments === 1 ? 'segment' : 'segments'} ${DOT} ${smsInfo.units} of ${smsInfo.perSegment} characters${smsInfo.encoding === 'Unicode' ? ' (a special character such as a curly quote forces Unicode)' : ''}</p>` : null}
       <div className="cs-score">
         <h3 className="cs-h3">Predicted engagement</h3>
         <div className="cs-score-row">
           <${Ring} value=${score ? score.score : null} size=${52} />
           <div>
             <p className="cs-score-num num">${score ? score.score : DASH}<span className="cs-muted"> / 100</span></p>
-            <p className="cs-muted num">${hookEmpty ? 'Write or generate copy to see a prediction.' : ''}${score ? 'About ' + fmtPct(score.predOpen) + ' open' + (ch === 'email' ? '' : 's') + ' and ' + fmtPct(score.predClick, 2) + ' click' : ''}</p>
+            <p className="cs-muted num">${hookEmpty ? 'Write or generate copy to see a prediction.' : ''}${score ? (ch === 'email' ? 'About ' + fmtPct(score.predOpen) + ' open and ' + fmtPct(score.predClick, 2) + ' click' : 'About ' + fmtPct(score.predClick, 2) + ' click') : ''}</p>
           </div>
         </div>
         ${contrib.length ? h`<div className="cs-why">
@@ -798,8 +948,8 @@
   function ChecksPane(p) {
     var React = R();
     var checks = React.useMemo(function () {
-      try { return has(CP(), 'check') ? CP().check(p.vlike, p.brand) : EMPTY; } catch (e) { return EMPTY; }
-    }, [p.fieldsKey, p.brand, p.vlike.offer, p.vlike.productId]);
+      try { return has(CP(), 'check') ? CP().check(p.vlike, p.brand, p.ctx) : EMPTY; } catch (e) { return EMPTY; }
+    }, [p.fieldsKey, p.brand, p.vlike.offer, p.vlike.productId, p.ctx && p.ctx.endDay, p.ctx && p.ctx.today]);
     var v = p.variant;
     var perf = useSel(function (w) {
       if (!v || (v.status !== 'live' && v.status !== 'paused')) return null;
@@ -809,11 +959,14 @@
     });
     var fixes = checks.filter(function (c) { return c.fix && c.status !== 'pass'; });
     var issues = checks.filter(function (c) { return c.status !== 'pass'; }).length;
+    var passed = checks.length - issues, vch = p.vlike.channel === 'web' ? 'social' : p.vlike.channel;
+    var headline = checks.length ? passed + (passed === 1 ? ' check' : ' checks') + ' passed' + (issues ? ' ' + DOT + ' ' + issues + ' to review' : '') + ' ' + DOT + ' claims ' + (p.reviewed ? 'reviewed' : 'not reviewed') : '';
     return h`<div className="cs-pane">
       <div className="cs-pane-head">
         <h2 className="cs-h2">Brand & compliance</h2>
-        <span className="cs-muted">${checks.length ? (issues ? issues + (issues === 1 ? ' to review' : ' to review') : 'All clear') : ''}</span>
       </div>
+      <p className="cs-headline num" id="cs-checks-headline">${headline}</p>
+      ${checks.length && !p.readOnly ? h`<button type="button" id="cs-claims-review" className="cs-link cs-review" aria-pressed=${p.reviewed ? 'true' : 'false'} onClick=${p.onReview}>${p.reviewed ? 'Claims reviewed. Undo' : 'Mark claims as reviewed'}</button>` : null}
       <ul className="cs-checks">${checks.map(function (c) {
         return h`<li key=${c.id} className=${'cs-check-row is-' + c.status}>
           <span className="cs-check-icon" role="img" aria-label=${c.status === 'pass' ? 'Passed' : c.status === 'warn' ? 'Warning' : 'Failed'}><${Icon} name=${CHECK_ICON[c.status]} size=${16} /></span>
@@ -824,13 +977,18 @@
       ${fixes.length > 1 && !p.readOnly ? h`<button type="button" id="cs-fix-all" className="cs-link" onClick=${p.onFixAll}>Fix all ${fixes.length}</button>` : null}
       ${perf ? h`<div className="cs-perf">
         <h3 className="cs-h3">Live performance</h3>
-        <dl className="cs-perf-grid">
+        ${!(perf.sends > 0) ? h`<p className="cs-muted">Not sent yet.</p>` : vch === 'email' ? h`<dl className="cs-perf-grid">
           <div><dt>Sends</dt><dd className="num">${fmtNum(perf.sends)}</dd></div>
           <div><dt>Open rate</dt><dd className="num">${fmtPct(perf.openRate)}</dd></div>
           <div><dt>Click rate</dt><dd className="num">${fmtPct(perf.clickRate, 2)}</dd></div>
           <div><dt>Traffic</dt><dd className="num">${fmtShare(perf.share)}</dd></div>
-        </dl>
-        ${fin(perf.pBest) && perf.sends > 0 ? h`<p className="cs-muted num">${fmtPct(perf.pBest, 0)} chance it’s the best ${chLabel(v.channel).toLowerCase()} variant.</p>` : null}
+        </dl>` : h`<dl className="cs-perf-grid">
+          <div><dt>Sends</dt><dd className="num">${fmtNum(perf.sends)}</dd></div>
+          <div><dt>Clicks</dt><dd className="num">${fmtNum(perf.clicks)} <span className="cs-muted">${fmtPct(perf.clickRate, 2)}</span></dd></div>
+          <div><dt>Conversions</dt><dd className="num">${fmtNum(perf.conv)}</dd></div>
+          <div><dt>Traffic</dt><dd className="num">${fmtShare(perf.share)}</dd></div>
+        </dl>`}
+        ${fin(perf.pBest) && perf.sends > 0 ? h`<p className="cs-muted num">${fmtPct(perf.pBest, 0)} chance it’s the best ${chWord(v.channel)} variant.</p>` : null}
       </div>` : null}
     </div>`;
   }
@@ -840,7 +998,11 @@
     var React = R();
     var S = useStudioDraft(p.draftKey, p.variant, p.channel);
     var d = S.d;
-    var brand = useSel(function (w) { return w.guardrails ? w.guardrails.brand : null; });
+    var brandRaw = useSel(function (w) { return w.guardrails ? w.guardrails.brand : null; });
+    var brandRev = useBrandRev();
+    var brand = React.useMemo(function () { return effectiveBrand(brandRaw); }, [brandRaw, brandRev]);
+    var tick = useSel(function (w) { return w.meta.tick; });
+    var rs = React.useState(0), setRev = rs[1];
     var pi = React.useState(viewMemo.profileIdx || 0), profileIdx = pi[0], setPi = pi[1];
     var phone = useMedia('(max-width: 639px)');
     var ts = React.useState('compose'), tab = ts[0], setTab = ts[1];
@@ -851,16 +1013,22 @@
     var camp = v && campaigns ? campaigns.byId[v.campaignId] : null;
     var readOnly = !!v && (v.status === 'retired' || (camp && camp.status === 'completed'));
 
+    // Dates for deadline checks: this draft's own end date, else the campaign's offer end.
+    var ce = dayEnd(camp), ctx = { today: fin(tick) && MC.time ? MC.time.dayOf(tick) : undefined };
+    if (fin(d.offerEnd)) ctx.endDay = d.offerEnd; else if (ce !== null) { ctx.endDay = ce; ctx.startDay = Math.floor(camp.start / 24); }
+    var reviewed = viewMemo.reviewed[p.draftKey] === fieldsKey;
+
     function setProfileIdx(i) { viewMemo.profileIdx = i; setPi(i); }
     function fix(f) { if (has(CP(), 'applyFix')) S.update({ fields: CP().applyFix(vlike, f).fields }); }
-    function fixAll() { if (has(CP(), 'fixAll')) S.update({ fields: CP().fixAll(vlike, brand).fields }); }
+    function fixAll() { if (has(CP(), 'fixAll')) S.update({ fields: CP().fixAll(vlike, brand, ctx).fields }); }
+    function toggleReview() { if (reviewed) delete viewMemo.reviewed[p.draftKey]; else viewMemo.reviewed[p.draftKey] = fieldsKey; setRev(function (x) { return x + 1; }); }
 
     var composer = h`<div className="cs-col cs-col-compose">
-      <${Composer} S=${S} variant=${v} brand=${brand} draftKey=${p.draftKey} onChannel=${p.onChannel} onCreated=${p.onCreated} />
-      <${Generator} key=${d.channel} formKey=${p.draftKey} channel=${d.channel} draft=${d} defaultCid=${v ? v.campaignId : ''} onEdit=${p.onEditGenerated} onOpen=${p.onCreated} />
+      <${Composer} S=${S} variant=${v} brand=${brand} endDay=${ctx.endDay} draftKey=${p.draftKey} onChannel=${p.onChannel} onCreated=${p.onCreated} />
+      <${Generator} key=${d.channel} formKey=${p.draftKey} channel=${d.channel} draft=${d} brand=${brand} defaultCid=${v ? v.campaignId : ''} onEdit=${p.onEditGenerated} onOpen=${p.onCreated} />
     </div>`;
-    var preview = h`<${PreviewPane} vlike=${vlike} fieldsKey=${fieldsKey} profileIdx=${profileIdx} setProfileIdx=${setProfileIdx} />`;
-    var checks = h`<${ChecksPane} vlike=${vlike} fieldsKey=${fieldsKey} brand=${brand} variant=${v} readOnly=${readOnly} onFix=${fix} onFixAll=${fixAll} />`;
+    var preview = h`<${PreviewPane} vlike=${vlike} ctx=${ctx} fieldsKey=${fieldsKey} profileIdx=${profileIdx} setProfileIdx=${setProfileIdx} />`;
+    var checks = h`<${ChecksPane} vlike=${vlike} ctx=${ctx} reviewed=${reviewed} onReview=${toggleReview} fieldsKey=${fieldsKey} brand=${brand} variant=${v} readOnly=${readOnly} onFix=${fix} onFixAll=${fixAll} />`;
 
     if (phone) {
       var Tabs = MC.ui && MC.ui.Tabs;
@@ -875,6 +1043,91 @@
     return h`<div className="cs-studio">
       ${composer}
       <aside className="cs-col cs-col-side" aria-label="Preview and checks">${preview}<hr className="cs-rule" />${checks}</aside>
+    </div>`;
+  }
+
+  /* ================= Brand voice ================= */
+  function BrandVoice() {
+    var React = R();
+    var brandRaw = useSel(function (w) { return w.guardrails ? w.guardrails.brand : null; });
+    var rev = useBrandRev();
+    var banned = (brandRaw && brandRaw.banned) || (CP().DEFAULT_BRAND && CP().DEFAULT_BRAND.banned) || EMPTY;
+    var claims = claimsNow(), swaps = CP().SAFE_SWAP || {}, voice = CP().VOICE || { pillars: [], pairs: [] };
+    var ws = React.useState(''), word = ws[0], setWord = ws[1];
+    var ss = React.useState(''), swap = ss[0], setSwap = ss[1];
+    var cs = React.useState(''), ctext = cs[0], setCtext = cs[1];
+    var ps = React.useState(''), csrc = ps[0], setCsrc = ps[1];
+    var ms = React.useState(null), msg = ms[0], setMsg = ms[1];
+    function saveBanned(list) {
+      var r = dispatch('guardrails/update', { patch: { brand: { banned: list } } });
+      if (!r.ok) setMsg({ tone: 'crit', text: r.error || 'Couldn’t save the banned words.' }); else setMsg(null);
+      return r.ok;
+    }
+    function addWord() {
+      var w = word.trim();
+      if (!w || banned.some(function (x) { return x.toLowerCase() === w.toLowerCase(); })) { setMsg({ tone: 'crit', text: w ? '“' + w + '” is already banned.' : 'Type a word or phrase first.' }); return; }
+      if (saveBanned(banned.concat([w]))) { if (swap.trim()) swaps[w.toLowerCase()] = swap.trim(); setWord(''); setSwap(''); }
+    }
+    function addClaim() {
+      var t = ctext.trim();
+      if (!t || !csrc.trim()) { setMsg({ tone: 'crit', text: 'A claim needs its wording and a source.' }); return; }
+      var id = t.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 24) || 'claim-' + (claims.length + 1);
+      setClaims(claims.concat([{ id: id, text: t, source: csrc.trim() }]));
+      setCtext(''); setCsrc(''); setMsg(null);
+    }
+    return h`<div className="cs-voice" data-rev=${rev}>
+      <section className="cs-vsec" aria-labelledby="cs-v-pillars">
+        <h2 className="cs-h2" id="cs-v-pillars">Voice pillars</h2>
+        <ul className="cs-pillars">${voice.pillars.map(function (x) {
+          return h`<li key=${x.id} className="cs-pillar"><p className="cs-pillar-t">${x.title}</p><p className="cs-note">${x.text}</p></li>`;
+        })}</ul>
+      </section>
+      <section className="cs-vsec" aria-labelledby="cs-v-pairs">
+        <h2 className="cs-h2" id="cs-v-pairs">Do and don’t</h2>
+        <ul className="cs-pairs">${voice.pairs.map(function (x, k) {
+          return h`<li key=${k} className="cs-pair">
+            <p className="cs-pair-dont"><span className="cs-pair-tag">Don’t</span> ${x.dont}</p>
+            <p className="cs-pair-do"><span className="cs-pair-tag">Do</span> ${x.doText}</p>
+            <p className="cs-muted">${x.why}</p>
+          </li>`;
+        })}</ul>
+      </section>
+      <section className="cs-vsec" aria-labelledby="cs-v-banned">
+        <h2 className="cs-h2" id="cs-v-banned">Banned words</h2>
+        <p className="cs-sub">Saved to your guardrails. Swaps are suggestions used by Fix and apply in this browser.</p>
+        <ul className="cs-rows">${banned.map(function (b) {
+          var sw = swaps[b.toLowerCase()];
+          return h`<li key=${b} className="cs-row">
+            <span className="cs-row-main"><strong>${b}</strong> ${sw !== undefined ? h`<span className="cs-muted">${' swap: '}</span><span>${sw || 'remove'}</span>` : h`<span className="cs-muted"> no swap, Fix removes it</span>`}</span>
+            <button type="button" className="cs-link" aria-label=${'Remove ' + b} onClick=${function () { saveBanned(banned.filter(function (x) { return x !== b; })); }}>Remove</button>
+          </li>`;
+        })}</ul>
+        <div className="cs-addrow">
+          <div className="cs-field"><label className="cs-label" htmlFor="cs-v-word">Word or phrase</label>
+            <input id="cs-v-word" className="k-input cs-input" type="text" maxLength="30" value=${word} onChange=${function (e) { setWord(e.target.value); }} /></div>
+          <div className="cs-field"><label className="cs-label" htmlFor="cs-v-swap">Swap (optional)</label>
+            <input id="cs-v-swap" className="k-input cs-input" type="text" maxLength="40" value=${swap} onChange=${function (e) { setSwap(e.target.value); }} /></div>
+          <${Btn} kind="secondary" id="cs-v-addword" onClick=${addWord}>Add word<//>
+        </div>
+      </section>
+      <section className="cs-vsec" aria-labelledby="cs-v-claims">
+        <h2 className="cs-h2" id="cs-v-claims">Approved claims</h2>
+        <p className="cs-sub">Copy can state these. Superlatives, performance numbers, stock claims and policy promises that aren’t listed fail the checks. Changes here apply in this browser only.</p>
+        <ul className="cs-rows">${claims.map(function (c) {
+          return h`<li key=${c.id} className="cs-row">
+            <span className="cs-row-main"><strong>${c.text}</strong><span className="cs-muted cs-row-src">Source: ${c.source}</span></span>
+            <button type="button" className="cs-link" aria-label=${'Remove claim ' + c.text} onClick=${function () { setClaims(claims.filter(function (x) { return x.id !== c.id; })); }}>Remove</button>
+          </li>`;
+        })}${claims.length ? null : h`<li className="cs-muted">No approved claims yet.</li>`}</ul>
+        <div className="cs-addrow">
+          <div className="cs-field"><label className="cs-label" htmlFor="cs-v-claim">Claim</label>
+            <input id="cs-v-claim" className="k-input cs-input" type="text" maxLength="80" value=${ctext} onChange=${function (e) { setCtext(e.target.value); }} /></div>
+          <div className="cs-field"><label className="cs-label" htmlFor="cs-v-source">Source</label>
+            <input id="cs-v-source" className="k-input cs-input" type="text" maxLength="80" placeholder="Policy or product spec" value=${csrc} onChange=${function (e) { setCsrc(e.target.value); }} /></div>
+          <${Btn} kind="secondary" id="cs-v-addclaim" onClick=${addClaim}>Add claim<//>
+        </div>
+      </section>
+      <${Msg} msg=${msg} />
     </div>`;
   }
 
@@ -899,6 +1152,10 @@
     var wide = useMedia('(min-width: 1200px)');
     var ls = React.useState(false), libOpen = ls[0], setLibOpen = ls[1];
     var rs = React.useState(viewMemo.newRev), newRev = rs[0], setNewRev = rs[1];
+    var tb = React.useState(viewMemo.tab || 'studio'), tab = tb[0], setTab0 = tb[1];
+    function setTab(t) { viewMemo.tab = t; setTab0(t); }
+    var Seg = MC.ui && MC.ui.Segmented;
+    var TABS = [{ value: 'studio', label: 'Studio' }, { value: 'voice', label: 'Brand voice' }];
     var missing = !!focus.variantId && ready && !variant;
     var ch = variant ? variant.channel : channel;
     var key = draftKey(variant ? variant.id : null, ch);
@@ -924,15 +1181,19 @@
     return h`<section className="v-content">
       <header className="cs-header">
         <h1 id="page-title" tabIndex="-1" className="cs-title">Content Studio</h1>
-        ${!wide ? h`<button type="button" id="cs-lib-toggle" className="cs-libbar" aria-expanded=${libOpen ? 'true' : 'false'} aria-controls="cs-lib-drop"
+        ${Seg ? h`<${Seg} id="cs-tab" label="Content sections" size="sm" options=${TABS} value=${tab} onChange=${setTab} />`
+          : h`<select id="cs-tab" className="k-select" aria-label="Content sections" value=${tab} onChange=${function (e) { setTab(e.target.value); }}>${TABS.map(function (t) { return h`<option key=${t.value} value=${t.value}>${t.label}</option>`; })}</select>`}
+        ${!wide && tab === 'studio' ? h`<button type="button" id="cs-lib-toggle" className="cs-libbar" aria-expanded=${libOpen ? 'true' : 'false'} aria-controls="cs-lib-drop"
             onClick=${function () { setLibOpen(!libOpen); }}>
             <span>${variant ? 'Library ' + DOT + ' ' + chLabel(variant.channel) + ' ' + variant.name : 'Library'}</span><${Icon} name=${libOpen ? 'chevron-up' : 'chevron-down'} size=${14} /></button>` : null}
       </header>
-      ${!wide && libOpen ? h`<div id="cs-lib-drop" className="cs-lib-drop">${library}</div>` : null}
-      <div className=${cx('cs-layout', wide && 'is-wide')}>
-        ${wide ? h`<div className="cs-col cs-col-lib">${library}</div>` : null}
-        <div className="cs-main">${body}</div>
-      </div>
+      ${tab === 'voice' ? h`<${BrandVoice} />` : h`<div>
+        ${!wide && libOpen ? h`<div id="cs-lib-drop" className="cs-lib-drop">${library}</div>` : null}
+        <div className=${cx('cs-layout', wide && 'is-wide')}>
+          ${wide ? h`<div className="cs-col cs-col-lib">${library}</div>` : null}
+          <div className="cs-main">${body}</div>
+        </div>
+      </div>`}
     </section>`;
   }
 

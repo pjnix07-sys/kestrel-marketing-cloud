@@ -811,10 +811,10 @@
     return Object.assign({}, variant, { fields: fields });
   };
   // Applies fixes repeatedly (max 8 passes) until no failing check has a fix.
-  CP.fixAll = function (variant, brand) {
+  CP.fixAll = function (variant, brand, ctx) {
     var v = variant;
     for (var i = 0; i < 8; i++) {
-      var f = CP.check(v, brand).filter(function (x) { return x.status === 'fail' && x.fix; })[0];
+      var f = CP.check(v, brand, ctx).filter(function (x) { return x.status === 'fail' && x.fix; })[0];
       if (!f) break;
       v = CP.applyFix(v, f.fix);
     }
