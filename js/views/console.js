@@ -844,9 +844,12 @@
       });
       return out;
     }, [P, agent, risk, kind]);
+    var who = useUiSel(function (s) { return s.persona || 'admin'; }) || 'admin';
+    var canApprove = !(MC.catalog && MC.catalog.can) || MC.catalog.can(who, 'approve');
+    var DN = MC.ui && MC.ui.DecisionNote, DM = MC.ui && MC.ui.DecisionMeta;
     var list = lists[sub] || EMPTY;
     var fz = useFrozenList(list, use.active);
-    var low = lists.needs.filter(function (x) { return x.risk === 'low'; }).map(function (x) { return x.id; });
+    var low = !canApprove ? [] : lists.needs.filter(function (x) { return x.risk === 'low'; }).map(function (x) { return x.id; });
     var Card = kit('ProposalCard'), Tabs = kit('Tabs'), NP = kit('NewItemsPill');
     function approveLow() {
       var r = dispatch('proposal/approveMany', { ids: low });
@@ -881,7 +884,10 @@
       ${fz.pending > 0 && NP ? html`<${NP} count=${fz.pending} onClick=${fz.reveal} />` : null}
       <div id="agents-approvals-list" role="tabpanel" aria-labelledby=${'agents-approvals-tabs-' + sub}>
         ${shown.length && Card ? html`<ul className="cn-cards" ...${use.props}>${shown.map(function (x) {
-          return html`<li key=${x.id}><${Card} id=${x.id} showTarget=${true} /></li>`;
+          var pr = P && P.byId ? P.byId[x.id] : null;
+          return html`<li key=${x.id}><${Card} id=${x.id} showTarget=${true} />
+            ${sub === 'needs' && DN && pr ? html`<${DN} id=${x.id} risk=${pr.risk} signoffs=${pr.signoffs} />` : null}
+            ${sub === 'history' && DM && pr ? html`<${DM} p=${pr} />` : null}</li>`;
         })}</ul>` : html`<${Empty} title=${EMPTY_COPY[sub][0]} body=${EMPTY_COPY[sub][1]} />`}
         ${fz.items.length > limit ? html`<${Link} onClick=${function () { setLimit(limit + 20); }}>Show more<//>` : null}
       </div>

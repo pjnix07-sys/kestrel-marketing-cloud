@@ -277,3 +277,23 @@
   .v-content .cs-addrow { grid-template-columns: minmax(0, 1fr); }
   .v-content .cs-result-full { padding: 10px; }
 }
+
+/* review states, notes, version history */
+.v-content .cs-sdot.is-review { background: var(--accent); }
+.v-content .cs-review { display: flex; flex-direction: column; gap: 8px; padding: 10px 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.v-content .cs-review-line { margin: 0; font-size: 13px; color: var(--ink-2); }
+.v-content .cs-review-act { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.v-content .cs-review-note { flex: 1 1 200px; min-width: 0; }
+.v-content .cs-notefield { display: flex; flex-direction: column; gap: 4px; }
+.v-content .cs-versions { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+.v-content .cs-vlist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 12px; width: 100%; }
+.v-content .cs-vrow { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.v-content .cs-vhead { margin: 0; font-size: 13px; color: var(--ink-2); }
+.v-content .cs-vhead strong { color: var(--ink); font-weight: 600; }
+.v-content .cs-vnote { margin: 0; font-size: 13px; color: var(--ink-2); }
+.v-content .cs-vdiff { margin: 0; font-size: 13px; color: var(--ink-2); overflow-wrap: anywhere; }
+.v-content .cs-vfield { color: var(--ink-3); margin-right: 4px; }
+.v-content .cs-vdiff ins { background: var(--good-soft); color: var(--good); text-decoration: none; }
+.v-content .cs-vdiff del { background: var(--crit-soft); color: var(--crit); text-decoration: line-through; }
+.v-content .cs-mine { align-self: flex-start; background: none; border: 0; padding: 4px 0; font: inherit; font-size: 13px; color: var(--accent); cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+.v-content .cs-mine.is-on { font-weight: 600; text-decoration: none; }

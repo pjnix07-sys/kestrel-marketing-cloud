@@ -149,20 +149,53 @@
   function dayYmd(day) { try { return MC.time.ymd(day); } catch (e) { return ''; } }
   function ymdDay(s) { try { var x = MC.time.dayOfYmd(s); return fin(x) ? x : null; } catch (e) { return null; } }
 
-  /* ---------------- brand edits that stay in this browser ---------------- */
-  var localBrand = { claims: null, rev: 0, subs: [] };
-  function claimsNow() { return localBrand.claims || (CP().DEFAULT_BRAND && CP().DEFAULT_BRAND.claims) || EMPTY; }
-  function setClaims(list) { localBrand.claims = list; localBrand.rev++; localBrand.subs.slice().forEach(function (fn) { fn(); }); }
-  function useBrandRev() {
-    var React = R(), st = React.useState(localBrand.rev), set = st[1];
-    React.useEffect(function () {
-      var fn = function () { set(localBrand.rev); };
-      localBrand.subs.push(fn);
-      return function () { localBrand.subs = localBrand.subs.filter(function (x) { return x !== fn; }); };
-    }, []);
-    return st[0];
+  /* ---------------- approved claims live in the guardrails (logged, so every change has a who and a when) ---------------- */
+  function claimsNow() {
+    var w = world();
+    return (w && w.guardrails && w.guardrails.claims) || (CP().DEFAULT_BRAND && CP().DEFAULT_BRAND.claims) || EMPTY;
   }
+  function setClaims(list) { return dispatch('guardrails/update', { patch: { claims: list } }); }
+  function useBrandRev() { return useSel(function (w) { return w.guardrails ? w.guardrails.claims : null; }); }
   function effectiveBrand(b) { return Object.assign({}, CP().DEFAULT_BRAND || {}, b || {}, { claims: claimsNow() }); }
+
+  /* ---------------- review states and the person viewing ---------------- */
+  var REVIEW_WORD = { draft: 'Draft', in_review: 'In review', changes: 'Changes requested', approved: 'Approved' };
+  var REVIEW_TONE = { draft: 'neutral', in_review: 'accent', changes: 'warn', approved: 'good' };
+  function reviewOf(v) { return (v && v.review) || 'approved'; }
+  // One pill per variant: its review state until the copy is approved, then where it stands.
+  function stateOf(v) {
+    var r = reviewOf(v);
+    if (v.status === 'retired') return { label: 'Retired', tone: 'neutral' };
+    if (r !== 'approved') return { label: REVIEW_WORD[r], tone: REVIEW_TONE[r] };
+    var word = STATUS_WORD[v.status] || str(v.status);
+    return { label: word, tone: v.status === 'live' ? 'good' : v.status === 'paused' ? 'warn' : 'neutral' };
+  }
+  function usePersona() { return MC.hooks.useUi(function (s) { return s.persona || 'admin'; }) || 'admin'; }
+  function personaName(id) { try { return MC.catalog.personaName(id); } catch (e) { return str(id); } }
+  function can(who, perm) { try { return MC.catalog.can(who, perm); } catch (e) { return true; } }
+  function whoLabel(by) {
+    if (!by || by === 'user') return 'A teammate';
+    var ag = agentOf(by);
+    return ag ? agentName(ag) : personaName(by);
+  }
+  // Word-level diff (longest common subsequence) between two strings.
+  function wordDiff(a, b) {
+    var x = str(a).split(/(\s+)/).filter(Boolean), y = str(b).split(/(\s+)/).filter(Boolean);
+    var n = x.length, m = y.length, L = [], i, j;
+    for (i = 0; i <= n; i++) { L.push([]); for (j = 0; j <= m; j++) L[i].push(0); }
+    for (i = n - 1; i >= 0; i--) for (j = m - 1; j >= 0; j--) L[i][j] = x[i] === y[j] ? L[i + 1][j + 1] + 1 : Math.max(L[i + 1][j], L[i][j + 1]);
+    var out = [], push = function (t, w) { if (out.length && out[out.length - 1].t === t) out[out.length - 1].s += w; else out.push({ t: t, s: w }); };
+    i = 0; j = 0;
+    while (i < n && j < m) {
+      if (x[i] === y[j]) { push('same', x[i]); i++; j++; }
+      else if (L[i + 1][j] >= L[i][j + 1]) { push('del', x[i]); i++; }
+      else { push('add', y[j]); j++; }
+    }
+    while (i < n) { push('del', x[i++]); }
+    while (j < m) { push('add', y[j++]); }
+    return out;
+  }
+  MC.content.wordDiff = wordDiff;
 
   /* ---------------- module memory (never written to the world) ---------------- */
   var drafts = {};             // key -> {fields, baseFields, baseVer, tone, offer, productId, channel}
@@ -222,17 +255,21 @@
     var cs = React.useState(false), showDone = cs[0], setShowDone = cs[1];
     var Seg = MC.ui && MC.ui.Segmented;
     var needle = q.trim().toLowerCase();
+    var who = usePersona();
+    var canReview = can(who, 'copy');
 
     function hookText(v) {
       var full = variants && variants.byId[v.id];
       return full ? str(full.fields && full.fields[hookOf(full.channel)]) : '';
     }
+    var needsMine = !canReview || !variants ? 0 : Object.keys(variants.byId).filter(function (k) { return reviewOf(variants.byId[k]) === 'in_review' && variants.byId[k].status !== 'retired'; }).length;
     var groups = lib.map(function (g) {
       var vs = g.variants.filter(function (v) {
         if (v.status === 'retired' && v.id !== p.selectedId) return false;
         if (filter === 'draft' && v.status !== 'draft') return false;
         if (filter === 'live' && v.status !== 'live') return false;
         if (filter === 'agent' && !agentOf(v.author)) return false;
+        if (filter === 'mine' && !(canReview && variants && variants.byId[v.id] && reviewOf(variants.byId[v.id]) === 'in_review')) return false;
         if (needle) {
           var hay = (g.name + ' ' + v.name + ' ' + chLabel(v.channel) + ' ' + hookText(v)).toLowerCase();
           if (hay.indexOf(needle) < 0) return false;
@@ -250,14 +287,16 @@
       var ag = agentOf(v.author);
       var hook = hookText(v);
       var dirty = isDirtyKey(draftKey(v.id));
+      var full = variants && variants.byId[v.id];
+      var st = stateOf(full ? Object.assign({}, v, { review: full.review }) : v);
       return h`<li key=${v.id}>
         <button type="button" id=${'cs-lib-' + v.id} className=${cx('cs-lib-row', on && 'is-on')} aria-current=${on ? 'true' : null}
           onClick=${function () { p.onSelect(v.id, v.channel); }}>
           <span className="cs-lib-name">
-            <span className=${'cs-sdot is-' + v.status} aria-hidden="true"></span>
+            <span className=${'cs-sdot is-' + (st.tone === 'good' ? 'live' : st.tone === 'warn' ? 'paused' : st.tone === 'accent' ? 'review' : 'draft')} aria-hidden="true"></span>
             <span className="cs-lib-title">${chLabel(v.channel)} ${v.name}</span>
             ${ag ? h`<span className="cs-adot" title=${'Drafted by ' + agentName(ag)}><span className="sr-only">${' drafted by ' + agentName(ag)}</span></span>` : null}
-            <span className="cs-lib-meta num">${STATUS_WORD[v.status] || v.status}${v.status === 'live' ? ' ' + DOT + ' ' + fmtShare(v.share) : ''}${dirty ? ' ' + DOT + ' unsaved' : ''}</span>
+            <span className="cs-lib-meta num">${st.label}${v.status === 'live' && st.label === 'Live' ? ' ' + DOT + ' ' + fmtShare(v.share) : ''}${dirty ? ' ' + DOT + ' unsaved' : ''}</span>
           </span>
           <span className="cs-lib-hook">${hook || h`<span className="cs-muted">No ${fieldLabel(hookOf(v.channel)).toLowerCase()} yet</span>`}</span>
         </button>
@@ -281,9 +320,11 @@
       ${Seg ? h`<${Seg} id="cs-filter" label="Filter variants" size="sm" options=${FILTERS} value=${filter} onChange=${setFilter} block=${true} />`
         : h`<select id="cs-filter" className="k-select" value=${filter} onChange=${function (e) { setFilter(e.target.value); }}>
             ${FILTERS.map(function (f) { return h`<option key=${f.value} value=${f.value}>${f.label}</option>`; })}</select>`}
+      <button type="button" id="cs-filter-mine" className=${cx('cs-mine', filter === 'mine' && 'is-on')} aria-pressed=${filter === 'mine' ? 'true' : 'false'}
+        onClick=${function () { setFilter(filter === 'mine' ? 'all' : 'mine'); }}>Needs my review${needsMine ? ' (' + needsMine + ')' : ''}</button>
       <${CopyDrafterNote} />
       ${!lib.length ? h`<p className="cs-empty">No content yet. Start from a campaign or generate variants from a tone and product.</p>`
-        : !groups.length ? h`<p className="cs-empty">Nothing matches. Try another search or filter.</p>`
+        : !groups.length ? h`<p className="cs-empty">${filter === 'mine' ? (canReview ? 'Nothing is waiting for your review.' : 'Your role can’t approve copy.') : 'Nothing matches. Try another search or filter.'}</p>`
         : h`<ul className="cs-lib-groups">
             ${active.map(group)}
             ${done.length ? (showDone ? done.map(group) : null) : null}
@@ -438,6 +479,75 @@
     </div>`;
   }
 
+  function ReviewBar(p) {
+    var React = R();
+    var v = p.variant;
+    var who = usePersona();
+    var ns = React.useState(''), note = ns[0], setNote = ns[1];
+    var ms = React.useState(null), msg = ms[0], setMsg = ms[1];
+    var r = reviewOf(v);
+    var canApprove = can(who, 'copy'), canSubmit = can(who, 'submit');
+    var last = (v.history || EMPTY).filter(function (x) { return x.kind === 'review'; }).slice(-1)[0];
+    function act(review) {
+      var res = dispatch('variant/setReview', { id: v.id, review: review, note: note.trim() || undefined });
+      if (!res.ok) setMsg({ tone: 'crit', text: res.error || 'Couldn’t change the review state.' }); else { setMsg(null); setNote(''); }
+    }
+    if (r === 'approved') {
+      return h`<p className="cs-review-line cs-muted">${last ? 'Copy approved by ' + personaName(last.by) + (last.note ? ': ' + last.note : '') + '.' : 'Copy approved.'}
+        ${canSubmit ? h` <button type="button" className="cs-link" id="cs-reopen" onClick=${function () { act('in_review'); }}>Send back to review</button>` : null}</p>`;
+    }
+    var line = { draft: 'Draft. Send it to review before it can take traffic.', in_review: 'Waiting for review. It gets no traffic until it’s approved.',
+      changes: 'Changes requested' + (last && last.note ? ': ' + last.note : '.') }[r];
+    return h`<div className="cs-review">
+      <p className="cs-review-line">${line}${p.dirty ? ' Save your edits first.' : ''}</p>
+      <div className="cs-review-act">
+        <input className="k-input cs-input cs-review-note" type="text" maxLength="240" aria-label="Review note (optional)" placeholder="Note (optional)" value=${note}
+          onChange=${function (e) { setNote(e.target.value); }} />
+        ${(r === 'draft' || r === 'changes') ? h`<${Btn} kind="primary" id="cs-submit-review" disabled=${!canSubmit || p.dirty} onClick=${function () { act('in_review'); }}>Submit for review<//>` : null}
+        ${r === 'in_review' ? h`<${Btn} kind="primary" id="cs-approve" disabled=${!canApprove} onClick=${function () { act('approved'); }}>Approve<//>
+          <${Btn} kind="secondary" id="cs-request-changes" disabled=${!canApprove} onClick=${function () { act('changes'); }}>Request changes<//>` : null}
+      </div>
+      ${r === 'in_review' && !canApprove ? h`<p className="cs-hint">Your role can’t approve copy. Switch to a content lead, brand approver or admin under Viewing as.</p>` : null}
+      <${Msg} msg=${msg} />
+    </div>`;
+  }
+
+  function VersionHistory(p) {
+    var React = R();
+    var v = p.variant;
+    var open = React.useState(false), isOpen = open[0], setOpen = open[1];
+    var now = useSel(function (w) { return w.meta.tick; });
+    var hist = v.history || EMPTY;
+    var rows = hist.map(function (e, i) {
+      var prev = i > 0 ? hist.slice(0, i).reverse().filter(function (x) { return x.fields; })[0] : null;
+      return { e: e, prev: prev };
+    }).reverse();
+    var n = hist.length;
+    return h`<section className="cs-versions" aria-label="Version history">
+      <button type="button" id="cs-versions-toggle" className="cs-link" aria-expanded=${isOpen ? 'true' : 'false'} onClick=${function () { setOpen(!isOpen); }}>
+        ${isOpen ? 'Hide history' : 'History' + (n ? ' (' + n + ')' : '')}</button>
+      ${isOpen ? (n ? h`<ol className="cs-vlist">${rows.map(function (x, k) {
+        var e = x.e, when = relTime(e.tick, now);
+        var head = e.kind === 'create' ? 'Created' : e.kind === 'review' ? (REVIEW_WORD[e.review] === 'Approved' ? 'Approved' : e.review === 'in_review' ? 'Sent to review' : e.review === 'changes' ? 'Changes requested' : 'Moved to draft') : 'Edited';
+        var diffs = [];
+        if (e.kind === 'edit' && x.prev) {
+          Object.keys(Object.assign({}, x.prev.fields, e.fields)).forEach(function (f) {
+            if (str(x.prev.fields[f]) !== str(e.fields[f])) diffs.push({ f: f, d: wordDiff(x.prev.fields[f], e.fields[f]) });
+          });
+        }
+        return h`<li key=${k} className="cs-vrow">
+          <p className="cs-vhead"><strong>${head}</strong> ${DOT} ${whoLabel(e.by)}${when ? ' ' + DOT + ' ' + when : ''}</p>
+          ${e.note ? h`<p className="cs-vnote">${e.note}</p>` : null}
+          ${diffs.map(function (d) {
+            return h`<p key=${d.f} className="cs-vdiff"><span className="cs-vfield">${fieldLabel(d.f)}</span> ${d.d.map(function (t, j) {
+              return t.t === 'same' ? t.s : t.t === 'add' ? h`<ins key=${j}>${t.s}</ins>` : h`<del key=${j}>${t.s}</del>`;
+            })}</p>`;
+          })}
+        </li>`;
+      })}</ol>` : h`<p className="cs-hint">No edits are recorded for this copy yet. Changes from now on appear here with who made them and why.</p>`) : null}
+    </section>`;
+  }
+
   function Composer(p) {
     var React = R();
     var S = p.S, d = S.d, v = p.variant, ch = d.channel;
@@ -486,8 +596,9 @@
     }
     function saveInPlace() {
       var f = changes(); if (!f) return;
-      var r = dispatch('variant/update', { id: v.id, fields: f });
+      var r = dispatch('variant/update', { id: v.id, fields: f, note: saveNote.trim() || undefined });
       if (!r.ok) { setMsg({ tone: 'crit', text: r.error || 'Couldn’t save.' }); return; }
+      setSaveNote('');
       var nv = world() && world().variants.byId[v.id];
       S.markSaved(nv ? nv.ver : null);
       setMsg({ tone: 'good', text: 'Saved.' });
@@ -510,7 +621,9 @@
     var hookLabel = v ? chLabel(v.channel) + ' ' + DOT + ' Variant ' + v.name : 'New ' + ({ email: 'email', sms: 'SMS', push: 'push', social: 'social ad', web: 'web ad' }[ch] || ch) + ' draft';
     var Conflict = MC.ui && MC.ui.ConflictChip;
     var upAgent = v ? agentOf(v.updatedBy) : null;
-    var StatusPill = MC.ui && MC.ui.StatusPill;
+    var Pill = MC.ui && MC.ui.Pill;
+    var stt = v ? stateOf(v) : null;
+    var nsSt = React.useState(''), saveNote = nsSt[0], setSaveNote = nsSt[1];
 
     var saveRow;
     if (readOnly) saveRow = h`<p className="cs-note">${v.status === 'retired' ? 'This variant is retired, so it can’t be edited. Generate a new one below.' : 'Completed campaigns can’t be changed.'}</p>`;
@@ -545,10 +658,11 @@
           ${v && camp ? h`<p className="cs-sub">${camp.name}${v.status === 'live' && camp.alloc && camp.alloc[v.channel] ? ' ' + DOT + ' ' + fmtShare(camp.alloc[v.channel][v.id] || 0) + ' of ' + chWord(v.channel) + ' traffic' : ''}</p>`
             : h`<p className="cs-sub">Pick a variant on the left, or generate new ones below.</p>`}
         </div>
-        ${v ? (StatusPill ? h`<${StatusPill} status=${v.status} />` : h`<span className="cs-muted">${STATUS_WORD[v.status]}</span>`)
+        ${v ? (Pill ? h`<${Pill} tone=${stt.tone}>${stt.label}<//>` : h`<span className="cs-muted">${stt.label}</span>`)
           : h`<${ChannelPicker} value=${ch} onChange=${p.onChannel} />`}
       </header>
       ${v ? h`<${AgentLine} variant=${v} />` : null}
+      ${v && !readOnly ? h`<${ReviewBar} variant=${v} dirty=${S.dirty} />` : null}
       ${S.conflict && Conflict ? h`<${Conflict} agentId=${upAgent || undefined} who=${upAgent ? undefined : 'someone else'} onTheirs=${S.takeTheirs} onMine=${S.keepMine} />` : null}
       <div className="cs-fields">
         ${textFields.map(function (k) {
@@ -573,8 +687,14 @@
         ${d.fields.imageId !== undefined ? h`<${ImagePicker} value=${d.fields.imageId} readOnly=${readOnly} onPick=${pickImage} />` : null}
         ${d.fields.alt !== undefined && d.fields.imageId ? h`<${FieldRow} k="alt" value=${d.fields.alt} limit=${limitFor('alt', brand)} vlike=${vlike} readOnly=${readOnly} onChange=${S.setField} onFocusField=${onFocusField} />` : null}
       </div>
+      ${v && !readOnly && S.dirty ? h`<div className="cs-field cs-notefield">
+        <label className="cs-label" htmlFor="cs-save-note">Note on this change (optional)</label>
+        <input id="cs-save-note" className="k-input cs-input" type="text" maxLength="240" value=${saveNote} placeholder="Why you changed it"
+          onChange=${function (e) { setSaveNote(e.target.value); }} />
+      </div>` : null}
       ${saveRow}
       <${Msg} msg=${msg} />
+      ${v ? h`<${VersionHistory} variant=${v} />` : null}
     </section>`;
   }
 
@@ -1112,7 +1232,7 @@
       </section>
       <section className="cs-vsec" aria-labelledby="cs-v-claims">
         <h2 className="cs-h2" id="cs-v-claims">Approved claims</h2>
-        <p className="cs-sub">Copy can state these. Superlatives, performance numbers, stock claims and policy promises that aren’t listed fail the checks. Changes here apply in this browser only.</p>
+        <p className="cs-sub">Copy can state these. Superlatives, performance numbers, stock claims and policy promises that aren’t listed fail the checks. Every change is logged with who made it.</p>
         <ul className="cs-rows">${claims.map(function (c) {
           return h`<li key=${c.id} className="cs-row">
             <span className="cs-row-main"><strong>${c.text}</strong><span className="cs-muted cs-row-src">Source: ${c.source}</span></span>

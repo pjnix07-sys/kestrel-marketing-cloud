@@ -566,6 +566,57 @@
      Campaign detail
      ================================================================ */
   var WRAP_TAB = { id: 'wrap', label: 'Wrap report' };
+  var READY_TAB = { id: 'readiness', label: 'Readiness' };
+  var READY_HELP = {
+    test: 'Sends every message in this campaign to the seed list: 5 internal addresses.',
+    links: 'Every link opens the right page and carries its campaign tags.',
+    legal: 'Offer terms, claims and unsubscribe wording have been read by legal.',
+    consent: 'Everyone in the audience has agreed to hear from you on these channels.',
+    creative: 'Every variant has been approved in Content Studio.'
+  };
+  function usePersona() { return MC.hooks.useUi(function (s) { return s.persona || 'admin'; }) || 'admin'; }
+  function personaName(id) { try { return MC.catalog.personaName(id); } catch (e) { return String(id || ''); } }
+  function canDo(who, perm) { try { return MC.catalog.can(who, perm); } catch (e) { return true; } }
+  var READY_PERM = { test: 'check', links: 'check', legal: 'legal', consent: 'check', creative: 'copy' };
+  function readyState(c) {
+    var items = (MC.catalog && MC.catalog.READY_ITEMS) || EMPTY, r = c.readiness || EMPTY_OBJ;
+    var done = items.filter(function (k) { return r[k] && r[k].done; });
+    return { items: items, done: done.length, total: items.length, all: done.length === items.length, r: r };
+  }
+  function ReadinessTab(p) {
+    var c = p.campaign, tick = p.tick;
+    var who = usePersona();
+    var es = R().useState(null), err = es[0], setErr = es[1];
+    var rs = readyState(c);
+    var locked = c.status !== 'draft' && c.status !== 'scheduled';
+    function run(payload) { var r = dispatch('campaign/setReadiness', Object.assign({ id: c.id }, payload)); setErr(r.ok ? null : (r.error || 'That didn’t work.')); }
+    return h`<div className="cm-ready">
+      <p className="cm-ready-sum"><strong>${rs.done} of ${rs.total}</strong> checks done. ${rs.all ? 'This campaign is ready to schedule.' : 'Scheduling opens when every check is done.'}</p>
+      <${Msg} text=${err} tone="crit" />
+      <ul className="cm-ready-list">${rs.items.map(function (k) {
+        var st = rs.r[k] || EMPTY_OBJ, owner = st.owner || (MC.catalog.READY_OWNER || EMPTY_OBJ)[k];
+        var ok = canDo(who, READY_PERM[k]);
+        return h`<li key=${k} className="cm-ready-row">
+          <div className="cm-ready-main">
+            <p className="cm-ready-title"><span className=${cx('cm-ready-mark', st.done && 'is-done')} aria-hidden="true"></span>${MC.catalog.READY_LABEL[k]}</p>
+            <p className="cm-muted cm-small">${READY_HELP[k]}</p>
+            <p className="cm-muted cm-small">${st.done ? (k === 'test' && st.note ? st.note + '. ' : '') + 'Done by ' + personaName(st.by) + ', ' + rel(st.tick, tick) + '.' : 'Not done yet.'}</p>
+          </div>
+          <div className="cm-ready-act">
+            <label className="cm-small cm-muted" htmlFor=${'cmp-ready-owner-' + k}>Owner</label>
+            <select id=${'cmp-ready-owner-' + k} className="k-select k-select--sm" value=${owner} disabled=${locked}
+              onChange=${function (e) { run({ item: k, owner: e.target.value }); }}>
+              ${MC.catalog.PERSONAS.map(function (x) { return h`<option key=${x.id} value=${x.id}>${x.name}</option>`; })}
+            </select>
+            ${k === 'test' ? h`<${Btn} kind="secondary" size="sm" id="cmp-ready-send-test" disabled=${locked || !ok} onClick=${function () { run({ item: 'test', done: true, send: true }); }}>${st.done ? 'Send another test' : 'Send test'}<//>` : null}
+            ${k !== 'test' ? h`<${Btn} kind=${st.done ? 'ghost' : 'secondary'} size="sm" id=${'cmp-ready-' + k} disabled=${locked || !ok}
+              onClick=${function () { run({ item: k, done: !st.done }); }}>${st.done ? 'Reopen' : 'Mark done'}<//>` : (st.done ? h`<${Btn} kind="ghost" size="sm" disabled=${locked || !ok} onClick=${function () { run({ item: 'test', done: false }); }}>Reopen<//>` : null)}
+          </div>
+          ${!ok ? h`<p className="cm-muted cm-small cm-ready-role">Your role can’t sign this off.</p>` : null}
+        </li>`;
+      })}</ul>
+    </div>`;
+  }
   var DETAIL_TABS = [
     { id: 'overview', label: 'Overview' }, { id: 'journey', label: 'Journey' }, { id: 'content', label: 'Content' },
     { id: 'audience', label: 'Audience' }, { id: 'budget', label: 'Budget' }, { id: 'activity', label: 'Activity' }
@@ -604,11 +655,10 @@
     var c = p.campaign;
     var sel = R().useCallback(function (w) { return hasSel('campaignLift') ? call('campaignLift', w, c.id) : null; }, [c.id]);
     var lift = useSel(sel);
-    var holdout = fin(c.holdoutPct) ? c.holdoutPct : 10;
     if (!hasSel('campaignLift') || !lift) {
       return h`<section className="cm-side-sec cm-liftcard" aria-labelledby="cmp-lift-title">
-        ${p.bare ? null : h`<h2 className="cm-h3" id="cmp-lift-title">Lift vs control</h2>`}
-        <p className="cm-muted cm-small">Lift appears once the ${holdout}% holdout group has enough sends to compare.</p>
+        ${p.bare ? null : h`<h2 className="cm-h3" id="cmp-lift-title">Lift vs held-out customers</h2>`}
+        <p className="cm-muted cm-small">Lift appears once there is enough to compare with customers held out from all messages.</p>
       </section>`;
     }
     var tr = scalar(lift.treated), ct = scalar(lift.control);
@@ -618,19 +668,25 @@
     var body;
     if (!lift.ready || !fin(lift.liftPct)) {
       body = h`<p className="cm-lift"><strong>Too early</strong></p>
-        <p className="cm-muted cm-small">${lift.note || 'The holdout group (' + holdout + '% of the audience) needs more sends before the comparison means anything.'}</p>`;
+        <p className="cm-muted cm-small">${lift.note || 'Customers held out from all messages need more time before the comparison means anything.'}</p>`;
     } else {
       var up = lift.liftPct > 0;
-      body = h`<p className="cm-lift num"><strong>${signedPct(lift.liftPct)}</strong>
-          ${fin(lift.lo) && fin(lift.hi) ? h`<span className="cm-muted"> (likely ${signedPct(lift.lo)} to ${signedPct(lift.hi)})</span>` : null}</p>
-        <p className="cm-lift-sentence">${fin(tr) && fin(ct)
-          ? 'People who got this campaign brought in ' + v(tr) + ' each, against ' + v(ct) + ' in the holdout group: ' + (up ? 'a gain' : 'a drop') + ' of ' + pctUnits(Math.abs(lift.liftPct)) + '.'
-          : 'Compared with the holdout group, this campaign is ' + (up ? 'ahead' : 'behind') + ' by ' + pctUnits(Math.abs(lift.liftPct)) + ' on ' + metric + '.'}
-          ${fin(lift.lo) && fin(lift.hi) && lift.lo < 0 && lift.hi > 0 ? ' The range includes zero, so it could still be noise.' : ''}</p>
-        <p className="cm-muted cm-small num">${fin(lift.nTreated) ? num(lift.nTreated) + ' people reached, ' : ''}${fin(lift.nControl) ? num(lift.nControl) + ' in the holdout.' : ''} ${lift.note || ''}</p>`;
+      var spans = fin(lift.lo) && fin(lift.hi) && lift.lo < 0 && lift.hi > 0;
+      if (spans) {
+        body = h`<p className="cm-lift"><strong>Too close to call</strong></p>
+          <p className="cm-lift-sentence">The held-out group is small${fin(lift.nControl) ? ' (' + num(lift.nControl) + ' people)' : ''}, so the gap between ${fin(tr) ? v(tr) : 'reached customers'} and ${fin(ct) ? v(ct) : 'customers held out from all messages'} per person could still be noise.</p>
+          <p className="cm-muted cm-small num">${fin(lift.nTreated) ? num(lift.nTreated) + ' people reached' : ''}${fin(lift.lo) ? ', likely ' + signedPct(lift.lo) + ' to ' + signedPct(lift.hi) + '.' : ''} ${lift.note || ''}</p>`;
+      } else {
+        body = h`<p className="cm-lift num"><strong>${signedPct(lift.liftPct)}</strong>
+            ${fin(lift.lo) && fin(lift.hi) ? h`<span className="cm-muted"> (likely ${signedPct(lift.lo)} to ${signedPct(lift.hi)})</span>` : null}</p>
+          <p className="cm-lift-sentence">${fin(tr) && fin(ct)
+            ? 'People who got this campaign brought in ' + v(tr) + ' each, against ' + v(ct) + ' from customers held out from all messages: ' + (up ? 'a gain' : 'a drop') + ' of ' + pctUnits(Math.abs(lift.liftPct)) + '.'
+            : 'Compared with customers held out from all messages, this campaign is ' + (up ? 'ahead' : 'behind') + ' by ' + pctUnits(Math.abs(lift.liftPct)) + ' on ' + metric + '.'}</p>
+          <p className="cm-muted cm-small num">${fin(lift.nTreated) ? num(lift.nTreated) + ' people reached, ' : ''}${fin(lift.nControl) ? num(lift.nControl) + ' held out.' : ''} ${lift.note || ''}</p>`;
+      }
     }
     return h`<section className="cm-side-sec cm-liftcard" aria-labelledby="cmp-lift-title">
-      ${p.bare ? null : h`<h2 className="cm-h3" id="cmp-lift-title">Lift vs control</h2>`}${body}</section>`;
+      ${p.bare ? null : h`<h2 className="cm-h3" id="cmp-lift-title">Lift vs held-out customers</h2>`}${body}</section>`;
   }
 
   function PacingNote(p) {
@@ -691,6 +747,9 @@
     }, [c, items]);
     var GL = MC.ui && MC.ui.GuardrailList;
     var fails = checks ? checks.filter(function (x) { return x.status === 'fail'; }).length : 0;
+    var rs = readyState(c);
+    var who = usePersona();
+    var canSchedule = canDo(who, 'schedule');
     function schedule() {
       var r = dispatch('campaign/setStatus', { id: c.id, status: 'scheduled' });
       if (r.ok) { setErr(null); p.onClose(); } else setErr(r.error || 'Couldn’t schedule this campaign.');
@@ -700,11 +759,14 @@
       <${Collisions} campaignId=${c.id} id="cmp-schedule-collisions" />
       ${checks && GL ? h`<${GL} items=${checks.map(function (x) { return { id: x.id, label: x.label, status: x.status, detail: x.detail, blocking: x.status === 'fail' }; })} ariaLabel="Preflight checks" />`
         : h`<p className="cm-muted">Preflight checks are unavailable right now.</p>`}
+      <p className="cm-small num" id="cmp-schedule-ready">${rs.all ? 'Launch checklist done (' + rs.total + ' of ' + rs.total + ').'
+        : 'Launch checklist: ' + rs.done + ' of ' + rs.total + ' done.'} ${rs.all ? null : h`<${Link} onClick=${function () { setFocus({ tab: 'readiness' }); p.onClose(); }}>Open readiness<//>`}</p>
       <${Msg} text=${err} tone="crit" />
       <div className="cm-row cm-gap-top">
-        <${Btn} kind="primary" id="cmp-schedule-confirm" disabled=${!checks || fails > 0} onClick=${schedule}>Schedule campaign<//>
+        <${Btn} kind="primary" id="cmp-schedule-confirm" disabled=${!checks || fails > 0 || !rs.all || !canSchedule} onClick=${schedule}>Schedule campaign<//>
         <${Btn} kind="ghost" onClick=${p.onClose}>Not yet<//>
         ${fails ? h`<span className="cm-muted cm-small">${plural(fails, 'check needs', 'checks need')} fixing first.</span>` : null}
+        ${!canSchedule ? h`<span className="cm-muted cm-small">Your role can’t schedule campaigns.</span>` : null}
       </div>
     <//>`;
   }
@@ -1373,7 +1435,7 @@
         </table></div>
       <//>
       <div className="cm-wrap-cols">
-        <${Panel} id="cmp-wrap-lift" title="Lift vs control"><${LiftCard} campaign=${c} bare=${true} /><//>
+        <${Panel} id="cmp-wrap-lift" title="Lift vs held-out customers" sub="Compared with customers held out from all messages."><${LiftCard} campaign=${c} bare=${true} /><//>
         <${Panel} id="cmp-wrap-agents" title="What agents changed" sub=${changes.length ? plural(changes.length, 'change', 'changes') + ' while it ran.' : 'Agents made no changes to this campaign.'}>
           ${changes.length ? h`<ul className="cm-rows">${Object.keys(byAgent).map(function (id) {
             return h`<li key=${id} className="cm-rowline"><${AgentNote} text=${agentName(id)} /><span className="num">${plural(byAgent[id], 'change', 'changes')}</span></li>`;
@@ -1408,10 +1470,13 @@
         <p className="cm-muted">This item was removed (by your undo), or it never existed.</p>
       </div>`;
     }
-    var tabs = c.status === 'completed' ? [DETAIL_TABS[0], WRAP_TAB].concat(DETAIL_TABS.slice(1)) : DETAIL_TABS;
+    var rdy = readyState(c);
+    var tabs = c.status === 'completed' ? [DETAIL_TABS[0], WRAP_TAB].concat(DETAIL_TABS.slice(1))
+      : (c.status === 'draft' || c.status === 'scheduled') ? [DETAIL_TABS[0], Object.assign({}, READY_TAB, { count: rdy.done + '/' + rdy.total })].concat(DETAIL_TABS.slice(1)) : DETAIL_TABS;
     var tab = tabs.some(function (t) { return t.id === focus.tab; }) ? focus.tab : 'overview';
     var body;
     if (tab === 'wrap') body = h`<${WrapTab} key=${c.id} campaign=${c} tick=${tick} />`;
+    else if (tab === 'readiness') body = h`<${ReadinessTab} key=${c.id} campaign=${c} tick=${tick} />`;
     else if (tab === 'journey') body = h`<${Journey} key=${c.id} campaign=${c} />`;
     else if (tab === 'content') body = h`<${ContentTab} campaign=${c} />`;
     else if (tab === 'audience') body = h`<${AudienceTab} key=${c.id} campaign=${c} tick=${tick} />`;
@@ -1512,7 +1577,37 @@
     var TI = ui('TextInput'), NI = ui('NumberInput'), Sel = ui('Select'), TA = ui('TextArea'), Field = ui('Field'), Seg = MC.ui && MC.ui.Segmented, CT = MC.ui && MC.ui.ChipToggle;
     var segOpts = [{ value: '', label: 'Let the planner suggest' }].concat(p.segments.map(function (s) { return { value: s.id, label: s.name + ' (' + num(s.count) + ')' }; }));
     function patch(k, v) { var n = Object.assign({}, b); n[k] = v; set(n); }
+    var aiOn = !!(MC.ai && has(MC.ai, 'isOn') && MC.ai.isOn() && MC.ai.tasks && has(MC.ai.tasks, 'briefFromText'));
+    var ws = R().useState(''), line = ws[0], setLine = ws[1];
+    var bs = R().useState(false), busy = bs[0], setBusy = bs[1];
+    var ms = R().useState(null), wmsg = ms[0], setWmsg = ms[1];
+    function writeBrief() {
+      if (!line.trim() || busy) return;
+      setBusy(true); setWmsg(null);
+      MC.ai.tasks.briefFromText(line.trim()).then(function (nb) {
+        setBusy(false);
+        if (!nb) { setWmsg('Couldn’t write a brief from that. Try adding a goal, a channel and dates.'); return; }
+        var n = Object.assign({}, b, {
+          name: nb.name || b.name, goal: { type: (nb.goal && nb.goal.type) || b.goal.type, target: (nb.goal && nb.goal.target > 0) ? nb.goal.target : b.goal.target },
+          productFocus: nb.productFocus !== undefined ? nb.productFocus : b.productFocus, segmentId: nb.segmentId !== undefined ? nb.segmentId : b.segmentId,
+          budget: fin(nb.budget) ? nb.budget : b.budget, startDay: fin(nb.startDay) ? nb.startDay : b.startDay, endDay: fin(nb.endDay) ? nb.endDay : b.endDay,
+          channels: Array.isArray(nb.channels) && nb.channels.length ? nb.channels : b.channels, tone: nb.tone || b.tone, offer: nb.offer || b.offer,
+          notes: nb.notes || b.notes || ''
+        });
+        set(n);
+        setWmsg('Filled in the brief below. Check it and change anything.');
+      }, function () { setBusy(false); setWmsg('Couldn’t write a brief right now. You can fill it in by hand.'); });
+    }
     return h`<div className="cm-brief" id="cmp-brief">
+      ${aiOn ? h`<div className="cm-writebrief">
+        <label className="cm-label" htmlFor="brief-describe">Write the brief for me</label>
+        <div className="cm-writebrief-row">
+          <input id="brief-describe" className="k-input" type="text" maxLength="300" value=${line} placeholder="e.g. Win back lapsed customers with free shipping, email and push, two weeks, $4k"
+            onChange=${function (e) { setLine(e.target.value); }} onKeyDown=${function (e) { if (e.key === 'Enter') { e.preventDefault(); writeBrief(); } }} />
+          <${Btn} kind="secondary" id="brief-describe-go" disabled=${!line.trim() || busy} onClick=${writeBrief}>${busy ? 'Writing' + ELL : 'Write brief'}<//>
+        </div>
+        ${wmsg ? h`<p className="cm-muted cm-small" role="status">${wmsg}</p>` : null}
+      </div>` : null}
       <${Field} id="brief-name" label="Campaign name" error=${p.showErrors ? errs.name : null}>
         <${TI} id="brief-name" value=${b.name} maxLength=${80} placeholder="e.g. Cyber Monday follow-up" onChange=${function (v) { patch('name', v); }} />
       <//>

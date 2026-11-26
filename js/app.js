@@ -89,6 +89,61 @@
 
   function report(e) { if (window.console && console.error) console.error(e); }
 
+  /* ---------------- team personas: "Viewing as" (a synthetic team; persisted in this browser) ---------------- */
+  var PERSONA_KEY = 'mc.persona.v1';
+  (function initPersona() {
+    var id = 'admin';
+    try { var raw = window.localStorage && window.localStorage.getItem(PERSONA_KEY); if (raw && MC.catalog.persona(raw)) id = raw; } catch (e) { /* storage unavailable */ }
+    MC.uiStore.set({ persona: id, decisionNotes: {} });
+  })();
+  function selPersona(s) { return s.persona || 'admin'; }
+  function setPersona(id) {
+    if (!MC.catalog.persona(id)) return;
+    try { if (window.localStorage) window.localStorage.setItem(PERSONA_KEY, id); } catch (e) { /* ignore */ }
+    setUi({ persona: id });
+  }
+  function PersonaSwitch(p) {
+    var who = useUi(selPersona);
+    var cur = MC.catalog.persona(who);
+    return html`<div className="app-persona">
+      <label className="app-persona-label" htmlFor=${p.id || 'app-persona'}>Viewing as</label>
+      <span className="k-select-wrap k-select-wrap--sm"><select id=${p.id || 'app-persona'} className="k-select" value=${who}
+          onChange=${function (ev) { setPersona(ev.target.value); }}>
+        ${MC.catalog.PERSONAS.map(function (x) { return html`<option key=${x.id} value=${x.id}>${x.name + ', ' + x.role}</option>`; })}
+      </select></span>
+      ${cur && cur.perms.indexOf('approve') < 0 ? html`<span className="app-persona-note">Read only: can't approve or schedule.</span>` : null}
+    </div>`;
+  }
+  function canDo(perm) { return MC.catalog.can(MC.uiStore.getState().persona || 'admin', perm); }
+  function DecisionNote(p) {
+    var notes = useUi(function (s) { return s.decisionNotes; }) || {};
+    var who = useUi(selPersona);
+    if (!MC.catalog.can(who, 'approve')) return html`<p className="app-decide-ro">Your role can read this but not approve or dismiss it.</p>`;
+    return html`<div className="app-decide">
+      <label className="k-sr" htmlFor=${'note-' + p.id}>Note on your decision (optional)</label>
+      <input id=${'note-' + p.id} className="k-input app-decide-input" type="text" maxLength="240" placeholder="Add a note for the record (optional)"
+        value=${notes[p.id] || ''} onChange=${function (ev) { var v = ev.target.value, n = Object.assign({}, MC.uiStore.getState().decisionNotes); n[p.id] = v; setUi({ decisionNotes: n }); }} />
+      ${p.risk === 'high' ? html`<p className="app-decide-hint">${(p.signoffs && p.signoffs.length)
+        ? 'Signed off by ' + p.signoffs.map(function (x) { return MC.catalog.personaName(x.by); }).join(', ') + '. Needs a second approver.'
+        : 'High risk: needs two different approvers.'}</p>` : null}
+    </div>`;
+  }
+  function DecisionMeta(p) {
+    var now = useSel(function (w) { return w.meta.tick; });
+    var x = p.p;
+    var T = MC.time;
+    var when = (x.decidedTick !== undefined && T && T.relative) ? T.relative(x.decidedTick, now) : '';
+    var line = null;
+    if (x.status === 'applied') line = 'Approved by ' + (x.decidedBy ? MC.catalog.personaName(x.decidedBy) : 'a teammate');
+    else if (x.status === 'rejected') line = 'Dismissed by ' + (x.decidedBy ? MC.catalog.personaName(x.decidedBy) : 'a teammate');
+    else if (x.status === 'expired') line = 'Expired unreviewed after 48 hours';
+    if (!line) return null;
+    var why = x.decisionNote || (x.status === 'rejected' && x.dismissReason ? ({ 'not-now': 'Not now', wrong: 'Not a good idea', other: 'Other' })[x.dismissReason] : null);
+    return html`<p className="app-decided">${line}${when ? ' ' + DOT + ' ' + when : ''}${why ? html`<span className="app-decided-why">${' ' + DOT + ' ' + why}</span>` : null}</p>`;
+  }
+  MC.ui = MC.ui || {};
+  MC.ui.PersonaSwitch = PersonaSwitch; MC.ui.DecisionNote = DecisionNote; MC.ui.DecisionMeta = DecisionMeta;
+
   /* ---------------- jump ahead (the one time control, §11.1) ---------------- */
   function canJump() { return !!(MC.engine && typeof MC.engine.step === 'function'); }
   function jumpAhead(hours) {
@@ -184,6 +239,7 @@
           <span className="app-tenant-name">Fernway Outfitters</span>
           <span className="app-tenant-note">Sample data</span>
         </div>
+        <${PersonaSwitch} id="app-persona" />
         <div className="app-theme"><${ThemeControl} id="app-theme" /></div>
       </div>
     </aside>`;
@@ -245,6 +301,7 @@
       </button>
       ${Pop ? html`<${Pop} anchorRef=${anchor} open=${open} onClose=${close} label="More options" placement="bottom-end" width=${300} id="app-more-menu">
         <div className="app-menu">
+          <div className="app-menu-row app-menu-persona"><${PersonaSwitch} id="app-more-persona" /></div>
           ${canJump() ? html`<div className="app-menu-row" role="group" aria-label="Jump ahead">
             <span className="app-menu-row-label">Jump ahead</span>
             <button type="button" className="app-menu-link" id="app-jump-day" onClick=${function () { jump(24); }}>a day</button>
@@ -303,6 +360,8 @@
   /* ---------------- approvals drawer ---------------- */
   var RISKS = [{ value: 'low', label: 'Low risk' }, { value: 'medium', label: 'Medium risk' }, { value: 'high', label: 'High risk' }];
   var HISTORY_STATUSES = { applied: 1, rejected: 1, expired: 1, superseded: 1, undone: 1, stale: 1 };
+  var HISTORY_FILTERS = [{ value: '', label: 'All decisions' }, { value: 'applied', label: 'Approved' }, { value: 'rejected', label: 'Dismissed' },
+    { value: 'expired', label: 'Expired unreviewed' }, { value: 'undone', label: 'Undone' }];
   var EMPTY_TEXT = {
     needs: { title: 'Nothing needs you right now.', body: 'Agents on Suggest will queue changes here.' },
     applied: { title: 'No agent changes yet.', body: 'Agents on Autopilot apply changes that pass every guardrail. They show up here so you can review or undo them.' },
@@ -336,6 +395,9 @@
     var tabSt = useState('needs'), tab = tabSt[0], setTab = tabSt[1];
     var agSt = useState(''), agentF = agSt[0], setAgentF = agSt[1];
     var rkSt = useState(''), riskF = rkSt[0], setRiskF = rkSt[1];
+    var hsSt = useState(''), histF = hsSt[0], setHistF = hsSt[1];
+    var who = useUi(selPersona);
+    var canApprove = MC.catalog.can(who, 'approve');
     var cfSt = useState(false), confirm = cfSt[0], setConfirm = cfSt[1];
     var msgSt = useState(null), msg = msgSt[0], setMsg = msgSt[1];
     var moreSt = useState(30), limit = moreSt[0], setLimit = moreSt[1];
@@ -347,13 +409,13 @@
     var agentIds = [];
     base.forEach(function (x) { if (agentIds.indexOf(x.agentId) < 0) agentIds.push(x.agentId); });
     var filtered = base.filter(function (x) {
-      return (!agentF || x.agentId === agentF) && (!riskF || x.risk === riskF);
+      return (!agentF || x.agentId === agentF) && (!riskF || x.risk === riskF) && (tab !== 'history' || !histF || x.status === histF);
     });
     var frozen = MC.hooks.useFrozen ? MC.hooks.useFrozen(filtered, { key: 'id', freeze: hold }) : { items: filtered, pending: 0, reveal: function () {} };
     var shown = frozen.items.slice(0, limit);
-    var lowIds = tab === 'needs' ? filtered.filter(function (x) { return x.risk === 'low'; }).map(function (x) { return x.id; }) : [];
+    var lowIds = tab === 'needs' && canApprove ? filtered.filter(function (x) { return x.risk === 'low'; }).map(function (x) { return x.id; }) : [];
 
-    function switchTab(t) { setTab(t); setConfirm(false); setMsg(null); setLimit(30); setAgentF(''); setRiskF(''); }
+    function switchTab(t) { setHistF(''); setTab(t); setConfirm(false); setMsg(null); setLimit(30); setAgentF(''); setRiskF(''); }
     function approveLow() {
       var n = lowIds.length;
       var r = MC.store.dispatch({ type: 'proposal/approveMany', payload: { ids: lowIds.slice() } });
@@ -371,7 +433,14 @@
     return html`<div className="app-approvals">
       ${Tabs ? html`<${Tabs} id="approvals-tabs" label="Approvals" tabs=${tabs} value=${tab} onChange=${switchTab} panelId="approvals-panel" />` : null}
       <div id="approvals-panel" role="tabpanel" aria-labelledby=${'approvals-tabs-' + tab} className="app-approvals-panel">
-        ${base.length > 1 ? html`<div className="app-filters" role="group" aria-label="Filter proposals">
+        ${tab === 'history' && base.length ? html`<div className="app-filters" role="group" aria-label="Filter decisions">
+          <label className="k-sr" htmlFor="approvals-status">Decision</label>
+          <span className="k-select-wrap k-select-wrap--sm"><select id="approvals-status" className="k-select" value=${histF}
+              onChange=${function (ev) { setHistF(ev.target.value); }}>
+            ${HISTORY_FILTERS.map(function (f) { return html`<option key=${f.value} value=${f.value}>${f.label}</option>`; })}
+          </select></span>
+        </div>` : null}
+        ${base.length > 1 && tab !== 'history' ? html`<div className="app-filters" role="group" aria-label="Filter proposals">
           <label className="k-sr" htmlFor="approvals-agent">Agent</label>
           <span className="k-select-wrap k-select-wrap--sm"><select id="approvals-agent" className="k-select" value=${agentF}
               onChange=${function (ev) { setAgentF(ev.target.value); }}>
@@ -396,7 +465,9 @@
         ${shown.length ? html`<ul className="app-prop-list" onMouseEnter=${function () { setHold(true); }} onMouseLeave=${function () { setHold(false); }}
             onFocus=${function () { setHold(true); }} onBlur=${function (ev) { if (!ev.currentTarget.contains(ev.relatedTarget)) setHold(false); }}>
           ${shown.map(function (x) {
-            return html`<li key=${x.id}>${PC ? html`<${PC} id=${x.id} showTarget=${true} />` : html`<${ProposalFallback} p=${x} />`}</li>`;
+            return html`<li key=${x.id}>${PC ? html`<${PC} id=${x.id} showTarget=${true} />` : html`<${ProposalFallback} p=${x} />`}
+              ${tab === 'needs' ? html`<${DecisionNote} id=${x.id} risk=${x.risk} signoffs=${x.signoffs} />` : null}
+              ${tab === 'history' ? html`<${DecisionMeta} p=${x} />` : null}</li>`;
           })}
         </ul>` : (Empty ? html`<${Empty} icon=${tab === 'needs' ? 'check-circle' : 'inbox'}
             title=${base.length ? 'No proposals match these filters.' : e.title} body=${base.length ? 'Clear a filter to see more.' : e.body} />` : null)}
@@ -418,6 +489,7 @@
         <h3 id="app-menu-theme-h" className="app-menu-heading">Appearance</h3>
         <${ThemeControl} id="app-menu-theme" block=${true} />
       </section>
+      <section className="app-menu-section" aria-label="Viewing as"><${PersonaSwitch} id="app-menu-persona" /></section>
       <div className="app-tenant">
         <span className="app-tenant-name">Fernway Outfitters</span>
         <span className="app-tenant-note">Sample data</span>

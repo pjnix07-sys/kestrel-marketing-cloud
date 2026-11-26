@@ -22,6 +22,41 @@
   C.GOALS = GOALS; C.TONES = TONES; C.OFFERS = OFFERS; C.FIELD_KEYS = FIELD_KEYS; C.CADENCES = CADENCES;
   C.GOAL_LABEL = { revenue: 'Revenue', conversions: 'Conversions', reactivation: 'Reactivation', engagement: 'Engagement', launch: 'Launch' };
 
+  /* ---------------- team personas and roles (a synthetic team; proves the governance model) ---------------- */
+  var PERSONAS = [
+    { id: 'admin', name: 'Dana Whitfield', role: 'Admin', perms: ['approve', 'copy', 'legal', 'schedule', 'check', 'submit', 'settings'] },
+    { id: 'manager', name: 'Marcus Oyelaran', role: 'Campaign manager', perms: ['approve', 'schedule', 'check', 'submit'] },
+    { id: 'content', name: 'Priya Raman', role: 'Content lead', perms: ['copy', 'check', 'submit'] },
+    { id: 'legal', name: 'Elena Castellanos', role: 'Legal and brand approver', perms: ['approve', 'copy', 'legal', 'check', 'submit'] },
+    { id: 'analyst', name: 'Theo Lindqvist', role: 'Analyst', perms: [] }
+  ];
+  C.PERSONAS = PERSONAS;
+  C.persona = function (id) { for (var i = 0; i < PERSONAS.length; i++) if (PERSONAS[i].id === id) return PERSONAS[i]; return null; };
+  C.personaName = function (id) { var x = C.persona(id); return x ? x.name : (id || ''); };
+  // by === null/undefined means "no persona" (headless runs, replay): everything is allowed.
+  C.can = function (by, perm) { if (!by) return true; var x = C.persona(by); return !!x && x.perms.indexOf(perm) >= 0; };
+  function roleErr(ctx, perm, what) {
+    if (!ctx.user || C.can(ctx.by, perm)) return null;
+    var x = C.persona(ctx.by);
+    return (x ? x.role + 's' : 'This role') + ' can’t ' + what + '.';
+  }
+  function cleanNote(n) { return typeof n === 'string' && n.trim() ? n.trim().slice(0, 240) : null; }
+  function currentActor() {
+    try { var u = MC.uiStore && MC.uiStore.getState(); return (u && u.persona) || null; } catch (e) { return null; }
+  }
+  var READY_ITEMS = ['test', 'links', 'legal', 'consent', 'creative'];
+  var READY_OWNER = { test: 'manager', links: 'content', legal: 'legal', consent: 'admin', creative: 'content' };
+  var READY_PERM = { test: 'check', links: 'check', legal: 'legal', consent: 'check', creative: 'copy' };
+  var READY_LABEL = { test: 'Test send to the seed list', links: 'Links and UTMs checked', legal: 'Legal approved', consent: 'Consent verified', creative: 'Creative approved' };
+  C.READY_ITEMS = READY_ITEMS; C.READY_OWNER = READY_OWNER; C.READY_LABEL = READY_LABEL; C.SEED_COUNT = 5;
+  var REVIEWS = ['draft', 'in_review', 'changes', 'approved'];
+  C.REVIEWS = REVIEWS;
+  C.reviewOf = function (v) { return (v && v.review) || 'approved'; };
+  C.readyMissing = function (c) {
+    var r = (c && c.readiness) || {};
+    return READY_ITEMS.filter(function (k) { return !(r[k] && r[k].done); });
+  };
+
   function CH() { return MC.CH; }
   function U() { return MC.util; }
   function isNum(x) { return typeof x === 'number' && isFinite(x); }
@@ -54,7 +89,7 @@
     var origin = meta.origin || 'user';
     var tick = (meta.tick !== undefined && meta.tick !== null) ? meta.tick : world.meta.tick;
     return {
-      origin: origin, tick: tick, user: origin === 'user',
+      origin: origin, tick: tick, user: origin === 'user', by: meta.by || null, note: meta.note || null,
       agent: origin.indexOf('agent:') === 0,
       agentId: origin.indexOf('agent:') === 0 ? origin.slice(6) : null,
       created: []
@@ -126,16 +161,36 @@
     }
     var payload = U().clone(p);
     var tick = world.meta.tick;
+    var by = Object.prototype.hasOwnProperty.call(action, 'by') ? action.by : currentActor(); // replay passes the logged actor (or null)
+    if (isObj(payload)) {
+      if ((action.type === 'proposal/approve' || action.type === 'proposal/reject') && payload.note === undefined) {
+        try {
+          var dn = MC.uiStore && MC.uiStore.getState().decisionNotes;
+          if (dn && dn[payload.id]) payload.note = dn[payload.id];
+        } catch (e) { /* no ui */ }
+      }
+      if (payload.note !== undefined) payload.note = cleanNote(payload.note);
+    }
+    var note = isObj(payload) ? payload.note || null : null;
     var text = null;
     if (def.describe) { try { text = def.describe(world, payload); } catch (e) { text = null; } }
-    var r = C.apply(world, { type: action.type, payload: payload }, { origin: 'user', tick: tick });
+    var r = C.apply(world, { type: action.type, payload: payload }, { origin: 'user', tick: tick, by: by, note: note });
     if (!r.ok) return { ok: false, error: r.error };
-    world.log = (world.log || []).concat([{ seq: (world.log || []).length + 1, tick: tick, type: action.type, payload: payload }]);
+    var entry = { seq: (world.log || []).length + 1, tick: tick, type: action.type, payload: payload };
+    if (by) entry.by = by;
+    if (note) entry.note = note;
+    world.log = (world.log || []).concat([entry]);
+    if (note && (action.type === 'proposal/approve' || action.type === 'proposal/reject')) {
+      try {
+        var dn2 = MC.uiStore && MC.uiStore.getState().decisionNotes;
+        if (dn2 && dn2[payload.id] !== undefined) { var nn = assign({}, dn2); delete nn[payload.id]; MC.uiStore.set({ decisionNotes: nn }); }
+      } catch (e) { /* no ui */ }
+    }
     var silent = action.type.indexOf('proposal/') === 0 || action.type === 'insight/dismiss' ||
       action.type === 'agent/aiRun' || action.type.indexOf('ai/') === 0;
     if (!silent) {
       var ent = def.entity ? def.entity(payload, r.created) : null;
-      addFeed(world, { tick: tick, kind: 'user', entity: ent || undefined, text: text || action.type, tone: 'neutral' });
+      addFeed(world, { tick: tick, kind: 'user', entity: ent || undefined, text: text || action.type, tone: 'neutral', by: by || undefined });
     }
     return { ok: true, created: r.created };
   };
@@ -395,7 +450,9 @@
     var status = V_STATUSES.indexOf(v.status) >= 0 ? v.status : (c.status === 'draft' ? 'draft' : 'live');
     var out = {
       id: vid, campaignId: c.id, channel: v.channel, name: name, status: status, ctlStatus: status, ver: 1,
-      author: ctx.user ? 'user' : ctx.origin, fields: fields,
+      author: ctx.user ? (ctx.by || 'user') : ctx.origin, fields: fields,
+      review: ctx.agent ? 'in_review' : (REVIEWS.indexOf(v.review) >= 0 ? v.review : 'draft'),
+      history: [{ kind: 'create', by: ctx.user ? (ctx.by || 'user') : ctx.origin, tick: ctx.tick, note: null, fields: U().clone(fields) }],
       tone: v.tone || c.tone, offer: v.offer || c.offer,
       productId: v.productId !== undefined ? v.productId : c.productFocus,
       createdTick: ctx.tick, updatedBy: ctx.origin, updatedTick: ctx.tick
@@ -583,6 +640,11 @@
       var allowed = TRANSITIONS[c.status + '>' + p.status];
       if (!allowed || allowed.indexOf(ctx.origin) < 0) return 'A ' + c.status + ' campaign can’t move to ' + p.status + '.';
       if (c.status === 'scheduled' && p.status === 'live' && c.startTick > ctx.tick) return 'This campaign hasn’t reached its start time.';
+      if (ctx.user && c.status === 'draft' && p.status === 'scheduled') {
+        var e0 = roleErr(ctx, 'schedule', 'schedule campaigns'); if (e0) return e0;
+        var miss = C.readyMissing(c);
+        if (miss.length) return 'Finish the launch checklist first: ' + miss.map(function (k) { return READY_LABEL[k]; }).join('; ') + '.';
+      }
       if (c.status === 'draft' && p.status === 'scheduled' && MC.guardrails && typeof MC.guardrails.preflight === 'function') {
         var fails = (MC.guardrails.preflight(world, c) || []).filter(function (x) { return x.status === 'fail'; });
         if (fails.length) return 'Fix before scheduling: ' + fails.map(function (x) { return x.label; }).join(', ') + '.';
@@ -950,12 +1012,17 @@
       setLatent(world, v);
       var ch = v.channel, share = isNum(p.share) ? p.share : 0;
       var takesTraffic = v.status === 'live' || c.status === 'draft';
+      // Unreviewed copy takes no traffic until someone approves it (planning shares on drafts are fine).
+      if (v.review !== 'approved' && c.status !== 'draft') {
+        takesTraffic = false;
+        if (share > 0) putVariant(world, assign({}, variant(world, vid), { pendingShare: share }));
+      }
       var patch = {};
       if (takesTraffic && (share > 0 || !(allocSum(c.alloc[ch]) > 0))) {
         var alloc = assign({}, c.alloc); alloc[ch] = addShare(c.alloc[ch], vid, share);
         patch.alloc = alloc;
       }
-      if (ctx.user && (v.ctlStatus === 'live' || c.status === 'draft') && (share > 0 || !(allocSum(c.ctl.alloc[ch]) > 0))) {
+      if (ctx.user && takesTraffic && (v.ctlStatus === 'live' || c.status === 'draft') && (share > 0 || !(allocSum(c.ctl.alloc[ch]) > 0))) {
         var ca = assign({}, c.ctl.alloc); ca[ch] = addShare(c.ctl.alloc[ch], vid, share);
         patch.ctl = assign({}, c.ctl, { alloc: ca });
       }
@@ -1001,6 +1068,7 @@
         if (p.fields[k] === null || p.fields[k] === '') delete fields[k]; else fields[k] = p.fields[k];
       });
       var nv = stamp(v, ctx, { fields: fields });
+      nv.history = (v.history || []).concat([{ kind: 'edit', by: ctx.user ? (ctx.by || 'user') : ctx.origin, tick: ctx.tick, note: cleanNote(p.note), fields: U().clone(fields) }]).slice(-30);
       nv.predicted = scoreVariant(nv);
       putVariant(world, nv);
       setLatent(world, nv);
@@ -1065,6 +1133,82 @@
       var v = variant(world, p.id);
       var verb = { live: 'set live', paused: 'paused', retired: 'retired', draft: 'moved to draft' }[p.status] || 'changed';
       return 'You ' + verb + ' ' + vdesc(world, v);
+    }
+  });
+
+  C.define('variant/setReview', {
+    by: ['user'],
+    label: 'Change review state',
+    entity: function (p) { return feedEntity('variant', p.id); },
+    validate: function (world, p, ctx) {
+      var v = variant(world, p.id);
+      if (!v) return 'That variant no longer exists.';
+      if (REVIEWS.indexOf(p.review) < 0) return 'Unknown review state.';
+      if (v.status === 'retired') return 'Retired variants can’t be reviewed.';
+      if (C.reviewOf(v) === p.review) return 'This copy is already ' + p.review.replace('_', ' ') + '.';
+      var e = campErr(world, v.campaignId, ctx); if (e) return e;
+      if (p.review === 'approved' || p.review === 'changes') { e = roleErr(ctx, 'copy', 'approve or return copy'); if (e) return e; }
+      else { e = roleErr(ctx, 'submit', 'change review state'); if (e) return e; }
+      if (p.note !== undefined && p.note !== null && typeof p.note !== 'string') return 'The note must be text.';
+      return null;
+    },
+    reduce: function (world, p, ctx) {
+      var v = variant(world, p.id), c = camp(world, v.campaignId), ch = v.channel;
+      var nv = stamp(v, ctx, { review: p.review });
+      nv.history = (v.history || []).concat([{ kind: 'review', review: p.review, by: ctx.by || 'user', tick: ctx.tick, note: cleanNote(p.note) }]).slice(-30);
+      var cpatch = {};
+      if (p.review === 'approved' && v.pendingShare > 0 && v.status === 'live' && c.status !== 'draft') {
+        var alloc = assign({}, c.alloc); alloc[ch] = addShare(c.alloc[ch], v.id, v.pendingShare); cpatch.alloc = alloc;
+        if (v.ctlStatus === 'live') { var ca = assign({}, c.ctl.alloc); ca[ch] = addShare(c.ctl.alloc[ch], v.id, v.pendingShare); cpatch.ctl = assign({}, c.ctl, { alloc: ca }); }
+        delete nv.pendingShare;
+      }
+      putVariant(world, nv);
+      if (Object.keys(cpatch).length) putCampaign(world, stamp(c, ctx, cpatch));
+    },
+    inverse: function () { return []; },
+    describe: function (world, p) {
+      var v = variant(world, p.id), n = vdesc(world, v);
+      if (p.review === 'approved') return 'You approved the copy for ' + n;
+      if (p.review === 'in_review') return 'You sent the copy for ' + n + ' to review';
+      if (p.review === 'changes') return 'You asked for changes to ' + n;
+      return 'You moved ' + n + ' back to draft';
+    }
+  });
+
+  C.define('campaign/setReadiness', {
+    by: ['user'],
+    label: 'Update launch checklist',
+    entity: function (p) { return feedEntity('campaign', p.id); },
+    validate: function (world, p, ctx) {
+      var c = camp(world, p.id);
+      if (!c) return 'That campaign no longer exists.';
+      if (c.status === 'completed') return 'Completed campaigns can’t be changed.';
+      if (READY_ITEMS.indexOf(p.item) < 0) return 'Unknown checklist item.';
+      if (p.done !== undefined && typeof p.done !== 'boolean') return 'Done must be true or false.';
+      if (p.owner !== undefined && p.owner !== null && !C.persona(p.owner)) return 'Pick someone from the team.';
+      if (p.done !== undefined) { var e = roleErr(ctx, READY_PERM[p.item], 'sign off ' + READY_LABEL[p.item].toLowerCase()); if (e) return e; }
+      else if (p.owner === undefined) return 'Nothing to change.';
+      return null;
+    },
+    reduce: function (world, p, ctx) {
+      var c = camp(world, p.id);
+      var r = assign({}, c.readiness);
+      var cur = assign({ done: false, owner: READY_OWNER[p.item] }, r[p.item]);
+      if (p.owner) cur.owner = p.owner;
+      if (p.done !== undefined) {
+        cur.done = p.done; cur.by = p.done ? (ctx.by || 'user') : null; cur.tick = ctx.tick;
+        cur.note = p.send ? 'Test sent to ' + C.SEED_COUNT + ' seed addresses' : cleanNote(p.note);
+      }
+      r[p.item] = cur;
+      putCampaign(world, stamp(c, ctx, { readiness: r }));
+    },
+    inverse: function () { return []; },
+    describe: function (world, p) {
+      var n = '“' + cname(world, p.id) + '”';
+      if (p.send) return 'Test sent to ' + C.SEED_COUNT + ' seed addresses for ' + n;
+      if (p.done === false) return 'You reopened “' + (READY_LABEL[p.item] || p.item).toLowerCase() + '” on ' + n;
+      if (p.done) return 'You checked off “' + (READY_LABEL[p.item] || p.item).toLowerCase() + '” on ' + n;
+      return 'You reassigned a launch check on ' + n;
     }
   });
 
@@ -1401,30 +1545,60 @@
     MC.runtime.apply(world, id, 'agent:' + p.agentId);
     var after = prop(world, id);
     if (after.status === 'stale') { closeProposal(world, after, { decidedTick: ctx.tick }); return null; }
-    closeProposal(world, after, { status: 'applied', decidedTick: ctx.tick, reason: 'Approved' });
-    addFeed(world, { tick: ctx.tick, kind: 'approved', agentId: p.agentId, proposalId: id, entity: targetEntity(p), text: 'You approved: ' + p.title, tone: 'good' });
+    closeProposal(world, after, { status: 'applied', decidedTick: ctx.tick, reason: 'Approved', decidedBy: ctx.by || null, decisionNote: ctx.note || null });
+    addFeed(world, { tick: ctx.tick, kind: 'approved', agentId: p.agentId, proposalId: id, entity: targetEntity(p), text: (ctx.by ? C.personaName(ctx.by) : 'You') + ' approved: ' + p.title, tone: 'good', by: ctx.by || undefined });
     return null;
   }
 
   C.define('proposal/approve', {
     by: ['user'],
     label: 'Approve',
-    validate: function (world, p) { return approveCheck(world, p.id); },
-    reduce: function (world, p, ctx) { return approveOne(world, p.id, ctx) || undefined; },
+    validate: function (world, p, ctx) {
+      var e = roleErr(ctx, 'approve', 'approve changes'); if (e) return e;
+      var x = prop(world, p.id);
+      if (ctx.by && x && x.risk === 'high' && (x.signoffs || []).some(function (s) { return s.by === ctx.by; })) {
+        return 'You already signed this off. A second approver has to be someone else.';
+      }
+      return approveCheck(world, p.id);
+    },
+    reduce: function (world, p, ctx) {
+      var x = prop(world, p.id);
+      // High-risk changes need two different people.
+      if (ctx.by && x && x.risk === 'high' && !isStale(world, x)) {
+        var so = (x.signoffs || []).concat([{ by: ctx.by, tick: ctx.tick, note: ctx.note || null }]);
+        putProposal(world, assign({}, x, { signoffs: so }));
+        if (so.length < 2) {
+          addFeed(world, { tick: ctx.tick, kind: 'user', agentId: x.agentId, proposalId: x.id, entity: targetEntity(x), text: C.personaName(ctx.by) + ' signed off on “' + x.title + '”. It needs a second approver.', tone: 'neutral', by: ctx.by });
+          return;
+        }
+      }
+      return approveOne(world, p.id, ctx) || undefined;
+    },
     inverse: function () { return []; },
-    describe: function (world, p) { var x = prop(world, p.id); return 'You approved: ' + (x ? x.title : p.id); }
+    describe: function (world, p) {
+      var x = prop(world, p.id);
+      if (x && x.risk === 'high' && currentActor() && !(x.signoffs || []).length) return 'You signed off on: ' + x.title + '. It needs a second approver.';
+      return 'You approved: ' + (x ? x.title : p.id);
+    }
   });
 
   C.define('proposal/approveMany', {
     by: ['user'],
     label: 'Approve several',
-    validate: function (world, p) {
+    validate: function (world, p, ctx) {
+      var re = roleErr(ctx, 'approve', 'approve changes'); if (re) return re;
       if (!Array.isArray(p.ids) || !p.ids.length) return 'Nothing selected.';
       var first = null;
       for (var i = 0; i < p.ids.length; i++) { var e = approveCheck(world, p.ids[i]); if (!e) return null; if (!first) first = e; }
       return first;
     },
-    reduce: function (world, p, ctx) { p.ids.forEach(function (id) { approveOne(world, id, ctx); }); },
+    reduce: function (world, p, ctx) {
+      p.ids.forEach(function (id) {
+        var x = prop(world, id);
+        if (ctx.by && x && x.risk === 'high') return;   // high-risk changes are approved one at a time, by two people
+        approveOne(world, id, ctx);
+      });
+    },
     inverse: function () { return []; },
     describe: function (world, p) { return 'You approved ' + p.ids.length + ' changes'; }
   });
@@ -1433,7 +1607,8 @@
   C.define('proposal/reject', {
     by: ['user'],
     label: 'Dismiss',
-    validate: function (world, p) {
+    validate: function (world, p, ctx) {
+      var re = roleErr(ctx, 'approve', 'dismiss changes'); if (re) return re;
       var x = prop(world, p.id);
       if (!x || x.status !== 'pending') return 'This proposal is no longer pending.';
       if (!REJECT_LABEL[p.reason]) return 'Pick a reason.';
@@ -1441,7 +1616,7 @@
     },
     reduce: function (world, p, ctx) {
       var x = prop(world, p.id);
-      closeProposal(world, x, { status: 'rejected', reason: 'Dismissed: ' + REJECT_LABEL[p.reason], dismissReason: p.reason, decidedTick: ctx.tick });
+      closeProposal(world, x, { status: 'rejected', reason: 'Dismissed: ' + REJECT_LABEL[p.reason], dismissReason: p.reason, decidedTick: ctx.tick, decidedBy: ctx.by || null, decisionNote: ctx.note || null });
       var a = agentEnt(world, x.agentId);
       if (a) {
         var cd = assign({}, a.cooldowns);
@@ -1449,7 +1624,7 @@
         var stats = assign({}, a.stats); stats.rejected = (stats.rejected || 0) + 1;
         putAgent(world, assign({}, a, { cooldowns: cd, stats: stats }));
       }
-      addFeed(world, { tick: ctx.tick, kind: 'rejected', agentId: x.agentId, proposalId: x.id, entity: targetEntity(x), text: 'You dismissed: ' + x.title, tone: 'neutral' });
+      addFeed(world, { tick: ctx.tick, kind: 'rejected', agentId: x.agentId, proposalId: x.id, entity: targetEntity(x), text: (ctx.by ? C.personaName(ctx.by) : 'You') + ' dismissed: ' + x.title, tone: 'neutral', by: ctx.by || undefined });
     },
     inverse: function () { return []; },
     describe: function (world, p) { var x = prop(world, p.id); return 'You dismissed: ' + (x ? x.title : p.id); }
@@ -1522,6 +1697,23 @@
       else if (k === 'minSample') { e = rng('Minimum sample', v, 100, 5000, true); if (e) return e; }
       else if (k === 'maxDailySpend') { e = rng('Daily spend cap', v, 500, 10000, false); if (e) return e; }
       else if (k === 'holdoutPct') { e = rng('Control group', v, 0, 20, false); if (e) return e; }
+      else if (k === 'claims') {
+        if (!Array.isArray(v) || v.length > 60) return 'Up to 60 approved claims.';
+        var seen = {};
+        for (var cl = 0; cl < v.length; cl++) {
+          var cc = v[cl];
+          if (!isObj(cc)) return 'Each claim needs text and a source.';
+          if (typeof cc.id !== 'string' || !cc.id.trim() || cc.id.length > 40) return 'Each claim needs an id of 1–40 characters.';
+          if (seen[cc.id]) return 'Claim ids must be unique (' + cc.id + ').';
+          seen[cc.id] = true;
+          if (typeof cc.text !== 'string' || !cc.text.trim() || cc.text.length > 200) return 'Claim text needs 1–200 characters.';
+          if (cc.source !== undefined && cc.source !== null && (typeof cc.source !== 'string' || cc.source.length > 200)) return 'A claim source is limited to 200 characters.';
+          if (cc.match !== undefined) {
+            if (!Array.isArray(cc.match) || cc.match.length > 12) return 'Up to 12 alternate phrasings per claim.';
+            for (var m = 0; m < cc.match.length; m++) if (typeof cc.match[m] !== 'string' || !cc.match[m].trim() || cc.match[m].length > 80) return 'Alternate phrasings need 1–80 characters.';
+          }
+        }
+      }
       else if (k === 'brand') {
         if (!isObj(v)) return 'Brand rules are incomplete.';
         var bk = Object.keys(v);
@@ -1552,6 +1744,7 @@
       if (d.freqCap) ng.freqCap = assign({}, g.freqCap, d.freqCap);
       if (d.quiet) ng.quiet = assign({}, g.quiet, d.quiet);
       ['maxShiftPct', 'minSample', 'maxDailySpend', 'holdoutPct'].forEach(function (k) { if (d[k] !== undefined) ng[k] = d[k]; });
+      if (d.claims) ng.claims = U().clone(d.claims);
       if (d.brand) {
         var nb = assign({}, g.brand, d.brand);
         if (d.brand.banned) nb.banned = d.brand.banned.map(function (s) { return s.trim(); });
