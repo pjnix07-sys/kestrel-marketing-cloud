@@ -180,7 +180,7 @@ function contextChecks() {
   record('context-copy-limits-in-task-text-match-MC.copy.LIMITS', bad.length ? 'FAIL' : 'PASS', bad.join(','));
   // grounding strength: how many small integers are "present" in the ground (weakens the invented-number check)
   const ground = CX.build(w, jobs[names[0]].job).ground; let hit = 0; for (let n = 10; n <= 99; n++) if (CX.grounded(String(n), ground)) hit++;
-  const tag = hit > 80 ? 'GAP' : 'PASS';
+  const tag = hit > 50 ? 'GAP' : 'PASS';
   record('context-grounding-rejects-unseen-two-digit-numbers', tag, hit + ' of 90 two-digit numbers (10-99) already appear somewhere in the context, so an invented "37%" passes');
 }
 
