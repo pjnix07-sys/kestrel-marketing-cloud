@@ -537,9 +537,9 @@
       if (buyers[1] < 3) { out.note = 'Only ' + buyers[1] + (buyers[1] === 1 ? ' person' : ' people') + ' in the control group ' + (buyers[1] === 1 ? 'has' : 'have') + ' bought so far. Lift needs at least 3.'; return out; }
       var vt = Math.max(0, s2[0] / n[0] - mt * mt) / n[0], vc = Math.max(0, s2[1] / n[1] - mc * mc) / n[1];
       var lr = Math.log(mt > 0 ? mt / mc : 1e-9), se = Math.sqrt(vt / (mt * mt || 1) + vc / (mc * mc));
-      out.liftPct = mt / mc - 1;
-      out.lo = mt > 0 ? Math.exp(lr - Z95 * se) - 1 : -1;
-      out.hi = mt > 0 ? Math.exp(lr + Z95 * se) - 1 : -1;
+      out.liftPct = (mt / mc - 1) * 100;   // percent units (13.5 = 13.5%)
+      out.lo = (mt > 0 ? Math.exp(lr - Z95 * se) - 1 : -1) * 100;
+      out.hi = (mt > 0 ? Math.exp(lr + Z95 * se) - 1 : -1) * 100;
       out.ready = true;
       out.note = out.lo > 0 ? 'Clearly above the control group.' : (out.hi < 0 ? 'Clearly below the control group.' : 'Too close to call: the range includes no lift.');
       return out;
@@ -575,7 +575,7 @@
     });
   };
 
-  // Live or scheduled campaigns sharing both audience and a channel with `cid` on overlapping days.
+  // overlapPct is in percent units (13.5 = 13.5%). Live or scheduled campaigns sharing both audience and a channel with `cid` on overlapping days.
   SEL.collisions = function (w, cid) {
     var c = camp(w, cid);
     if (!c) return EMPTY;
@@ -595,7 +595,7 @@
         var b = S.audienceOf(w, o), both = 0;
         for (i = 0; i < n; i++) if (a[i] && b[i]) both++;
         if (!both) return;
-        shared.forEach(function (ch) { out.push({ otherId: oid, otherName: o.name, channel: ch, overlapPct: both / na, fromDay: from, toDay: to }); });
+        shared.forEach(function (ch) { out.push({ otherId: oid, otherName: o.name, channel: ch, overlapPct: both / na * 100, fromDay: from, toDay: to }); });
       });
       return out;
     });

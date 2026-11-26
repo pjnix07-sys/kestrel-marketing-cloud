@@ -263,6 +263,11 @@
     </div>`;
   }
 
+  function ConnectButton() {
+    var C = MC.connect && MC.connect.TopButton;
+    return C ? html`<${C} />` : null;
+  }
+
   function Topbar(p) {
     if (p.phone) {
       var IB = ui('IconButton');
@@ -270,6 +275,7 @@
         <${Mark} compact=${true} />
         <div className="app-topbar-title"><${Crumbs} showTitle=${true} /></div>
         <${AgentDot} />
+        <${ConnectButton} />
         <${ApprovalsButton} compact=${true} />
         ${IB ? html`<${IB} id="app-menu-btn" icon="menu" label="Menu" onClick=${function () { setUi({ drawer: 'menu' }); }} />` : null}
       </header>`;
@@ -278,6 +284,7 @@
       <div className="app-topbar-title"><${Crumbs} /></div>
       <div className="app-topbar-tools">
         <${AgentDot} />
+        <${ConnectButton} />
         <${ApprovalsButton} />
         <${OverflowMenu} />
       </div>
@@ -685,6 +692,9 @@
       </div>
       ${Drawer ? html`<${Drawer} id="approvals-drawer" open=${drawer === 'approvals'} onClose=${closeDrawer} title="Approvals" width=${440}>
         <${ApprovalsPanel} />
+      <//>` : null}
+      ${Drawer && MC.connect ? html`<${Drawer} id="connect-drawer" open=${drawer === 'connect'} onClose=${closeDrawer} title="Connect Claude" width=${400}>
+        <${MC.connect.Panel} onClose=${closeDrawer} />
       <//>` : null}
       ${Drawer ? html`<${Drawer} id="app-menu" side="left" open=${drawer === 'menu'} onClose=${closeDrawer} title="Menu" width=${320}>
         <${MenuContent} />

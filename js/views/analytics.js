@@ -646,8 +646,8 @@
       { key: 'lift', label: 'Lift', align: 'right', sortValue: function (r) { return r.lift && r.lift.ready ? r.lift.liftPct : null; }, render: function (r) {
         var l = r.lift;
         if (!l || !l.ready) return html`<span className="an-muted">Not enough yet</span>`;
-        var big = l.hi > 10;
-        return html`<span><strong className="num">${signedPct(l.liftPct)}</strong><span className="an-sub-num">${signedPct(l.lo) + ' to ' + (big ? 'more than +1,000%' : signedPct(l.hi))}</span></span>`;
+        var big = l.hi > 1000;
+        return html`<span><strong className="num">${signedPct(l.liftPct / 100)}</strong><span className="an-sub-num">${signedPct(l.lo / 100) + ' to ' + (big ? 'more than +1,000%' : signedPct(l.hi / 100))}</span></span>`;
       } },
       { key: 'people', label: 'People', align: 'right', sortValue: function (r) { return r.lift ? r.lift.nControl : null },
         render: function (r) { return r.lift ? html`<span className="num">${num(r.lift.nTreated)} vs ${num(r.lift.nControl)}</span>` : DASH; } },

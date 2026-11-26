@@ -205,3 +205,5 @@
   .v-agents * { transition: none !important; animation: none !important; }
 }
 .v-agents .ag-autonomy { justify-items: start; }
+.v-agents .cn-connect-line { color: var(--ink-3); }
+.v-agents .cn-reason-note { margin-top: 6px; }

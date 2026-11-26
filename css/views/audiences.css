@@ -257,3 +257,6 @@
 @media (prefers-reduced-motion: reduce) {
   .v-audiences *, .aud-drawer-wrap * { transition: none !important; animation: none !important; }
 }
+.v-audiences .aud-reading { margin: 8px 0 0; min-height: 0; }
+.v-audiences .aud-reading:empty { display: none; }
+.v-audiences .aud-why { margin: 0; max-width: 68ch; }

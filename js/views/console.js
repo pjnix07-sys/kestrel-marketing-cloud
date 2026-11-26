@@ -260,6 +260,7 @@
   }
   function whenLine(row, tick) {
     var bits = [];
+    if (row.awaiting) { bits.push('Thinking' + ELL); return bits.join(MID); }
     bits.push(fin(row.lastRun) ? 'Ran ' + rel(row.lastRun, tick) : "Hasn't run yet");
     var st = stateOf(row);
     if (st === 'queued') bits.push('runs next');
@@ -392,6 +393,36 @@
     </div>`;
   }
 
+  function engineLabel(e) { return e && e.engine === 'ai' ? 'Claude' : 'Rules'; }
+  function aiOn() { try { return !!(MC.ai && MC.ai.isOn && MC.ai.isOn()); } catch (e) { return false; } }
+  function useAiOn() {
+    var React = R();
+    var s = React.useState(aiOn), setS = s[1];
+    React.useEffect(function () {
+      if (!MC.ai || typeof MC.ai.subscribe !== 'function') return undefined;
+      var un = MC.ai.subscribe(function () { setS(aiOn()); });
+      setS(aiOn());
+      return function () { if (typeof un === 'function') un(); };
+    }, []);
+    return s[0];
+  }
+  function selAwaiting(w) {
+    var A = w.agents, out = [];
+    if (!A || !A.order) return '';
+    A.order.forEach(function (id) {
+      var a = A.byId[id], st = null;
+      try { st = MC.runtime && MC.runtime.statusOf ? MC.runtime.statusOf(w, id) : null; } catch (e) { st = null; }
+      if ((st && st.awaiting) || (a && a.aiAwait)) out.push(id);
+    });
+    return out.join(',');
+  }
+  function selAiModes(w) {
+    var A = w.agents, out = [];
+    if (!A || !A.order) return '';
+    A.order.forEach(function (id) { var a = A.byId[id]; if (a && a.aiMode === 'rules') out.push(id); });
+    return out.join(',');
+  }
+
   function runOutcome(e) {
     if (e.error) return 'Stopped early';
     var n = (e.proposals || EMPTY).length, applied = 0;
@@ -481,6 +512,24 @@
   function React_useMemoSafe(fn, deps) { return R().useMemo(fn, deps); }
 
   /* ---------- detail panel ---------- */
+  function Reasoning(p) {
+    var id = p.row.id, Seg = kit('Segmented'), on = useAiOn();
+    var es = R().useState(null), msg = es[0], setMsg = es[1];
+    function set(v) {
+      var r = dispatch('agent/setAiMode', { id: id, aiMode: v });
+      setMsg(r.ok ? null : { text: r.error || "Couldn't change how it reasons." });
+    }
+    var val = p.row.rulesOnly ? 'rules' : 'auto';
+    var opts = [{ value: 'auto', label: 'Claude' }, { value: 'rules', label: 'Rules only' }];
+    return html`<div className="cn-field-block">
+      <span className="cn-label" id=${'agents-' + id + '-reasoning-label'}>Reasoning</span>
+      ${Seg ? html`<${Seg} id=${'agents-' + id + '-reasoning'} label="Reasoning" size="sm" options=${opts} value=${val} onChange=${set} />`
+        : html`<span>${val === 'rules' ? 'Rules only' : 'Claude'}</span>`}
+      <p className="cn-muted cn-reason-note">${val === 'rules' ? 'This agent always uses its built-in rules.' : (on ? 'Claude reasons about each run before this agent acts.' : 'Applies once Claude is connected. Until then this agent uses its built-in rules.')}</p>
+      ${msg ? html`<p className="cn-error" role="alert">${msg.text}</p>` : null}
+    </div>`;
+  }
+
   function Overview(p) {
     var React = R();
     var row = p.row, id = row.id, def = agentDef(id);
@@ -505,6 +554,7 @@
         <span className="cn-label" id=${'agents-' + id + '-autonomy-label'}>Autonomy</span>
         ${AC ? html`<${AC} agentId=${id} id=${'agents-' + id + '-autonomy'} />` : html`<span>${AUTONOMY_LABEL[row.autonomy] || DASH}</span>`}
       </div>
+      ${row.rulesOnly !== undefined ? html`<${Reasoning} row=${row} />` : null}
       <div className="cn-two">
         <div className="cn-field-block">
           <label className="cn-label" htmlFor=${'agents-' + id + '-cadence'}>Schedule</label>
@@ -552,7 +602,7 @@
             <button type="button" className="cn-run-btn" aria-expanded=${open ? 'true' : 'false'} aria-controls=${pid}
                 onClick=${function () { setFocus({ auditId: open ? null : e.id }); }}>
               <span className="cn-run-when num">${rel(e.tick, p.tick)}<span className="cn-muted">${MID + stamp(e.tick)}</span></span>
-              <span className="cn-run-out">${runOutcome(e)}</span>
+              <span className="cn-run-out">${runOutcome(e)}<span className="cn-muted">${MID + engineLabel(e)}</span></span>
               <span className="cn-run-caret" aria-hidden="true">${open ? '−' : '+'}</span>
             </button>
             ${open ? html`<div id=${pid} className="cn-run-body"><${RunStory} entry=${e} /></div>` : null}
@@ -681,7 +731,7 @@
         <div className="cn-detail-titles">
           <h2 id="agents-detail-title" className="cn-detail-title">${displayName(row)}</h2>
           <p className="cn-detail-short">${row.short || (def && def.short) || AGENT_SHORT[id] || ''}</p>
-          <p className="cn-detail-state"><${Dot} state=${st} label=${null} /><span>${def ? STATE_LABEL[st] : 'Not loaded yet'}</span><span className="cn-muted num">${MID + whenLine(row, p.tick)}</span></p>
+          <p className="cn-detail-state"><${Dot} state=${st} label=${null} /><span>${def ? (row.awaiting ? 'Thinking' + ELL : STATE_LABEL[st]) : 'Not loaded yet'}</span><span className="cn-muted num">${MID + whenLine(row, p.tick)}</span></p>
         </div>
         <div className="cn-detail-actions">
           <${Btn} kind="primary" size="md" id=${'agents-' + id + '-run'} onClick=${runNow} disabled=${!def || st === 'queued'}>${st === 'queued' ? 'Queued' : 'Run now'}<//>
@@ -1002,7 +1052,7 @@
                 onClick=${function () { setOpen(isOpen ? null : e.id); }}>
               <span className="cn-run-agent">${agentName(e.agentId)}</span>
               <span className="cn-run-when num">${rel(e.tick, p.tick)}<span className="cn-muted">${MID + stamp(e.tick)}</span></span>
-              <span className="cn-run-out">${runOutcome(e) + (e.reason === 'runNow' ? MID + 'you asked' : '')}</span>
+              <span className="cn-run-out">${runOutcome(e) + (e.reason === 'runNow' ? MID + 'you asked' : '')}<span className="cn-muted">${MID + engineLabel(e)}</span></span>
               <span className="cn-run-caret" aria-hidden="true">${isOpen ? '−' : '+'}</span>
             </button>
             ${isOpen ? html`<div id=${pid} className="cn-run-body"><${RunStory} entry=${e} /></div>` : null}
@@ -1017,7 +1067,16 @@
   function AgentsView() {
     var ready = useSel(selReady);
     var tick = useSel(selTick) || 0;
-    var roster = useSel(selRoster) || EMPTY;
+    var baseRoster = useSel(selRoster) || EMPTY;
+    var waitingIds = useSel(selAwaiting) || '';
+    var rulesIds = useSel(selAiModes) || '';
+    var connected = useAiOn();
+    var roster = React_useMemoSafe(function () {
+      var w = waitingIds ? waitingIds.split(',') : [], r = rulesIds ? rulesIds.split(',') : [];
+      return baseRoster.map(function (x) {
+        return Object.assign({}, x, { awaiting: w.indexOf(x.id) >= 0, rulesOnly: r.indexOf(x.id) >= 0 });
+      });
+    }, [baseRoster, waitingIds, rulesIds]);
     var openCount = useSel(selOpenCount) || 0;
     var focus = useUiSel(function (s) { return s.focus && s.focus.agents; }) || {};
     var tab = focus.tab === 'audit' ? 'history' : focus.tab;
@@ -1049,6 +1108,7 @@
       <header className="cn-head">
         <h1 id="page-title" tabIndex="-1" className="cn-title">Agents</h1>
         <p className="cn-sub num">${sub}</p>
+        ${!connected && roster.length ? html`<p className="cn-sub cn-connect-line">Connect Claude to let the agents reason and write with Haiku.</p>` : null}
       </header>
       ${roster.length && Tabs ? html`<${Tabs} id="agents-tabs" label="Agent sections" tabs=${tabs} value=${tab}
           onChange=${function (t) { setFocus({ tab: t }); }} panelId="agents-panel" />` : null}

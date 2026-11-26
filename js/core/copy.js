@@ -842,7 +842,7 @@
         if (!Object.prototype.hasOwnProperty.call(vals, name)) return m;
         if (vals[name]) return vals[name];
         if (fb !== undefined) return fb;
-        if (name === 'first_name') return nameFallback(s.slice(0, off)) || 'there';
+        if (name === 'first_name') { var bf = s.slice(0, off); return nameFallback(bf) || (/(^|[.!?:]\s*)$/.test(bf) ? 'Hey' : 'there'); }
         return dflt[name] || '';
       });
       if (k === 'imageId' || k === 'link') { out[k] = str(f[k]); return; }

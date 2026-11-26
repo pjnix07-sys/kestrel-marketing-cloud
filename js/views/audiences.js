@@ -556,18 +556,19 @@
           placeholder="e.g. lapsed hikers in the Pacific Northwest with high predicted LTV"
           onChange=${function (e) { p.onText(e.target.value); }}
           onKeyDown=${function (e) { if (e.key === 'Enter') { e.preventDefault(); p.onBuild(); } }} />
-        <${Btn} kind="primary" id="aud-describe-build" onClick=${p.onBuild} disabled=${!canParse || !p.text.trim()}>Build rules<//>
+        <${Btn} kind="primary" id="aud-describe-build" onClick=${p.onBuild} disabled=${!canParse || !p.text.trim() || p.reading}>${p.reading ? 'Reading…' : 'Build rules'}<//>
       </div>
+      <p className="aud-muted aud-reading" role="status" aria-live="polite">${p.reading ? 'Reading your description…' : ''}</p>
       ${!canParse ? h`<p className="aud-muted">The phrase parser is still loading; you can build rules by hand below.</p>` : null}
       ${parsed ? h`<div className="aud-parsed">
         ${parsed.matched && parsed.matched.length ? h`<div className="aud-parsed-row"><span className="aud-parsed-k">Understood:</span>
           <ul className="aud-plainlist">${parsed.matched.map(function (m, i) {
             return h`<li key=${i + '-' + m.phrase}><span className="aud-chip-phrase">${m.phrase}</span>: ${m.label}</li>`;
-          })}</ul></div>` : h`<p className="aud-msg aud-msg-warn">Nothing in that description matched an attribute. Try words like “lapsed”, “hikers”, “Pacific Northwest”, “Summit tier” or “high predicted LTV”.</p>`}
+          })}</ul></div>` : parsed.why ? h`<p className="aud-muted aud-why">${parsed.why}</p>` : h`<p className="aud-msg aud-msg-warn">Nothing in that description matched an attribute. Try words like “lapsed”, “hikers”, “Pacific Northwest”, “Summit tier” or “high predicted LTV”.</p>`}
         ${parsed.ignored && parsed.ignored.length ? h`<div className="aud-parsed-row"><span className="aud-parsed-k">Ignored:</span>
           <p className="aud-muted">${parsed.ignored.map(function (t) { return '“' + t + '”'; }).join(', ')}</p></div>` : null}
         <div className="aud-parsed-foot">
-          ${fin(parsed.confidence) ? h`<span className="aud-muted num">Confidence ${fmtPct(parsed.confidence)}</span>` : null}
+          ${fin(parsed.confidence) && parsed.matched && parsed.matched.length ? h`<span className="aud-muted num">Confidence ${fmtPct(parsed.confidence)}</span>` : null}
           ${p.canUndo ? h`<span className="aud-muted">Replaces current rules ${DOT} </span>` : null}
           ${p.canUndo ? h`<button type="button" className="aud-link" id="aud-describe-undo" onClick=${p.onUndo}>Undo</button>` : null}
         </div>
@@ -602,6 +603,7 @@
     var segments = useSel(function (w) { return w.segments; });
     var campaigns = useSel(function (w) { return w.campaigns; });
     var msgSt = React.useState(null), msg = msgSt[0], setMsg = msgSt[1];
+    var rdSt = React.useState(false), reading = rdSt[0], setReading = rdSt[1];
     var useSt = React.useState(''), useCid = useSt[0], setUseCid = useSt[1];
     var debounced = MC.hooks.useDebounced(b.rule, 150);
     var ruleKey = JSON.stringify(debounced);
@@ -629,15 +631,27 @@
 
     function setRule(fn) { update(function (s) { return { rule: fn(s.rule) }; }); setMsg(null); }
     function build() {
-      if (!has(seg(), 'parse') || !b.text.trim()) return;
+      if (!has(seg(), 'parse') || !b.text.trim() || reading) return;
+      var text = b.text;
+      function apply(res) {
+        if (!res || !res.rule) return;
+        var suggested = !b.name.trim() && (res.name || (has(seg(), 'nameFor') && res.matched && res.matched.length ? seg().nameFor(res.rule) : null));
+        update(function (s) {
+          return { prevRule: s.rule, rule: clone(res.rule), parsed: res, name: (s.name && s.name.trim()) ? s.name : (suggested || s.name) };
+        });
+        setMsg(null);
+      }
+      var tasks = MC.ai && MC.ai.tasks;
+      if (tasks && typeof tasks.segmentFromText === 'function' && MC.ai.isOn && MC.ai.isOn()) {
+        setReading(true);
+        setMsg(null);
+        tasks.segmentFromText(text).then(function (res) { setReading(false); apply(res); },
+          function () { setReading(false); setMsg({ tone: 'crit', text: 'Couldn’t read that description. Try again, or build the rules by hand below.' }); });
+        return;
+      }
       var res;
-      try { res = seg().parse(b.text, world()); } catch (e) { setMsg({ tone: 'crit', text: 'Couldn’t read that description: ' + ((e && e.message) || e) }); return; }
-      if (!res || !res.rule) return;
-      var suggested = !b.name.trim() && has(seg(), 'nameFor') && res.matched && res.matched.length ? seg().nameFor(res.rule) : null;
-      update(function (s) {
-        return { prevRule: s.rule, rule: clone(res.rule), parsed: res, name: suggested || s.name };
-      });
-      setMsg(null);
+      try { res = seg().parse(text, world()); } catch (e) { setMsg({ tone: 'crit', text: 'Couldn’t read that description: ' + ((e && e.message) || e) }); return; }
+      apply(res);
     }
     function undoParse() { update(function (s) { return s.prevRule ? { rule: s.prevRule, prevRule: null } : {}; }); }
     function startNew() { update({ rule: emptyRule(), name: '', editingId: null, parsed: null, prevRule: null, text: '' }); setMsg(null); }
@@ -686,7 +700,7 @@
     var removed = b.editingId && segments && !segments.byId[b.editingId];
 
     return h`<div className="aud-builder">
-      <${Describe} text=${b.text} parsed=${b.parsed} canUndo=${!!b.prevRule}
+      <${Describe} text=${b.text} parsed=${b.parsed} reading=${reading} canUndo=${!!b.prevRule}
         onText=${function (t) { update({ text: t }); }} onBuild=${build} onUndo=${undoParse} />
       <div className="aud-builder-grid">
         <section className="aud-rules aud-card" aria-labelledby="aud-rules-title">
