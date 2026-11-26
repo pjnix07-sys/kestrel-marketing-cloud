@@ -130,6 +130,38 @@
   function openApprovals() { try { MC.uiStore.set({ drawer: 'approvals' }); } catch (e) { /* noop */ } }
   function setBriefStore(b) { try { if (MC.uiStore && has(MC.uiStore, 'set')) MC.uiStore.set({ plannerBrief: b }); } catch (e) { /* noop */ } }
 
+  // Selectors added by the Metrics lane: callers guard with this and render a neutral fallback.
+  function hasSel(name) { return !!(MC.select && typeof MC.select[name] === 'function'); }
+  function pctUnits(x, dp) { return fin(x) ? (Math.abs(x) >= 10 || dp === 0 ? Math.round(x) : Math.round(x * 10) / 10) + '%' : DASH; }
+  function signedPct(x) { return fin(x) ? (x > 0 ? '+' : x < 0 ? '−' : '') + pctUnits(Math.abs(x)) : DASH; }
+  function scalar(x) { return fin(x) ? x : (x && fin(x.value) ? x.value : (x && fin(x.perPerson) ? x.perPerson : null)); }
+
+  // The next hour a live campaign sends, from its per-channel send hours (calendar-free: "today" or "tomorrow").
+  function nextSend(c, tick) {
+    var sh = c.sendHour || EMPTY_OBJ, hr = ((tick % 24) + 24) % 24, best = null;
+    Object.keys(sh).forEach(function (ch) {
+      if (c.channelPaused && c.channelPaused[ch]) return;
+      var v = sh[ch];
+      if (v === 'adaptive') { if (!best) best = { adaptive: true, ch: ch }; return; }
+      if (!fin(v)) return;
+      var d = v > hr ? v - hr : v + 24 - hr;
+      if (!best || best.adaptive || d < best.d) best = { d: d, hour: v, ch: ch, tomorrow: v <= hr };
+    });
+    if (best && !best.adaptive && tick + best.d >= c.endTick) return null;
+    return best;
+  }
+  function nextSendText(c, tick) {
+    var n = nextSend(c, tick);
+    if (!n) return null;
+    if (n.adaptive) return 'Sends at each person’s best hour';
+    return 'Next send ' + hourLabel(n.hour) + ' ' + (n.tomorrow ? 'tomorrow' : 'today') + ' on ' + chLabel(n.ch);
+  }
+  function holdoutText(c, segCount, guardPct) {
+    var pc = fin(c.holdoutPct) ? c.holdoutPct : (fin(guardPct) ? guardPct : 10);
+    if (!(pc > 0)) return null;
+    return 'Holdout ' + pc + '%' + (fin(segCount) && segCount > 0 ? ', about ' + plural(Math.max(1, Math.round(segCount * pc / 100)), 'person', 'people') : '');
+  }
+
   /* ---------------- kit lookups (render time) with small fallbacks ---------------- */
   function FbButton(p) {
     return h`<button type="button" id=${p.id} className=${cx('cm-fbtn', 'is-' + (p.kind || 'secondary'))} onClick=${p.onClick}
@@ -356,6 +388,7 @@
             label=${goalText(g) + ' goal progress'} />
         </div>`
         : h`<p className="cm-card-goal-plan num">Goal ${goalFmt(g.type, g.target, true)}${g.type === 'revenue' ? ' revenue' : ' ' + (GOAL_NOUN[g.type] || '')}${MID}Budget ${money(r.budget, true)}</p>`}
+      ${r.status === 'live' && c ? h`<p className="cm-card-next">${nextSendText(c, tick) || 'No more sends scheduled'}${holdoutText(c, p.segCount, p.guardPct) ? h`<span className="cm-muted"> ${MID} ${holdoutText(c, p.segCount, p.guardPct)}</span>` : null}</p>` : null}
       ${r.status === 'live' || r.status === 'paused' ? h`<div className="cm-card-foot">
           <${Spark} values=${r.spark14} label=${r.name + ', last 14 days'} />
           ${agentLine ? h`<${AgentNote} text=${agentLine} title=${agentTitle} />` : null}
@@ -373,25 +406,64 @@
     </li>`;
   }
 
+  function ProgramCard(p) {
+    var r = p.row, c = p.campaign, tick = p.tick, pr = c.program || EMPTY_OBJ;
+    var g = r.goal || {};
+    var live = r.status === 'live';
+    return h`<li className="cm-card cm-program" id=${'cmp-card-' + r.id}>
+      <div className="cm-card-top">
+        <button type="button" className="cm-card-name" onClick=${function () { openDetail(r.id); }}>${r.name}</button>
+        <${CardMenu} campaign=${c} />
+      </div>
+      <p className="cm-card-meta">Always on${MID}no end date${MID}${chList(r.channels)}</p>
+      <dl className="cm-program-facts">
+        <div><dt>Trigger</dt><dd>${pr.trigger || DASH}</dd></div>
+        <div><dt>Exit</dt><dd>${pr.exit || DASH}</dd></div>
+        <div><dt>Re-entry</dt><dd>${fin(pr.reentryDays) ? 'After ' + plural(pr.reentryDays, 'day', 'days') : DASH}</dd></div>
+      </dl>
+      ${live ? h`<p className="cm-card-next">${nextSendText(c, tick) || 'No more sends scheduled'}${holdoutText(c, p.segCount, p.guardPct) ? h`<span className="cm-muted"> ${MID} ${holdoutText(c, p.segCount, p.guardPct)}</span>` : null}</p>` : null}
+      <div className="cm-card-foot">
+        <span className="cm-muted num">${goalText(g)}</span>
+        ${r.status !== 'live' ? h`<${Status} status=${r.status} />` : null}
+      </div>
+    </li>`;
+  }
+
   function Board() {
     var rows = useSel(selRows) || EMPTY;
     var campaigns = useSel(selCampaigns);
     var tick = useSel(selTick) || 0;
     var suggestions = useSel(selPlannerProposals) || EMPTY;
+    var segments = useSel(function (w) { return w.segments; });
+    var guardPct = useSel(function (w) { return w.guardrails ? w.guardrails.holdoutPct : null; });
     var byId = (campaigns && campaigns.byId) || EMPTY_OBJ;
-    return h`<div className="cm-board" role="list" aria-label="Campaigns by status">
+    var segById = (segments && segments.byId) || EMPTY_OBJ;
+    function segCount(c) { var s = c && segById[c.segmentId]; return s ? s.count : null; }
+    function isProgram(r) { var c = byId[r.id]; return !!(c && c.program); }
+    var dated = rows.filter(function (r) { return !isProgram(r); });
+    var programs = rows.filter(function (r) { return isProgram(r) && r.status !== 'completed'; });
+    return h`<div className="cm-board-wrap">
+      <div className="cm-board" role="list" aria-label="Campaigns by status">
       ${COLUMNS.map(function (col) {
-        var list = rows.filter(function (r) { return col.match.indexOf(r.status) >= 0; });
+        var list = dated.filter(function (r) { return col.match.indexOf(r.status) >= 0; });
         var sug = col.id === 'draft' ? suggestions : EMPTY;
         return h`<section key=${col.id} className="cm-col" role="listitem" aria-labelledby=${'cmp-col-' + col.id}>
           <h2 className="cm-col-title" id=${'cmp-col-' + col.id}>${col.label} <span className="cm-count num">${list.length}</span></h2>
           <ul className="cm-cards">
-            ${list.map(function (r) { return h`<${BoardCard} key=${r.id} row=${r} campaign=${byId[r.id]} tick=${tick} />`; })}
+            ${list.map(function (r) { return h`<${BoardCard} key=${r.id} row=${r} campaign=${byId[r.id]} tick=${tick} segCount=${segCount(byId[r.id])} guardPct=${guardPct} />`; })}
             ${sug.map(function (pr) { return h`<${PlannerSuggestion} key=${pr.id} proposal=${pr} />`; })}
           </ul>
           ${!list.length && !sug.length ? h`<p className="cm-col-empty">${col.id === 'draft' ? 'No drafts. Plan a campaign to start one.' : 'Nothing here right now.'}</p>` : null}
         </section>`;
       })}
+      </div>
+      ${programs.length ? h`<section className="cm-programs" aria-labelledby="cmp-programs-title">
+          <h2 className="cm-col-title" id="cmp-programs-title">Always-on <span className="cm-count num">${programs.length}</span></h2>
+          <p className="cm-muted cm-small">Programs that run all the time. Each person enters when the trigger fires, so there is no end date.</p>
+          <ul className="cm-cards cm-program-grid">
+            ${programs.map(function (r) { return h`<${ProgramCard} key=${r.id} row=${r} campaign=${byId[r.id]} tick=${tick} segCount=${segCount(byId[r.id])} guardPct=${guardPct} />`; })}
+          </ul>
+        </section>` : null}
     </div>`;
   }
 
@@ -428,31 +500,71 @@
   /* ================================================================
      Calendar
      ================================================================ */
+  var STATUS_WORD = { draft: 'Draft', scheduled: 'Scheduled', live: 'Live', paused: 'Paused', completed: 'Completed' };
   function CalendarMode() {
     var rows = useSel(selRows) || EMPTY;
     var tick = useSel(selTick) || 0;
-    var G = chart('Gantt');
-    var t = dayOf(tick), from = t - 6, to = t + 55;
-    try {
-      if (MC.time && has(MC.time, 'monthOf')) {
-        var m = MC.time.monthOf(t);
-        var next = MC.time.monthOf(m.toDay + 1);
-        from = m.fromDay; to = next.toDay + 1;
-      }
-    } catch (e) { /* default window */ }
-    var gRows = rows.map(function (r) { return { id: r.id, label: r.name, start: r.startTick, end: r.endTick, status: r.status }; });
-    var markers = ((MC.time && MC.time.EVENTS) || EMPTY).map(function (ev) { return { x: tickOf(ev.day, 0), label: ev.label }; });
-    if (!G) return h`<p className="cm-muted">The calendar appears once the chart library has loaded.</p>`;
+    var campaigns = useSel(selCampaigns);
+    var byId = (campaigns && campaigns.byId) || EMPTY_OBJ;
+    var t = dayOf(tick), from = t - 7, to = t + 31;
+    var n = Math.max(1, to - from);
+    var events = ((MC.time && MC.time.EVENTS) || EMPTY).filter(function (ev) { return ev.day >= from && ev.day < to; });
+    function col(day) { return Math.min(n, Math.max(0, day - from)) + 2; } // grid column, 1 is the label column
+    var days = [];
+    for (var i = 0; i < n; i++) days.push(from + i);
+    var peakRows = Math.max(1, events.length);
+    var rowOff = 3 + peakRows; // header + month row, then peak lane rows
+    var bars = rows.map(function (r, k) {
+      var c = byId[r.id], open = !!(c && c.program);
+      var s0 = dayOf(r.startTick), e0 = open ? to - 1 : lastDayOf(r.endTick);
+      var visible = e0 >= from && s0 < to;
+      var range = open ? 'From ' + dayShort(s0) + ', no end date' : dateRange(r.startTick, r.endTick);
+      var word = STATUS_WORD[r.status] || r.status;
+      return { r: r, k: k, visible: visible, s0: s0, e0: e0, open: open, range: range, word: word, before: e0 < from };
+    });
+    var style = { gridTemplateColumns: 'var(--cal-label) repeat(' + n + ', var(--cal-day))' };
     return h`<div className="cm-calendar">
       <p className="cm-muted cm-small">${dayLabel(from)} to ${dayLabel(to - 1)}. Select a bar to open the campaign.</p>
-      <${G} rows=${gRows} now=${tick} from=${tickOf(from, 0)} to=${tickOf(to, 0)} markers=${markers}
-        onSelect=${function (id) { openDetail(id); }} ariaLabel="Campaign calendar" />
+      <div className="cm-cal-scroll k-scroll-x">
+        <div className="cm-cal-grid" style=${style} role="group" aria-label="Campaign calendar">
+          <div className="cm-cal-corner" style=${{ gridRow: 1 }}></div>
+          ${days.map(function (d, j) {
+            var first = j === 0 || /\s1$/.test(dayShort(d));
+            return h`<div key=${d} className=${cx('cm-cal-day num', d === t && 'is-today', ((d % 7) + 7) % 7 === 0 || ((d % 7) + 7) % 7 === 1 ? 'is-wkend' : '')} style=${{ gridColumn: j + 2, gridRow: 1 }}
+              title=${dayLabel(d)}>${first ? h`<span className="cm-cal-mon">${dayShort(d).split(' ')[0]}</span>` : null}${(dayShort(d).match(/(\d+)$/) || [, ''])[1]}</div>`;
+          })}
+          <div className="cm-cal-rowlabel cm-cal-peaklabel" style=${{ gridRow: '2 / ' + (2 + peakRows) }}>Peak events</div>
+          ${events.map(function (ev, k) {
+            return h`<div key=${ev.label} className="cm-cal-peak" style=${{ gridColumn: col(ev.day) + ' / span 1', gridRow: 2 + k }} title=${ev.label + ', ' + dayLabel(ev.day)}>
+              <span className="cm-cal-peakdot"></span><span className="cm-cal-peaktext">${ev.label}, ${dayShort(ev.day)}</span>
+            </div>`;
+          })}
+          ${!events.length ? h`<div className="cm-cal-peak cm-muted" style=${{ gridColumn: '2 / span ' + n, gridRow: 2 }}><span className="cm-cal-peaktext">No peak events in this window.</span></div>` : null}
+          ${events.map(function (ev) {
+            return h`<div key=${'band-' + ev.label} className="cm-cal-band" aria-hidden="true" style=${{ gridColumn: col(ev.day) + ' / span 1', gridRow: (2 + peakRows) + ' / span ' + (bars.length + 1) }}></div>`;
+          })}
+          ${t >= from && t < to ? h`<div className="cm-cal-now" aria-hidden="true" style=${{ gridColumn: col(t) + ' / span 1', gridRow: '2 / span ' + (peakRows + bars.length + 1) }}></div>` : null}
+          <div className="cm-cal-laneend" aria-hidden="true" style=${{ gridRow: 1 + peakRows }}></div>
+          ${bars.map(function (b) {
+            var row = 2 + peakRows + b.k;
+            var label = b.r.name + ', ' + b.word.toLowerCase() + ', ' + b.range;
+            return h`<${R().Fragment} key=${b.r.id}><div className="cm-cal-rowline" aria-hidden="true" style=${{ gridRow: row }}></div><div className="cm-cal-rowlabel" style=${{ gridRow: row }}>
+              <button type="button" className="cm-cal-name" onClick=${function () { openDetail(b.r.id); }}>${b.r.name}</button>
+            </div>
+            ${b.visible ? h`<button type="button" className=${cx('cm-cal-bar', 'is-' + b.r.status, b.open && 'is-open')} aria-label=${label} title=${label}
+                style=${{ gridColumn: col(b.s0) + ' / ' + (col(b.e0) + 1), gridRow: row }} onClick=${function () { openDetail(b.r.id); }}>
+                <span className="cm-cal-bartext">${b.e0 - b.s0 >= 8 ? b.word + MID + b.range : b.e0 - b.s0 >= 3 ? b.word : ''}</span></button>`
+              : h`<span className="cm-cal-off cm-muted" style=${{ gridColumn: '2 / span ' + n, gridRow: row }}>${b.before ? 'Ended ' + dayShort(b.e0) : 'Starts ' + dayShort(b.s0)}</span>`}<//>`;
+          })}
+        </div>
+      </div>
     </div>`;
   }
 
   /* ================================================================
      Campaign detail
      ================================================================ */
+  var WRAP_TAB = { id: 'wrap', label: 'Wrap report' };
   var DETAIL_TABS = [
     { id: 'overview', label: 'Overview' }, { id: 'journey', label: 'Journey' }, { id: 'content', label: 'Content' },
     { id: 'audience', label: 'Audience' }, { id: 'budget', label: 'Budget' }, { id: 'activity', label: 'Activity' }
@@ -465,6 +577,102 @@
   function useStats(id) {
     var sel = R().useCallback(function (w) { return call('campaignStats', w, id); }, [id]);
     return useSel(sel);
+  }
+
+  /* ---------------- Collisions, lift, pacing, message load (selectors from the Metrics lane) ---------------- */
+  function useCollisions(cid) {
+    var sel = R().useCallback(function (w) { return hasSel('collisions') && cid ? call('collisions', w, cid) : null; }, [cid]);
+    var list = useSel(sel);
+    return Array.isArray(list) ? list : EMPTY;
+  }
+  function collisionText(x) {
+    var days = fin(x.fromDay) && fin(x.toDay) ? ', ' + (x.fromDay === x.toDay ? dayShort(x.fromDay) : dayShort(x.fromDay) + ' – ' + dayShort(x.toDay)) : '';
+    return 'Shares ' + pctUnits(x.overlapPct, 0) + ' of its audience with ' + (x.otherName || 'another campaign') + ' on ' + chLabel(x.channel) + days;
+  }
+  function Collisions(p) {
+    var list = useCollisions(p.campaignId);
+    if (!list.length) return null;
+    return h`<div className="cm-collide" role="status" id=${p.id || 'cmp-collisions'}>
+      <p className="cm-collide-title">${list.length === 1 ? 'This overlaps another campaign' : 'This overlaps ' + list.length + ' other campaigns'}</p>
+      <ul className="cm-collide-list">${list.map(function (x, i) { return h`<li key=${(x.otherId || i) + ':' + x.channel}>${collisionText(x)}</li>`; })}</ul>
+      <p className="cm-muted cm-small">People in both get two messages close together. Stagger the dates or exclude the shared audience.</p>
+    </div>`;
+  }
+
+  function LiftCard(p) {
+    var c = p.campaign;
+    var sel = R().useCallback(function (w) { return hasSel('campaignLift') ? call('campaignLift', w, c.id) : null; }, [c.id]);
+    var lift = useSel(sel);
+    var holdout = fin(c.holdoutPct) ? c.holdoutPct : 10;
+    if (!hasSel('campaignLift') || !lift) {
+      return h`<section className="cm-side-sec cm-liftcard" aria-labelledby="cmp-lift-title">
+        ${p.bare ? null : h`<h2 className="cm-h3" id="cmp-lift-title">Lift vs control</h2>`}
+        <p className="cm-muted cm-small">Lift appears once the ${holdout}% holdout group has enough sends to compare.</p>
+      </section>`;
+    }
+    var tr = scalar(lift.treated), ct = scalar(lift.control);
+    var metric = lift.metric || 'revenue per person';
+    var money$ = /revenue|spend|value/.test(metric);
+    function v(x) { return money$ ? (fin(x) ? '$' + x.toFixed(2) : DASH) : (fin(x) ? (Math.round(x * 100) / 100).toString() : DASH); }
+    var body;
+    if (!lift.ready || !fin(lift.liftPct)) {
+      body = h`<p className="cm-lift"><strong>Too early</strong></p>
+        <p className="cm-muted cm-small">${lift.note || 'The holdout group (' + holdout + '% of the audience) needs more sends before the comparison means anything.'}</p>`;
+    } else {
+      var up = lift.liftPct > 0;
+      body = h`<p className="cm-lift num"><strong>${signedPct(lift.liftPct)}</strong>
+          ${fin(lift.lo) && fin(lift.hi) ? h`<span className="cm-muted"> (likely ${signedPct(lift.lo)} to ${signedPct(lift.hi)})</span>` : null}</p>
+        <p className="cm-lift-sentence">${fin(tr) && fin(ct)
+          ? 'People who got this campaign brought in ' + v(tr) + ' each, against ' + v(ct) + ' in the holdout group: ' + (up ? 'a gain' : 'a drop') + ' of ' + pctUnits(Math.abs(lift.liftPct)) + '.'
+          : 'Compared with the holdout group, this campaign is ' + (up ? 'ahead' : 'behind') + ' by ' + pctUnits(Math.abs(lift.liftPct)) + ' on ' + metric + '.'}
+          ${fin(lift.lo) && fin(lift.hi) && lift.lo < 0 && lift.hi > 0 ? ' The range includes zero, so it could still be noise.' : ''}</p>
+        <p className="cm-muted cm-small num">${fin(lift.nTreated) ? num(lift.nTreated) + ' people reached, ' : ''}${fin(lift.nControl) ? num(lift.nControl) + ' in the holdout.' : ''} ${lift.note || ''}</p>`;
+    }
+    return h`<section className="cm-side-sec cm-liftcard" aria-labelledby="cmp-lift-title">
+      ${p.bare ? null : h`<h2 className="cm-h3" id="cmp-lift-title">Lift vs control</h2>`}${body}</section>`;
+  }
+
+  function PacingNote(p) {
+    var c = p.campaign;
+    var sel = R().useCallback(function (w) { return hasSel('campaignPacing') ? call('campaignPacing', w, c.id) : null; }, [c.id]);
+    var pc = useSel(sel);
+    if (!pc || !fin(pc.expectedByNow)) return null;
+    function v(x) { return goalFmt(c.goal.type, x, true); }
+    var early = pc.status === 'early';
+    return h`<div className="cm-pacing" id="cmp-pacing">
+      <p className="num">${early ? 'Too early to judge. ' : ''}Expected by now: <strong>${v(pc.expectedByNow)}</strong>${MID}you’re at <strong>${v(pc.actual)}</strong>${!early && fin(pc.delta) && pc.delta !== 0 ? MID + (pc.delta > 0 ? v(pc.delta) + ' ahead' : v(Math.abs(pc.delta)) + ' behind') : ''}</p>
+      ${pc.recoverNote ? h`<p className="cm-muted cm-small">${pc.recoverNote}</p>` : null}
+    </div>`;
+  }
+
+  function MessageLoad(p) {
+    var c = p.campaign, segCount = p.segCount;
+    var sel = R().useCallback(function (w) { return hasSel('messageLoad') ? call('messageLoad', w, { days: 7 }) : null; }, []);
+    var ml = useSel(sel);
+    var Panel = ui('Panel');
+    if (!hasSel('messageLoad') || !ml) {
+      return h`<${Panel} id="cmp-load" title="Message load" sub="How many messages each person gets in a week."><p className="cm-muted cm-small">Message load isn’t available yet.</p><//>`;
+    }
+    var dist = Array.isArray(ml.distribution) ? ml.distribution : EMPTY;
+    var cap = ml.cap, days = ml.days || 7;
+    var total = dist.reduce(function (s, d) { return s + (d.profiles || 0); }, 0) || 1;
+    var maxP = dist.reduce(function (m, d) { return Math.max(m, d.profiles || 0); }, 0) || 1;
+    var mine = ml.byCampaign ? ml.byCampaign[c.id] : null;
+    var perPerson = fin(mine) && segCount > 0 ? mine / segCount : null;
+    var sub = fin(cap) ? 'Sends per person over the last ' + (days === 7 ? 'week' : days + ' days') + ', against your cap of ' + cap + '.' : 'Sends per person over the last week.';
+    return h`<${Panel} id="cmp-load" title="Message load" sub=${sub}>
+      ${perPerson != null ? h`<p className="num">This campaign sent about <strong>${perPerson.toFixed(1)}</strong> per person in its audience.</p>` : null}
+      ${fin(ml.overCap) ? h`<p className=${cx('num', ml.overCap > 0 && 'cm-warn-text')}>${ml.overCap > 0 ? plural(ml.overCap, 'person is', 'people are') + ' over the cap across all campaigns.' : 'Nobody is over the cap.'}</p>` : null}
+      ${dist.length ? h`<ul className="cm-load" aria-label="People by sends this week">${dist.map(function (d) {
+        var over = fin(cap) && d.sends > cap;
+        return h`<li key=${d.sends} className="cm-load-row">
+          <span className="cm-load-k num">${d.sends} ${d.sends === 1 ? 'send' : 'sends'}</span>
+          <span className="cm-load-track"><span className=${cx('cm-load-bar', over && 'is-over')} style=${{ width: Math.max(2, Math.round((d.profiles || 0) / maxP * 100)) + '%' }}></span></span>
+          <span className="cm-load-v num">${num(d.profiles)}<span className="cm-muted"> (${Math.round((d.profiles || 0) / total * 100)}%)</span></span>
+        </li>`;
+      })}</ul>` : null}
+      <p className="cm-muted cm-small">The bars cover everyone who can be messaged, not only this audience.</p>
+    <//>`;
   }
 
   function SchedulePanel(p) {
@@ -488,6 +696,7 @@
     }
     var Panel = ui('Panel');
     return h`<${Panel} id="cmp-schedule" title="Schedule this campaign" sub=${'Starts ' + dayLabel(dayOf(c.startTick)) + '. Preflight checks must pass first.'}>
+      <${Collisions} campaignId=${c.id} id="cmp-schedule-collisions" />
       ${checks && GL ? h`<${GL} items=${checks.map(function (x) { return { id: x.id, label: x.label, status: x.status, detail: x.detail, blocking: x.status === 'fail' }; })} ariaLabel="Preflight checks" />`
         : h`<p className="cm-muted">Preflight checks are unavailable right now.</p>`}
       <${Msg} text=${err} tone="crit" />
@@ -716,6 +925,7 @@
       <div className="cm-ov-main">
         <${Panel} id="cmp-results" title="Results" sub=${started ? (out.label + (stats && stats.daysLeft > 0 ? MID + plural(stats.daysLeft, 'day', 'days') + ' left' : '')) : 'Results appear once the campaign goes live on ' + dayLabel(dayOf(c.startTick)) + '.'}>
           ${figures}
+          ${c.status !== 'completed' ? h`<${PacingNote} campaign=${c} />` : null}
           ${started && LC ? h`<div className="cm-chart">
               <${LC} series=${[{ id: 'm', label: GOAL_LABEL[c.goal.type] + ' per day', points: points }]} markers=${markers}
                 yFormat=${c.goal.type === 'revenue' ? 'moneyCompact' : 'int'} xFormat=${dayShort} height=${220}
@@ -743,13 +953,13 @@
             </li>`;
           })}</ol>` : h`<p className="cm-muted cm-small">${c.status === 'draft' ? 'Agents never change drafts. They start once the campaign is live.' : 'No agent changes yet.'}</p>`}
         </section>
-        <section className="cm-side-sec" aria-labelledby="cmp-lift-title">
-          <h2 className="cm-h3" id="cmp-lift-title">Control group lift</h2>
+        ${hasSel('campaignLift') ? h`<${LiftCard} campaign=${c} />` : h`<section className="cm-side-sec" aria-labelledby="cmp-lift-title">
+          <h2 className="cm-h3" id="cmp-lift-title">Lift vs control</h2>
           ${lift && fin(lift.lift) ? h`<p className="cm-lift num"><strong>${delta(lift.lift)}</strong> ${lift.metric} vs control
               <span className="cm-muted">(${delta(lift.lo)} to ${delta(lift.hi)})</span></p>
               <p className="cm-muted cm-small num">${num(lift.trt.n)} treated sends, ${num(lift.ctl.n)} control sends. The control group follows your original plan without agent changes.</p>`
             : h`<p className="cm-muted cm-small">Lift appears after the control group (${(c.holdoutPct != null ? c.holdoutPct : 10)}% of the audience) receives 100 sends.</p>`}
-        </section>
+        </section>`}
       </aside>
     </div>`;
   }
@@ -940,6 +1150,7 @@
           </div>` : null}
         ${msg ? h`<${Msg} text=${msg.text} tone=${msg.tone} />` : null}
       <//>
+      <${MessageLoad} campaign=${c} segCount=${s ? s.count : 0} />
       ${(c.include || EMPTY).length ? h`<${Panel} id="cmp-include" title="Also included" sub="Extra segments whose members join this campaign.">
           <ul className="cm-rows">${c.include.map(function (sid) {
             var x = byId[sid];
@@ -1085,6 +1296,100 @@
     <//>`;
   }
 
+  /* ---------------- Wrap report (completed campaigns) ---------------- */
+  function channelTotals(w, cid, ch) {
+    var F = MC.F || { REV: 5, COST: 6, SENT: 0, CONV: 4 };
+    var out = { rev: 0, cost: 0, sent: 0, conv: 0 }, days = (w.metrics && w.metrics.days) || EMPTY;
+    for (var i = 0; i < days.length; i++) {
+      var cd = days[i].c && days[i].c[cid], f = cd && cd.ch && cd.ch[ch];
+      if (!f) continue;
+      out.rev += f[F.REV] || 0; out.cost += f[F.COST] || 0; out.sent += f[F.SENT] || 0; out.conv += f[F.CONV] || 0;
+    }
+    return out;
+  }
+  function WrapTab(p) {
+    var React = R();
+    var c = p.campaign, tick = p.tick;
+    var stats = useStats(c.id);
+    var metricsRev = useSel(React.useCallback(function (w) { return w.rev ? w.rev.metrics : 0; }, []));
+    var chRows = React.useMemo(function () {
+      var w = getWorld();
+      if (!w) return EMPTY;
+      return c.channels.map(function (ch) { var t = channelTotals(w, c.id, ch); t.ch = ch; t.roas = t.cost > 0 ? t.rev / t.cost : null; return t; });
+    }, [c.id, c.channels, metricsRev]);
+    var propSel = React.useCallback(function (w) { return call('proposalsFor', w, c.id) || EMPTY; }, [c.id]);
+    var props = useSel(propSel) || EMPTY;
+    var changes = props.filter(function (x) { return x.status === 'applied' || x.status === 'auto'; });
+    var byAgent = {};
+    changes.forEach(function (x) { byAgent[x.agentId] = (byAgent[x.agentId] || 0) + 1; });
+    var topVariants = useSel(React.useCallback(function (w) {
+      return c.channels.map(function (ch) { var r = call('variantStats', w, c.id, ch) || EMPTY; return r.length ? { ch: ch, v: r[0] } : null; }).filter(Boolean);
+    }, [c.id, c.channels]), function (a, b) { return JSON.stringify(a) === JSON.stringify(b); }) || EMPTY;
+    var segs = useSel(React.useCallback(function (w) { return w.segments; }, []));
+    var seg = segs && segs.byId ? segs.byId[c.segmentId] : null;
+    var liftSel = React.useCallback(function (w) { return hasSel('campaignLift') ? call('campaignLift', w, c.id) : null; }, [c.id]);
+    var lift = useSel(liftSel);
+    var Panel = ui('Panel');
+    var g = (stats && stats.goal) || null;
+    var actual = g ? g.value : null, target = c.goal.target;
+    var hit = fin(actual) && target > 0 ? actual / target : null;
+    var met = hit != null && hit >= 1;
+    var spend = stats ? stats.cost : null;
+
+    var best = chRows.filter(function (r) { return fin(r.roas) && r.cost > 0; }).sort(function (a, b) { return b.roas - a.roas; });
+    var next = [];
+    if (best.length > 1) next.push('Put more budget behind ' + chLabel(best[0].ch) + ', which returned ' + ratio(best[0].roas) + ' on spend, and less behind ' + chLabel(best[best.length - 1].ch) + ' at ' + ratio(best[best.length - 1].roas) + '.');
+    else if (best.length === 1) next.push(chLabel(best[0].ch) + ' returned ' + ratio(best[0].roas) + ' on spend. Start the next campaign there.');
+    topVariants.forEach(function (x) {
+      if (x.v && x.v.sends > 200) next.push('Reuse the leading ' + chLabel(x.ch) + ' copy (variant ' + x.v.name + ') as the starting point next time.');
+    });
+    if (lift && lift.ready && fin(lift.liftPct)) {
+      next.push(lift.liftPct > 0 ? 'Keep a holdout on the next send to this audience: the lift of ' + signedPct(lift.liftPct) + ' is the number to beat.' : 'The holdout did as well as the campaign, so test a different offer or message before sending to this audience again.');
+    }
+    if (seg) next.push('Reuse the “' + seg.name + '” audience, and exclude anyone who bought during the campaign.');
+    if (hit != null && !met) next.push('The goal was missed by ' + goalFmt(c.goal.type, Math.max(0, target - actual), true) + '. Set the next target nearer ' + goalFmt(c.goal.type, actual, true) + ' or give it more budget.');
+
+    return h`<div className="cm-wrap">
+      <${Panel} id="cmp-wrap-goal" title="Goal vs actual" sub=${dateRange(c.startTick, c.endTick) + (fin(tick) ? MID + 'ended ' + rel(c.endTick, tick) : '')}>
+        <div className="cm-figs" role="group" aria-label="Final results">
+          <${Figure} label=${GOAL_LABEL[c.goal.type] || 'Result'} value=${goalFmt(c.goal.type, actual, true)} sub=${'of ' + goalFmt(c.goal.type, target, true) + ' goal'}>
+            ${hit != null ? h`<${Meter} value=${actual} max=${Math.max(target, actual) * 1.05} goal=${target} tone=${met ? 'good' : 'warn'} label="Final result against goal" />` : null}
+          <//>
+          <${Figure} label="Goal reached" value=${hit != null ? pct(hit, 0) : DASH} sub=${hit == null ? '' : met ? 'Goal met' : 'Short of goal'} />
+          <${Figure} label="Return on spend" value=${stats && fin(stats.roas) ? ratio(stats.roas) : DASH} sub=${fin(spend) ? money(spend, true) + ' spent of ' + money(c.budget.total, true) : ''} />
+          ${c.goal.type === 'revenue' ? h`<${Figure} label="Conversions" value=${stats ? num(stats.conv) : DASH} sub=${stats ? num(stats.sends) + ' sends' : ''} />`
+            : h`<${Figure} label="Revenue" value=${stats ? money(stats.revenue, true) : DASH} sub=${stats ? num(stats.sends) + ' sends' : ''} />`}
+        </div>
+      <//>
+      <${Panel} id="cmp-wrap-channels" title="Channel results" sub="What each channel spent and brought in.">
+        <div className="k-scroll-x"><table className="cm-table">
+          <thead><tr><th scope="col">Channel</th><th scope="col" className="is-num">Spent</th><th scope="col" className="is-num">Revenue</th>
+            <th scope="col" className="is-num">Return on spend</th><th scope="col" className="is-num">Orders</th></tr></thead>
+          <tbody>${chRows.map(function (r) {
+            return h`<tr key=${r.ch}><th scope="row">${chLabel(r.ch)}</th><td className="is-num num">${money(r.cost)}</td><td className="is-num num">${money(r.rev)}</td>
+              <td className="is-num num">${fin(r.roas) ? ratio(r.roas) : DASH}</td><td className="is-num num">${num(r.conv)}</td></tr>`;
+          })}</tbody>
+        </table></div>
+      <//>
+      <div className="cm-wrap-cols">
+        <${Panel} id="cmp-wrap-lift" title="Lift vs control"><${LiftCard} campaign=${c} bare=${true} /><//>
+        <${Panel} id="cmp-wrap-agents" title="What agents changed" sub=${changes.length ? plural(changes.length, 'change', 'changes') + ' while it ran.' : 'Agents made no changes to this campaign.'}>
+          ${changes.length ? h`<ul className="cm-rows">${Object.keys(byAgent).map(function (id) {
+            return h`<li key=${id} className="cm-rowline"><${AgentNote} text=${agentName(id)} /><span className="num">${plural(byAgent[id], 'change', 'changes')}</span></li>`;
+          })}</ul>
+          <ol className="cm-timeline cm-gap-top">${changes.slice(0, 5).map(function (pr) {
+            return h`<li key=${pr.id}><p className="cm-tl-title">${pr.title}</p><span className="cm-muted cm-small">${rel(pr.appliedTick, tick)}</span></li>`;
+          })}</ol>` : null}
+        <//>
+      </div>
+      <${Panel} id="cmp-wrap-next" title="Carry forward" sub="Suggestions for the next campaign, drawn from these results.">
+        ${next.length ? h`<ul className="cm-next">${next.map(function (t, i) { return h`<li key=${i}>${t}</li>`; })}</ul>`
+          : h`<p className="cm-muted cm-small">There isn’t enough data to suggest anything yet.</p>`}
+        <div className="cm-row cm-gap-top"><${Btn} kind="secondary" id="cmp-wrap-duplicate" onClick=${function () { duplicateBrief(c); }}>Duplicate brief<//></div>
+      <//>
+    </div>`;
+  }
+
   function Detail(p) {
     var React = R();
     var focus = p.focus || {};
@@ -1102,9 +1407,11 @@
         <p className="cm-muted">This item was removed (by your undo), or it never existed.</p>
       </div>`;
     }
-    var tab = DETAIL_TABS.some(function (t) { return t.id === focus.tab; }) ? focus.tab : 'overview';
+    var tabs = c.status === 'completed' ? [DETAIL_TABS[0], WRAP_TAB].concat(DETAIL_TABS.slice(1)) : DETAIL_TABS;
+    var tab = tabs.some(function (t) { return t.id === focus.tab; }) ? focus.tab : 'overview';
     var body;
-    if (tab === 'journey') body = h`<${Journey} key=${c.id} campaign=${c} />`;
+    if (tab === 'wrap') body = h`<${WrapTab} key=${c.id} campaign=${c} tick=${tick} />`;
+    else if (tab === 'journey') body = h`<${Journey} key=${c.id} campaign=${c} />`;
     else if (tab === 'content') body = h`<${ContentTab} campaign=${c} />`;
     else if (tab === 'audience') body = h`<${AudienceTab} key=${c.id} campaign=${c} tick=${tick} />`;
     else if (tab === 'budget') body = h`<${BudgetTab} key=${c.id} campaign=${c} />`;
@@ -1116,7 +1423,7 @@
         onEdit=${function () { setPanel(panel === 'edit' ? null : 'edit'); }} />
       ${panel === 'schedule' && c.status === 'draft' ? h`<${SchedulePanel} campaign=${c} onClose=${function () { setPanel(null); }} />` : null}
       ${panel === 'edit' && c.status !== 'draft' ? h`<${EditDetails} key=${c.id} campaign=${c} onClose=${function () { setPanel(null); }} />` : null}
-      <${Tabs} id="cmp-tabs" label="Campaign sections" tabs=${DETAIL_TABS} value=${tab} panelId="cmp-tabpanel"
+      <${Tabs} id="cmp-tabs" label="Campaign sections" tabs=${tabs} value=${tab} panelId="cmp-tabpanel"
         onChange=${function (t) { setFocus({ tab: t }); }} />
       <div id="cmp-tabpanel" role="tabpanel" aria-labelledby=${'cmp-tabs-' + tab} className="cm-tabpanel">${body}</div>
     </div>`;
@@ -1465,7 +1772,7 @@
       if (sec.id === 'journey') return d && d.steps && FD ? h`<div className="cm-plan-flow"><${FD} steps=${d.steps} compact=${true} ariaLabel="Planned journey" /></div>` : h`<p className="cm-muted">No journey in this plan.</p>`;
       if (sec.id === 'content') return h`<${PlanContent} data=${d} edit=${memo.edits.content} editing=${editing === 'content'} onEdit=${function (v) { setEdit('content', v); }} />`;
       if (sec.id === 'forecast') return h`<${PlanForecast} data=${d} brief=${brief} />`;
-      if (sec.id === 'preflight') return GL ? h`<${GL} items=${preflightItems.map(function (x) { return Object.assign({ blocking: x.status === 'fail' }, x); })} ariaLabel="Preflight checks" />` : null;
+      if (sec.id === 'preflight') return h`<div><${Collisions} campaignId=${draftId} id="plan-collisions" />${GL ? h`<${GL} items=${preflightItems.map(function (x) { return Object.assign({ blocking: x.status === 'fail' }, x); })} ariaLabel="Preflight checks" />` : null}</div>`;
       return null;
     }
 

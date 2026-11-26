@@ -54,6 +54,14 @@
     return out;
   }
 
+  // Only variants that are live (or approved) may receive traffic; drafts and unreviewed copy never do.
+  function eligible(v) {
+    if (v.status !== 'live' && v.status !== 'approved') return false;
+    var rs = v.reviewState || v.review;
+    if (rs && typeof rs === 'object') rs = rs.state || rs.status;
+    return !rs || rs === 'approved';
+  }
+
   function observe(world, ctx) {
     var t = ctx.tick, today = T().dayOf(t), C = world.campaigns, out = [];
     (C.order || []).forEach(function (cid) {
@@ -62,7 +70,7 @@
       var tot = null;
       c.channels.forEach(function (ch) {
         if (MC.CH.OWNED.indexOf(ch) < 0 || (c.channelPaused && c.channelPaused[ch])) return;
-        var live = MC.catalog.variantsOf(world, cid, ch).filter(function (v) { return v.status === 'live'; });
+        var live = MC.catalog.variantsOf(world, cid, ch).filter(eligible);
         if (live.length < 2) return;
         if (!tot) tot = campaignTotals(world, cid, today);
         var alloc = (c.alloc && c.alloc[ch]) || {};

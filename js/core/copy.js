@@ -28,6 +28,9 @@
     link: 'Link', imageId: 'Image', alt: 'Alt text', sms: 'Message', pushTitle: 'Title', pushBody: 'Body',
     socialText: 'Primary text', socialHeadline: 'Headline' };
   CP.TOKENS = ['{first_name}', '{product}', '{offer}', '{link}'];
+  CP.TOKEN_NAMES = ['first_name', 'product', 'offer', 'link'];
+  // Any token may carry its own fallback: {first_name|there}. An empty fallback ({first_name|}) drops the token.
+  var TOKEN_RE = /\{([a-z_]+)(?:\|([^{}]*))?\}/g;
   CP.IMAGES = [
     { id: 'scene-summit', label: 'Summit at dawn', alt: 'Climber on a granite summit as the sun rises over the ridgeline' },
     { id: 'scene-forest', label: 'Forest trail', alt: 'Runner on a misty forest trail lined with tall firs' },
@@ -48,10 +51,10 @@
   // Offer phrasing: O bare, OP with the product, OS full sentence, OSS short SMS sentence.
   var OFFER_TEXT = {
     none: { O: '', OP: '', OS: '', OSS: '' },
-    freeship: { O: 'free shipping', OP: 'free shipping on {THEP}', OPA: 'free shipping on everything', OS: 'Shipping is on us this week.', OSS: 'Free shipping this week. ' },
-    pct15: { O: '15% off', OP: '15% off {THEP}', OPA: '15% off sitewide', OS: 'Take 15% off through Sunday.', OSS: '15% off thru Sunday. ' },
-    pct25: { O: '25% off', OP: '25% off {THEP}', OPA: '25% off sitewide', OS: 'Take 25% off through Sunday.', OSS: '25% off thru Sunday. ' },
-    gift: { O: 'a free gift', OP: 'a free gift with {THEP}', OPA: 'a free gift with every order', OS: 'Every order this week ships with a free gift.', OSS: 'Free gift with every order. ' }
+    freeship: { O: 'free shipping', OP: 'free shipping on {THEP}', OPA: 'free shipping on everything', OS: 'Shipping is on us.', OSS: 'Free shipping on your order. ' },
+    pct15: { O: '15% off', OP: '15% off {THEP}', OPA: '15% off sitewide', OS: 'Take 15% off your order.', OSS: '15% off your order. ' },
+    pct25: { O: '25% off', OP: '25% off {THEP}', OPA: '25% off sitewide', OS: 'Take 25% off your order.', OSS: '25% off your order. ' },
+    gift: { O: 'a free gift', OP: 'a free gift with {THEP}', OPA: 'a free gift with every order', OS: 'Every order ships with a free gift.', OSS: 'Free gift with every order. ' }
   };
   CP.OFFER_TEXT = { none: '', freeship: 'free shipping', pct15: '15% off', pct25: '25% off', gift: 'a free gift' };
 
@@ -63,10 +66,10 @@
         ['Field-tested: why we stand behind {THEP}']],
       adventurous: [['Your next big day starts with {THEP}'], ['{first_name}, {PL} is calling'], ['Go farther this weekend with {O}', 'o'],
         ['Ready for {SE}?'], ['5 routes worth the early alarm'], ['Chase first light with {THEP}']],
-      warm: [['{first_name}, we picked this one for you'], ['A little something for {SE}: {O}', 'o'], ['Back by popular demand: {THEP}'],
+      warm: [['{first_name}, we picked this one for you'], ['A little something for {SE}: {O}', 'o'], ['Gear we keep reaching for: {THEP}'],
         ['From our trail crew to yours'], ['Gear we would hand to a friend'], ['{first_name}, thanks for exploring with us']],
-      urgent: [['Ends tonight: {OP}', 'o'], ['Last call for {THEP}'], ['{first_name}, 48 hours left'], ['Hurry, {G} is going fast'],
-        ['Today only: {O} for members', 'o'], ['Don’t miss it: {SE} prep ends soon']]
+      urgent: [['Ends soon: {OP}', 'o'], ['Last call for {THEP}'], ['{first_name}, your offer ends soon', 'o'], ['Time to get {G} sorted'],
+        ['Members get {O}', 'o'], ['Don’t miss it: {SE} prep ends soon']]
     },
     preheader: {
       practical: [['Specs, sizing and care tips in one place.'], ['Everything you need for {SE}, nothing you don’t.'],
@@ -75,67 +78,67 @@
         ['{OPC} while the trails are quiet.', 'o'], ['New routes, fresh gear, big views.']],
       warm: [['A note from the Fernway crew.'], ['Hand-picked for the way you get outside.'],
         ['Our thanks: {O} on your next order.', 'o'], ['Cozy evenings and early starts, covered.']],
-      urgent: [['Offer ends at midnight.', 'o'], ['Sizes are selling out fast.'], ['{OPC} ends soon.', 'o'], ['Only a few hours left to order.']]
+      urgent: [['Your offer ends soon.', 'o'], ['Check the fit guide before you order.'], ['{OPC} ends soon.', 'o'], ['Order today and be set for {SE}.']]
     },
     headline: {
       practical: [['Gear that works as hard as you do'], ['Built for {SE}'], ['The {G} checklist']],
       adventurous: [['Go farther this season'], ['Your next adventure starts here'], ['Chase the weather window']],
       warm: [['Picked with you in mind'], ['Warm layers, warmer welcomes'], ['Thanks for getting outside with us']],
-      urgent: [['Last chance to gear up'], ['The clock is ticking'], ['Final hours']]
+      urgent: [['Last chance to gear up'], ['The clock is ticking'], ['Time is running out']]
     },
     body: {
       practical: [['Hi {first_name}. {THEPC} is built for {SE}. It is light, tough and easy to care for. {OS}'],
         ['{THEPC} has earned its place in our own packs. Check the fit guide, pick your size and get set for {SE}. {OS}'],
         ['Good gear saves time out on {PL}. We tested {THEP} through rain, mud and cold. Here is what we learned. {OS}']],
-      adventurous: [['{first_name}, the best days start early. Grab {THEP} and head for {PL}. {OS}'],
+      adventurous: [['{first_name}, the big days start early. Grab {THEP} and head for {PL}. {OS}'],
         ['New season, new routes. {THEPC} is ready when you are. {OS}'],
         ['Bigger views are waiting. Pack {THEP}, check the forecast and go farther. {OS}']],
       warm: [['Hi {first_name}, thank you for exploring with us. We think you will love {THEP} for {SE}. {OS}'],
         ['Our crew picked {THEP} for days like these. It is the gear we hand to friends. {OS}'],
         ['Here is a small thank-you from all of us at Fernway. {OS} We hope to see you out on {PL}.']],
-      urgent: [['{first_name}, time is almost up. {OS} Sizes are going fast, so order today.'],
+      urgent: [['{first_name}, time is almost up. {OS} Order today so you are set for {SE}.'],
         ['This is the last call for {THEP}. {OS} Once it ends, it ends.'],
-        ['Only hours left. {OS} Grab {THEP} before your size sells out.']]
+        ['Time is running out. {OS} Grab {THEP} before the offer ends.']]
     },
     cta: {
       practical: [['Shop now'], ['See the details'], ['Build your kit'], ['Get yours']],
       adventurous: [['Gear up'], ['Start exploring'], ['Find your route'], ['Shop the collection']],
       warm: [['Take a look'], ['Discover your pick'], ['Shop the picks'], ['Claim your gift', 'g']],
-      urgent: [['Shop before midnight'], ['Get it today'], ['Claim your offer', 'o'], ['Order now']]
+      urgent: [['Shop before it ends', 'o'], ['Get it today'], ['Claim your offer', 'o'], ['Order now']]
     },
     sms: {
-      practical: [['Fernway: {THEPC} is back in stock. {OSS}Shop {link}'], ['Fernway: Your checklist for {SE} is here. {OSS}See it: {link}'],
+      practical: [['Fernway: {THEPC} is ready for {SE}. {OSS}Shop {link}'], ['Fernway: Your checklist for {SE} is here. {OSS}See it: {link}'],
         ['Fernway: Hi {first_name}, field-tested {G} for {SE}. {OSS}Shop {link}']],
       adventurous: [['Fernway: {PLC} is calling, {first_name}. {OSS}Gear up: {link}'], ['Fernway: Big day ahead? {THEPC} is ready. {OSS}Grab it: {link}'],
         ['Fernway: The weather window is open. {OSS}Go farther: {link}']],
       warm: [['Fernway: Hi {first_name}, we picked something for {SE}. {OSS}See it: {link}'], ['Fernway: Thank you for exploring with us. {OSS}Take a look: {link}'],
         ['Fernway: Picked for you by our crew: {THEP}. {OSS}Take a look: {link}']],
-      urgent: [['Fernway: Last call, {first_name}. {OSS}Shop before it ends tonight: {link}'], ['Fernway: Hours left for {THEP}. {OSS}Get yours: {link}'],
-        ['Fernway: Going fast. {OSS}Order today: {link}']]
+      urgent: [['Fernway: Last call, {first_name}. {OSS}Shop before it ends: {link}'], ['Fernway: Time to grab {THEP}. {OSS}Get yours: {link}'],
+        ['Fernway: Your pick is waiting. {OSS}Order today: {link}']]
     },
     pushTitle: {
-      practical: [['Back in stock: {P}'], ['Your {G} checklist'], ['Built for {SE}']],
+      practical: [['Meet {P}'], ['Your {G} checklist'], ['Built for {SE}']],
       adventurous: [['{PLC} is calling'], ['Ready for a big day?'], ['Go farther this weekend']],
       warm: [['Picked for you, {first_name}'], ['A little thank-you'], ['Our crew picked these']],
-      urgent: [['Ends tonight'], ['Last call, {first_name}'], ['Only hours left']]
+      urgent: [['Ends soon', 'o'], ['Last call, {first_name}'], ['Don’t miss out']]
     },
     pushBody: {
-      practical: [['{THEPC} is in stock and built for {SE}. {OS} Shop now.'], ['Light, tough and easy to care for. Meet {THEP}. {OS}']],
+      practical: [['{THEPC} is built for {SE}. {OS} Shop now.'], ['Light, tough and easy to care for. Meet {THEP}. {OS}']],
       adventurous: [['Pack {THEP} and head for {PL}. {OS} Gear up.'], ['The weather window is open. Go farther. {OS} Find your route.']],
       warm: [['We think you will love {THEP}. {OS} Take a look.'], ['Our crew picked these for {SE}, with thanks. {OS} See the picks.']],
-      urgent: [['{OS} Ends at midnight. Shop now.'], ['Sizes are going fast. {OS} Get yours today.']]
+      urgent: [['{OS} Ends soon. Shop now.', 'o'], ['Don’t wait. {OS} Get yours today.']]
     },
     socialText: {
       practical: [['{THEPC}: built and field-tested for {SE}. {OS}'], ['Restock your {G} with gear we tested ourselves. {OS}']],
       adventurous: [['Your next big day starts here. {PLC} is calling. {OS}'], ['Chase the weather window with {THEP}. {OS}']],
       warm: [['Gear we would hand to a friend, picked by our crew. {OS}'], ['Made for cozy camps and early starts. With thanks from Fernway. {OS}']],
-      urgent: [['Ends tonight. {OS} Last call for {THEP}.'], ['Hours left: sizes are going fast. {OS}']]
+      urgent: [['Ends soon. {OS} Last call for {THEP}.', 'o'], ['Time is running out. {OS}']]
     },
     socialHeadline: {
       practical: [['Built for {SE}'], ['Field-tested {G}'], ['Restock your {G}']],
       adventurous: [['Go farther this season'], ['{PLC} is calling'], ['Chase the weather window']],
       warm: [['Picked for you'], ['From our crew to you'], ['Gear we love, with thanks']],
-      urgent: [['Ends tonight'], ['Last call'], ['Final hours to save']]
+      urgent: [['Ends soon', 'o'], ['Last call'], ['Last chance to save', 'o']]
     }
   };
   // Tone markers used for toneFit detection on any text (generated or written by hand).
@@ -185,14 +188,28 @@
         SE: cw.SE, O: ot.O, OP: op, OPC: cap1(op), OS: ot.OS, OSS: ot.OSS }
     };
   }
+  // Fallback for a bare {first_name} given what comes before it: "Hi {first_name}" reads "Hi there"; anywhere else drop it.
+  function nameFallback(before) { return /(^|[\s.!?:])(hi|hello|hey)\s+$/i.test(before) ? 'there' : ''; }
   function fill(tpl, vars) {
-    return tidy(tpl.replace(/\{([A-Z]+)\}/g, function (m, k) { return vars[k] !== undefined ? vars[k] : m; }));
+    var t = tpl.replace(/\{([A-Z]+)\}/g, function (m, k) { return vars[k] !== undefined ? vars[k] : m; });
+    t = t.replace(/\{first_name\}/g, function (m, off) { return '{first_name|' + nameFallback(t.slice(0, off)) + '}'; });
+    return tidy(t);
   }
   // Length as a reader sees it: tokens replaced by a long first name, the product, offer and link.
   function measure(text, ctx) {
-    return str(text).replace(/\{first_name\}/g, NOMINAL_NAME).replace(/\{product\}/g, ctx ? ctx.vars.P : 'New-season gear')
-      .replace(/\{offer\}/g, ctx ? ctx.vars.O : '').replace(/\{link\}/g, ctx ? ctx.link : 'fernway.co/shop').length;
+    return expand(text, ctx).length;
   }
+  // Text as a reader sees it: tokens replaced by a long first name, the product, offer and link.
+  function expand(text, ctx) {
+    return str(text).replace(TOKEN_RE, function (m, name) {
+      if (name === 'first_name') return NOMINAL_NAME;
+      if (name === 'product') return ctx ? ctx.vars.P : 'New-season gear';
+      if (name === 'offer') return ctx ? ctx.vars.O : '';
+      if (name === 'link') return ctx ? ctx.link : 'fernway.co/shop';
+      return m;
+    });
+  }
+  CP.expand = function (text, variant) { var v = variant || {}; return expand(text, contextFor(v.productId, v.offer || 'none')); };
   CP.measure = function (text, variant) {
     var v = variant || {};
     return measure(text, contextFor(v.productId, v.offer || 'none'));
@@ -301,7 +318,7 @@
     return leading ? 0.5 : 0;
   }
   function capsWords(text) {
-    var t = str(text).replace(/reply stop to opt out/ig, '').replace(/\{[a-z_]+\}/g, '');
+    var t = str(text).replace(/reply stop to opt out/ig, '').replace(/\{[a-z_]+(\|[^}]*)?\}/g, '');
     return t.match(/\b[A-Z]{4,}\b/g) || [];
   }
   function syllables(w) {
@@ -313,7 +330,7 @@
   }
   // Flesch–Kincaid grade, clamped 0–18.
   CP.grade = function (text) {
-    var t = str(text).replace(/\{first_name\}/g, 'Maya').replace(/\{link\}|fernway\.co\/[a-z0-9-]*/gi, '').replace(/reply stop to opt out\.?/ig, '');
+    var t = str(text).replace(/\{first_name(\|[^}]*)?\}/g, 'Maya').replace(/\{link\}|fernway\.co\/[a-z0-9-]*/gi, '').replace(/reply stop to opt out\.?/ig, '');
     var words = t.match(/[A-Za-z0-9'’%$]+/g) || [];
     if (!words.length) return 0;
     var sentences = t.split(/[.!?]+/).filter(function (x) { return /[A-Za-z0-9]/.test(x); }).length || 1;
@@ -349,7 +366,9 @@
     return best;
   };
 
-  CP.features = function (variant) {
+  // An offer end date exists when the caller passes one (ctx.endDay) or the variant carries one (offerEnd).
+  function hasEnd(v, ctx) { return !!((ctx && typeof ctx.endDay === 'number' && isFinite(ctx.endDay)) || (v && typeof v.offerEnd === 'number' && isFinite(v.offerEnd))); }
+  CP.features = function (variant, ctx) {
     var v = variant || {}, f = v.fields || {}, ch = CP.HOOK[v.channel] ? v.channel : 'email';
     var hookField = CP.HOOK[ch], mainField = CP.MAIN[ch];
     var hook = str(f[hookField]), main = str(f[mainField]), all = allText({ channel: ch, fields: f });
@@ -358,8 +377,8 @@
     return {
       channel: ch, hookField: hookField, len: hook.length,
       hasNumber: /\d/.test(hook) ? 1 : 0,
-      personal: all.indexOf('{first_name}') >= 0 ? 1 : 0,
-      urgency: URGENCY_RE.test(hook + ' ' + main) ? 1 : 0,
+      personal: /\{first_name[|}]/.test(all) ? 1 : 0,
+      urgency: URGENCY_RE.test(hook + ' ' + main) && hasEnd(v, ctx) ? 1 : 0,   // no credit for urgency without an offer end date
       question: hook.indexOf('?') >= 0 ? 1 : 0,
       ctaStrength: cta,
       offerStrength: (CP.OFFER_LIFT[v.offer] || 0) / 0.45,
@@ -462,7 +481,7 @@
   // score(variant, ctx?) -> { score, predOpen, predClick, logitO, logitC, zO, zC, contributions:[{label, delta, key}] }
   CP.score = function (variant, ctx) {
     var v = variant || {};
-    var ft = CP.features(v), tm = terms(ft), lg = logits(tm);
+    var ft = CP.features(v, ctx), tm = terms(ft), lg = logits(tm);
     var B = CP.BANK_STATS, bch = ft.channel === 'web' ? 'social' : ft.channel;
     var S = (B.byKey && B.byKey[bch + '|' + (CP.OFFERS.indexOf(v.offer) >= 0 ? v.offer : 'none')]) || (B.byChannel && B.byChannel[bch]) || B;
     var zO = (lg.o - S.meanO) / S.sdO, zC = (lg.c - S.meanC) / S.sdC;

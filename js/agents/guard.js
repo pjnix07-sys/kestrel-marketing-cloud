@@ -151,7 +151,7 @@
     autonomy: { 'default': 'autopilot', allowed: ['off', 'suggest', 'autopilot'] },
     autopilotMaxRisk: 'low',
     params: {
-      unsubRiskThreshold: { label: 'Risk threshold', type: 'pct', 'default': 0.008, min: 0.002, max: 0.05, step: 0.001, help: 'Rest a person when the chance that their next message makes them unsubscribe reaches this level.' },
+      unsubRiskThreshold: { label: 'Risk threshold', type: 'pct', 'default': 0.003, min: 0.002, max: 0.05, step: 0.001, help: 'Rest a person when the chance that their next message makes them unsubscribe reaches this level.' },
       cooldownDays: { label: 'Rest period (days)', type: 'int', 'default': 3, min: 1, max: 14, step: 1, help: 'How long rested people get no messages on that channel.' },
       maxSuppressPct: { label: 'Max share rested', type: 'int', 'default': 15, min: 1, max: 30, step: 1, help: 'Never rest more than this percent of a campaign’s audience at once.' },
       unsubZ: { label: 'Spike sensitivity', type: 'float', 'default': 3, min: 2, max: 5, step: 0.5, help: 'How far above normal (in standard deviations) the unsubscribe rate must jump before suggesting a pause.' }
@@ -159,7 +159,7 @@
     emits: ['profiles/suppress', 'campaign/setChannelPaused'],
     guardrails: ['consent', 'maxSuppress', 'holdout', 'targetFresh'],
     notifyDefault: 'changes',
-    materiality: { metric: 'unsubs avoided', min: 2 },
+    materiality: { metric: 'unsubs avoided', min: 0.2 },
     horizon: 72,
     observe: observe,
     decide: decide,

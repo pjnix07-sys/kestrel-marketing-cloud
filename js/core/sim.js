@@ -44,6 +44,7 @@
     return a;
   })();
   SIM.HOUR_SHAPE = HOUR_SHAPE;
+  var HOUR_CUM = (function () { var a = new Float64Array(25); for (var i = 0; i < 24; i++) a[i + 1] = a[i] + HOUR_SHAPE[i]; return a; })();
 
   /* ======================= small helpers ======================= */
   function U() { return MC.util; }
@@ -623,12 +624,27 @@
     return pi.mean || 100;
   }
 
+  // Day-to-day spend variation on paid channels: a weekday effect (index 0 is Sunday), a slow channel drift and auction noise,
+  // all deterministic per campaign, channel and day, so spend differs from the even plan and marginal
+  // returns can be compared. The remaining budget is re-spread each day, so totals still land on plan.
+  var PAID_DOW = { social: [1.10, 0.92, 0.95, 1.00, 1.00, 1.08, 1.18], web: [0.88, 1.12, 1.08, 1.04, 1.00, 0.96, 0.84] };
+  function paidDayFactor(world, c, ch, d) {
+    var dow = T().dowOfDay(d);
+    var wk = (PAID_DOW[ch] || PAID_DOW.social)[dow];
+    var rng = MC.rng.fork(seedOf(world), 'paidDay', c.id, ch, d);
+    var noise = 0.6 + 0.8 * rng.float();
+    var drift = 1 + 0.15 * Math.sin((d + (ch === 'web' ? 2 : 0)) * 0.9 + (c.id.length + ch.length));
+    // Auction spend also follows seasonal demand, which keeps spend and revenue moving together.
+    return Math.max(0.4, Math.min(1.9, wk * noise * drift * Math.pow(SIM.season(d) / 1.1, 0.8)));
+  }
+
   function paidCampaign(world, c, t, h, d) {
     var f = F(), e = dayEntry(world, d), cd = campDay(e, c.id), allIdx = allIndex(world, c.id);
     CH().PAID.forEach(function (ch) {
       if (c.channels.indexOf(ch) < 0 || (c.channelPaused && c.channelPaused[ch])) return;
       var S = SIM.dailyBudget(world, c.id, ch, d);
       if (!(S > 0)) return;
+      S = Math.min(S * paidDayFactor(world, c, ch, d), S * Math.max(1, T().dayOf(c.endTick - 1) - d + 1));
       var key = c.id + '|' + ch;
       var curve = (world.latent && world.latent.curves && world.latent.curves[key]) || SIM.curvesFor(world, c)[key];
       if (!curve) return;
@@ -647,7 +663,10 @@
       var lam = R * creativeQ * SIM.season(d) * HOUR_SHAPE[h] / Math.max(1, aov);
       var impr = spend / CONST.cpm[ch] * 1000;
       var clicks = rng.binomial(Math.round(impr), CONST.ctrPaid[ch]);
-      var conv = rng.poisson(lam);
+      // Auction demand is steadier than a pure Poisson count: orders are spread through the day by systematic
+      // sampling from a per-day offset, so the daily total tracks spend (within one order) rather than jittering.
+      var lamDay = lam / HOUR_SHAPE[h], u0 = MC.rng.fork(seedOf(world), 'paidOrd', c.id, ch, d).float();
+      var conv = Math.floor(u0 + lamDay * HOUR_CUM[h + 1]) - Math.floor(u0 + lamDay * HOUR_CUM[h]);
       var chF = fact(cd.ch, ch), facts = [cd.tot, chF, e.tot];
       add(facts, f.COST, spend); add(facts, f.IMPR, impr); add(facts, f.CLICK, clicks);
       var wsum = 0, j;
@@ -665,13 +684,13 @@
         if (tab && tab.total > 0) {
           var i = tab.idx[pickCum(tab, rng.float())];
           var prod = productFor(world, v, c, i);
-          rev = prod.price * rng.lognormal(0, CONST.revSd) * disc;
+          rev = prod.price * rng.lognormal(0, CONST.revSd * 0.5) * disc;
           pushTouch(world, i, allIdx, CH().IDX[ch], t);
           react = bookOrder(world, i, rev, d);
           if (E) E.rev[i] += rev;
           attribute(world, i, rev, t, e);
         } else {
-          rev = aov * rng.lognormal(0, CONST.revSd) * disc;
+          rev = aov * rng.lognormal(0, CONST.revSd * 0.5) * disc;
         }
         var cf = v ? [cd.tot, chF, e.tot, fact(cd.v, v.id)] : facts;
         add(cf, f.CONV, 1); add(cf, f.REV, rev); add(cf, f.REACT, react);

@@ -262,10 +262,12 @@
     if (K) return html`<${K} tone=${p.tone || 'neutral'}>${p.children}<//>`;
     return html`<span className=${'an-pill an-tone-' + (p.tone || 'neutral')}>${p.children}</span>`;
   }
+  // Agent attribution is a small dot with the name beside it in plain text; no pill. showName={false} leaves the dot
+  // alone (name stays in the hover title and for screen readers).
   function Chip(p) {
-    var K = kit('AgentChip');
-    if (K) return html`<${K} agentId=${p.agentId} size="sm" />`;
-    return html`<span className="an-agent-chip"><span className="an-agent-dot" aria-hidden="true"></span>${agentName(p.agentId)}</span>`;
+    var name = agentName(p.agentId);
+    return html`<span className="an-agent" title=${name}><span className="an-agent-dot" aria-hidden="true"></span>${p.showName === false
+      ? html`<span className="an-visually-hidden">${name}</span>` : html`<span className="an-agent-name">${name}</span>`}</span>`;
   }
   function Confirm(p) {
     var K = kit('InlineConfirm');
@@ -587,15 +589,6 @@
       });
       return { expected: e, realized: r };
     }, [rows, imp, ids]);
-    var liftIds = React.useMemo(function () {
-      if (!campaigns) return EMPTY;
-      var base = ids.length ? ids : campaigns.order;
-      return base.filter(function (id) { var c = campaigns.byId[id]; return c && c.status !== 'draft' && c.status !== 'scheduled'; });
-    }, [campaigns, ids]);
-    var lifts = H.useSelect(React.useCallback(function (w) {
-      return liftIds.map(function (id) { return has(sel(), 'liftVsControl') ? sel().liftVsControl(w, id) : null; });
-    }, [liftIds]), sameItems);
-
     var sorted = rows.slice().sort(function (a, b) { return (b.appliedTick - a.appliedTick) || (a.proposalId < b.proposalId ? -1 : 1); });
     var shown = showAll ? sorted : sorted.slice(0, 8);
     var since = dayShort(0);
@@ -623,18 +616,42 @@
           rowKey=${function (r) { return r.proposalId; }} sortKey="applied" sortDir="desc" />` : null}
       ${sorted.length > 8 ? html`<div className="an-actions"><${Btn} kind="ghost" onClick=${function () { setShowAll(!showAll); }}>
           ${showAll ? 'Show fewer' : 'Show all ' + sorted.length}<//></div>` : null}
-      <h3 className="an-subhead">Control group lift</h3>
-      <ul className="an-lifts">
-        ${liftIds.map(function (id, k) {
-          var l = lifts ? lifts[k] : null, c = campaigns.byId[id];
-          var body;
-          if (!l) body = html`<span className="an-muted">Control group needs 100 sends before lift is measured.</span>`;
-          else if (!fin(l.lift)) body = html`<span className="an-muted">No ${l.metric} in the control group yet.</span>`;
-          else body = html`<span><strong className="num">${signedPct(l.lift)}</strong> ${l.metric} vs control <span className="an-muted num">(95% range ${signedPct(l.lo)} to ${signedPct(l.hi)}; ${num(l.trt.n)} vs ${num(l.ctl.n)} sends)</span></span>`;
-          return html`<li key=${id} className="an-lift"><span className="an-lift-name">${c ? c.name : id}</span>${body}</li>`;
-        })}
-        ${liftIds.length ? null : html`<li className="an-muted">No live or completed campaigns in this filter.</li>`}
-      </ul>
+    <//>`;
+  }
+
+  /* ---------------- Lift vs control ---------------- */
+  function LiftSection(p) {
+    var React = R(), H = hooks(), ids = p.f.campaignIds || EMPTY;
+    var campaigns = H.useSelect(selCampaigns);
+    var liftIds = React.useMemo(function () {
+      if (!campaigns) return EMPTY;
+      return (ids.length ? ids : campaigns.order).filter(function (id) { var c = campaigns.byId[id]; return c && c.status !== 'draft' && c.status !== 'scheduled'; });
+    }, [campaigns, ids]);
+    var lifts = H.useSelect(React.useCallback(function (w) {
+      return liftIds.map(function (id) { return has(sel(), 'campaignLift') ? sel().campaignLift(w, id) : null; });
+    }, [liftIds]), sameItems) || EMPTY;
+    var rows = liftIds.map(function (id, k) { return { id: id, name: campaigns.byId[id].name, status: campaigns.byId[id].status, lift: lifts[k] }; });
+    var cols = [
+      { key: 'name', label: 'Campaign', sortValue: function (r) { return r.name; }, firstDir: 'asc', render: function (r) { return html`<span className="an-change">${r.name}</span>`; } },
+      { key: 'treated', label: 'Revenue per person', align: 'right', sortValue: function (r) { return r.lift ? r.lift.treated : null; },
+        render: function (r) { return r.lift && fin(r.lift.treated) ? money(r.lift.treated, { cents: true }) : DASH; } },
+      { key: 'control', label: 'Control group', align: 'right', sortValue: function (r) { return r.lift ? r.lift.control : null; },
+        render: function (r) { return r.lift && fin(r.lift.control) ? money(r.lift.control, { cents: true }) : DASH; } },
+      { key: 'lift', label: 'Lift', align: 'right', sortValue: function (r) { return r.lift && r.lift.ready ? r.lift.liftPct : null; }, render: function (r) {
+        var l = r.lift;
+        if (!l || !l.ready) return html`<span className="an-muted">Not enough yet</span>`;
+        var big = l.hi > 10;
+        return html`<span><strong className="num">${signedPct(l.liftPct)}</strong><span className="an-sub-num">${signedPct(l.lo) + ' to ' + (big ? 'more than +1,000%' : signedPct(l.hi))}</span></span>`;
+      } },
+      { key: 'people', label: 'People', align: 'right', sortValue: function (r) { return r.lift ? r.lift.nControl : null },
+        render: function (r) { return r.lift ? html`<span className="num">${num(r.lift.nTreated)} vs ${num(r.lift.nControl)}</span>` : DASH; } },
+      { key: 'note', label: 'Read', render: function (r) { return html`<span className="an-muted">${r.lift ? r.lift.note : ''}</span>`; } }
+    ];
+    return html`<${Card} id="analytics-lift" title="Lift vs control"
+        sub="Revenue per person for everyone a campaign reached, against the 10% control group that stays on the original plan.">
+      ${rows.length ? html`<${Table} id="analytics-lift-table" caption="Lift vs control by campaign" columns=${cols} rows=${rows}
+          rowKey=${function (r) { return r.id; }} sortKey="name" sortDir="asc" />`
+        : html`<${Empty} title="No live or finished campaigns in this filter." />`}
     <//>`;
   }
 
@@ -646,17 +663,22 @@
     var args = React.useMemo(function () { return { range: f.range, campaignIds: f.campaignIds, channel: ch }; }, [f, ch]);
     var stages = H.useSelect(React.useCallback(function (w) { return has(sel(), 'funnel') ? sel().funnel(w, args) : EMPTY; }, [args]));
     var FN = chartOr('Funnel');
-    var st = stages || EMPTY, sent = st[0] ? st[0].value : 0, conv = st[4] ? st[4].value : 0;
+    var st = stages || EMPTY, sent = st[0] ? st[0].value : 0, conv = st[st.length - 1] ? st[st.length - 1].value : 0;
+    var byKey = {};
+    st.forEach(function (x) { byKey[x.key] = x; });
     var worst = null;
     for (var i = 1; i < st.length; i++) {
-      var prev = st[i - 1].value;
-      if (prev > 0) { var r = st[i].value / prev; if (!worst || r < worst.r) worst = { r: r, from: st[i - 1].label, to: st[i].label }; }
+      if (st[i].key === 'delivered') continue;
+      var r = st[i].rateOfPrev;
+      if (fin(r) && (!worst || r < worst.r)) worst = { r: r, from: st[i - 1].label, to: st[i].label, key: st[i].key };
     }
+    var clk = byKey.clicked, cv = byKey.converted;
     var opts = [{ value: 'all', label: 'All' }].concat(CH().OWNED.map(function (c) { return { value: c, label: chLabel(c) }; }));
-    return html`<${Card} id="analytics-funnel" title="Funnel" sub=${'Owned-channel messages ' + rangeLabel(f.range) + ', stage by stage.'}
+    return html`<${Card} id="analytics-funnel" title="Funnel" sub=${'Email, SMS and push messages ' + rangeLabel(f.range) + '. Each rate is out of the step before it.'}
         actions=${html`<${Seg} id="analytics-funnel-channel" label="Funnel channel" value=${ch} options=${opts} onChange=${setCh} />`}>
-      ${sent > 0 ? html`<p className="an-headline">Of <strong className="num">${num(sent)}</strong> messages sent, <strong className="num">${num(conv)}</strong> converted (<span className="num">${pct(conv / sent, 2)}</span>).
-          ${worst ? html` The steepest drop is ${worst.from.toLowerCase()} ${'→'} ${worst.to.toLowerCase()}: <span className="num">${pct(worst.r)}</span> continue.` : null}</p>` : null}
+      ${sent > 0 ? html`<p className="an-headline">Of <strong className="num">${num(sent)}</strong> messages sent, <strong className="num">${num(conv)}</strong> led to an order
+          (<span className="num">${pct(conv / sent, 2)}</span>).
+          ${clk && cv && fin(clk.rateOfPrev) && fin(cv.rateOfPrev) ? html` <span className="num">${pct(clk.rateOfPrev)}</span> of delivered messages were clicked, and <span className="num">${pct(cv.rateOfPrev)}</span> of those clicks became orders.` : null}</p>` : null}
       ${sent > 0 ? (FN ? html`<${FN} stages=${st} format="num" ariaLabel=${'Funnel: ' + num(sent) + ' sent, ' + num(conv) + ' converted'} />` : html`<${NoChart} />`)
         : html`<${Empty} title="No sends in this range yet." body="Owned channels (email, SMS, push) feed this funnel." />`}
     <//>`;

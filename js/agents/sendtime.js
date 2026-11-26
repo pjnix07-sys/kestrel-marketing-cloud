@@ -166,7 +166,7 @@
   MC.runtime.register({
     id: ID, name: 'Send-Time Tuner', short: 'Moves sends to the hours people actually open.', icon: 'clock', order: 2,
     cadence: { 'default': 24, min: 6, max: 72, phase: 2 },
-    autonomy: { 'default': 'autopilot', allowed: ['off', 'suggest', 'autopilot'] },
+    autonomy: { 'default': 'suggest', allowed: ['off', 'suggest', 'autopilot'] },
     autopilotMaxRisk: 'low',
     params: {
       minLift: { label: 'Minimum lift', type: 'pct', 'default': 0.05, min: 0.01, max: 0.3, step: 0.01, help: 'Only move a send time when the new hour is expected to open at least this much better.' },
