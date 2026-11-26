@@ -243,7 +243,8 @@
       for (var k = 0; k < acts(p).length; k++) {
         var a = acts(p)[k], x = pl(a), c = camp(world, campaignOfAction(world, a));
         if (a.type === 'campaign/setBudget' && c) {
-          var nb = x.byChannel || {}, tot = 0, daily = 0;
+          // Partial updates merge over the current budget, exactly as the campaign/setBudget reducer does.
+          var nb = Object.assign({}, (c.budget && c.budget.byChannel) || {}, x.byChannel || {}), tot = 0, daily = 0;
           var daysLeft = Math.max(1, MC.time.dayOf(c.endTick - 1) - Math.max(d, MC.time.dayOf(c.startTick)) + 1);
           sortedKeys(nb).forEach(function (ch) {
             tot += +nb[ch] || 0;
