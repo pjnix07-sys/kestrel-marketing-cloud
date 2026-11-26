@@ -118,6 +118,18 @@
   }
   function goalFmt(type) { return type === 'revenue' ? money : num; }
 
+  // A goal warning repeats at most every 3 days unless it gets more serious.
+  function recentGoalWarning(world, cid, t, sev) {
+    var list = world.insights || [];
+    for (var i = 0; i < list.length; i++) {
+      var x = list[i];
+      if (x.agentId !== ID || x.kind !== 'goal-risk' || !x.entity || x.entity.id !== cid || t - x.tick >= 72) continue;
+      if (sev === 'crit' && x.severity !== 'crit') continue;
+      return true;
+    }
+    return false;
+  }
+
   /* ---------------- weekly ROI by segment ---------------- */
   function roiInsight(world, c, day) {
     var E = world.enroll && world.enroll[c.id];
@@ -183,11 +195,14 @@
       var gf = goalFmt(c.goal.type), noun = GOAL_NOUN[c.goal.type] || 'goal';
       rows.push({ campaign: c.name, projected: gf(projected), goal: gf(c.goal.target), chance: pct(prob, 0) });
       if (!(prob < p.goalRiskThreshold) || daysLeft <= 0) return;
-      insights.push({
+      var sev = prob < 0.2 ? 'crit' : 'warn';
+      if (recentGoalWarning(world, c.id, t, sev)) {
+        rows.push({ campaign: c.name, outlook: 'Already flagged in the last 3 days' });
+      } else insights.push({
         kind: 'goal-risk',
         title: c.name + ' is on pace for ' + pct(projected / c.goal.target, 0) + ' of its ' + noun + ' goal',
         body: 'About ' + gf(projected) + ' of ' + gf(c.goal.target) + ' by ' + dayLabel(lastDay) + ', ' + chance(prob) + ' of hitting it.',
-        entity: { kind: 'campaign', id: c.id }, severity: prob < 0.2 ? 'crit' : 'warn', key: 'goal|' + c.id + '|' + today
+        entity: { kind: 'campaign', id: c.id }, severity: sev, key: 'goal|' + c.id + '|' + today
       });
       // Extension: only with at least 48 hours left, and only when the recent pace can close part of the gap.
       if (c.endTick - t < 48) return;
