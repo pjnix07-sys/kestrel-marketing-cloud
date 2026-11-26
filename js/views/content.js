@@ -925,7 +925,7 @@
       </div>
       <div className="cs-gen-go">
         <${Btn} kind=${results.length ? 'secondary' : 'primary'} id="cs-generate" busy=${busy} onClick=${generate}>${results.length ? 'Generate again' : 'Generate ' + o.count}<//>
-        <span className="cs-muted cs-busy" role="status" aria-live="polite">${busy ? 'Writing variants' + ELL : (results.length && g.n ? plural(results.length, 'variant') + ' ready' : '')}</span>
+        <span className="cs-muted cs-busy" role="status" aria-live="polite">${busy ? 'Writing variants' + ELL : (results.length && g.n ? results.length + (results.length === 1 ? ' variant' : ' variants') + ' ready' : '')}</span>
       </div>
       ${results.length ? h`<div className="cs-results" aria-busy=${busy ? 'true' : 'false'}>
         <ul className="cs-result-list">${results.map(function (r) {

@@ -1049,7 +1049,7 @@
     var list = React.useMemo(function () {
       return entries.filter(function (e) {
         if (agent !== 'all' && e.agentId !== agent) return false;
-        if (onlyChanges && !((e.proposals && e.proposals.length) || (e.insights && e.insights.length) || e.error)) return false;
+        if (onlyChanges && e.reason !== 'runNow' && !((e.proposals && e.proposals.length) || (e.insights && e.insights.length) || e.error)) return false;
         return true;
       });
     }, [entries, agent, onlyChanges]);

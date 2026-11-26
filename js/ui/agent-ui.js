@@ -181,7 +181,7 @@
           <span style=${{ paddingTop: 2 }}><${Glyph} kind=${st} label=${st === 'pass' ? 'Passes' : (st === 'fail' ? 'Fails' : 'Warning')} /></span>
           <span style=${{ minWidth: 0, overflowWrap: 'anywhere' }}>
             <span style=${{ color: 'var(--ink)', fontWeight: 500 }}>${it.label || it.id}</span>
-            ${it.detail ? html`<span className="num" style=${{ color: 'var(--ink-2)' }}>${compact ? ' (' + it.detail + ')' : ' ' + DASH + ' ' + it.detail}</span>` : null}
+            ${it.detail ? html`<span style=${{ color: 'var(--ink-2)' }}>${compact ? ' (' + it.detail + ')' : ' ' + DASH + ' ' + it.detail}</span>` : null}
             ${it.locked ? html`<span style=${{ color: 'var(--ink-3)' }}> ${DOT} always enforced</span>` : null}
           </span>
         </li>`;
@@ -287,7 +287,7 @@
     } else if (p.measuring) {
       realized = html`<span style=${{ marginLeft: 6, fontSize: 12, color: 'var(--ink-3)' }}>${'Measuring' + '…' + (fin(p.hoursLeft) ? ' ' + p.hoursLeft + 'h left' : '')}</span>`;
     }
-    return html`<span className="ag-impact num" style=${{ fontSize: 13, color: 'var(--ink)', overflowWrap: 'anywhere' }}>
+    return html`<span className="ag-impact" style=${{ fontSize: 13, color: 'var(--ink)', overflowWrap: 'anywhere' }}>
       <strong style=${{ fontWeight: 600 }}>${main}</strong><span style=${{ color: 'var(--ink-2)' }}>${horizon + range + conf + to}</span>${realized}
     </span>`;
   }
@@ -430,7 +430,7 @@
       <${AgentChip} agentId=${pr.agentId} />
       <span style=${{ fontSize: 12, color: 'var(--ink-2)' }}>${KIND_LABEL[pr.kind] || pr.kind}</span>
       <span style=${{ fontSize: 12, fontWeight: 600, color: risk.fg }}>${risk.label}</span>
-      <span className="num" style=${{ marginLeft: 'auto', fontSize: 12, color: 'var(--ink-3)' }}>${rel(pr.tick, tick)}</span>
+      <span style=${{ marginLeft: 'auto', fontSize: 12, color: 'var(--ink-3)' }}>${rel(pr.tick, tick)}</span>
     </div>`;
 
     var reasonLine = pending && pr.reason && pr.reason !== 'Suggested'
@@ -448,7 +448,7 @@
         <${Btn} raw=${true} kind="secondary" aria-expanded=${menuOpen ? 'true' : 'false'} data-ag-dismiss="true" onClick=${function () { if (menuOpen) closeMenu(false); else setMenu(true); }}>Dismiss <span aria-hidden="true">▾</span><//>
         ${!compact && (camp || (pr.target && (pr.target.kind === 'segment' || pr.target.kind === 'variant')))
           ? html`<${Btn} kind="ghost" onClick=${openTarget}>${camp ? 'Open campaign' : (pr.target.kind === 'segment' ? 'Open segment' : 'Open variant')}<//>` : null}
-        ${expires != null ? html`<span className="num" style=${{ marginLeft: 'auto', fontSize: 12, color: 'var(--ink-3)' }}>${'Expires in ' + expires + 'h'}</span>` : null}
+        ${expires != null ? html`<span style=${{ marginLeft: 'auto', fontSize: 12, color: 'var(--ink-3)' }}>${'Expires in ' + expires + 'h'}</span>` : null}
       </div>`;
     } else if (pr.status === 'applied' || pr.status === 'auto') {
       var canUndo = !undoState || undoState.ok;
