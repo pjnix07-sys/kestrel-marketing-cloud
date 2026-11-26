@@ -2,6 +2,8 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self' data:; connect-src 'self' https://api.anthropic.com; base-uri 'none'; form-action 'none'; object-src 'none'">
+<meta name="referrer" content="no-referrer">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Marketing Cloud</title>
 <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
@@ -10,15 +12,11 @@
 <link rel="stylesheet" href="css/tokens.css">
 <link rel="stylesheet" href="css/app.css">
 <link rel="stylesheet" href="css/views/home.css">
-<link rel="stylesheet" href="css/views/campaigns.css">
-<link rel="stylesheet" href="css/views/content.css">
-<link rel="stylesheet" href="css/views/audiences.css">
-<link rel="stylesheet" href="css/views/analytics.css">
-<link rel="stylesheet" href="css/views/console.css">
 <link rel="stylesheet" href="css/views/connect.css">
+<link rel="stylesheet" href="css/views/tour.css">
 </head>
 <body>
-<div id="app"><div class="app-boot" role="status">Generating the Fernway sample world…</div></div>
+<div id="app"><div class="app-boot" role="status">Loading Marketing Cloud…</div></div>
 <script src="vendor/react.production.min.js"></script>
 <script src="vendor/react-dom.production.min.js"></script>
 <script src="vendor/htm.umd.js"></script>
@@ -56,12 +54,6 @@
 <script src="js/agents/analyst.js"></script>
 <script src="js/agents/planner.js"></script>
 <script src="js/views/home.js"></script>
-<script src="js/views/campaigns.js"></script>
-<script src="js/views/content.js"></script>
-<script src="js/views/audiences.js"></script>
-<script src="js/views/analytics.js"></script>
-<script src="js/views/console.js"></script>
-<script src="js/views/connect.js"></script>
 <script src="js/app.js"></script>
 </body>
 </html>

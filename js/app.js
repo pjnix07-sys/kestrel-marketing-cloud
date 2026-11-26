@@ -60,6 +60,82 @@
   function go(route, focus) { if (MC.nav && MC.nav.go) MC.nav.go(route, focus); }
   function agentName(id) { return MC.ui && MC.ui.agentName ? MC.ui.agentName(id) : id; }
 
+  /* ---------------- on-demand views: a view's script and stylesheet load the first time its route opens ---------------- */
+  var LAZY = {
+    campaigns: { js: 'campaigns', css: 'campaigns' }, content: { js: 'content', css: 'content' },
+    audiences: { js: 'audiences', css: 'audiences' }, analytics: { js: 'analytics', css: 'analytics' },
+    agents: { js: 'console', css: 'console' }, connect: { js: 'connect' }, tour: { js: 'tour' }
+  };
+  var lazyState = {}, lazySubs = [], lazyVer = 0;
+  function lazyNotify() { lazyVer++; lazySubs.slice().forEach(function (fn) { try { fn(lazyVer); } catch (e) { report(e); } }); }
+  function lazyReady(key) {
+    if (key === 'connect') return !!MC.connect;
+    if (key === 'tour') return !!MC.tour;
+    return !!(MC.views && typeof MC.views[key] === 'function');
+  }
+  function addTag(tag, attrs) {
+    var el = document.createElement(tag);
+    Object.keys(attrs).forEach(function (k) { if (attrs[k] !== undefined) el[k] = attrs[k]; });
+    document.head.appendChild(el);
+    return el;
+  }
+  function loadLazy(key) {
+    var def = LAZY[key];
+    if (!def || lazyReady(key)) return Promise.resolve();
+    var st = lazyState[key];
+    if (st && st.promise && !st.error) return st.promise;
+    st = lazyState[key] = { error: false };
+    var parts = [new Promise(function (resolve, reject) {
+      var sc = document.createElement('script');
+      sc.src = 'js/views/' + def.js + '.js';
+      sc.onload = function () { resolve(); };
+      sc.onerror = function () { sc.remove(); reject(new Error('Could not load ' + key)); };
+      document.body.appendChild(sc);
+    })];
+    if (def.css && !document.querySelector('link[data-lazy="' + key + '"]')) {
+      parts.push(new Promise(function (resolve) {
+        addTag('link', { rel: 'stylesheet', href: 'css/views/' + def.css + '.css', onload: resolve, onerror: resolve }).setAttribute('data-lazy', key);
+      }));
+    }
+    st.promise = Promise.all(parts).then(function () { lazyNotify(); }, function (e) { st.error = true; lazyNotify(); throw e; });
+    st.promise.catch(function () { /* reported through lazyStatus */ });
+    return st.promise;
+  }
+  function lazyStatus(key) {
+    if (lazyReady(key)) return 'ready';
+    if (!LAZY[key]) return 'missing';
+    return lazyState[key] && lazyState[key].error ? 'error' : 'loading';
+  }
+  function useLazyVersion() {
+    var st = useState(lazyVer);
+    useEffect(function () { lazySubs.push(st[1]); st[1](lazyVer); return function () { var i = lazySubs.indexOf(st[1]); if (i >= 0) lazySubs.splice(i, 1); }; }, []);
+    return st[0];
+  }
+  // After boot, fetch the other views' files into the HTTP cache when the browser is idle (no parsing, no execution).
+  function prefetchViews() {
+    var keys = ['campaigns', 'content', 'audiences', 'analytics', 'agents'], i = 0;
+    function one() {
+      if (i >= keys.length) return;
+      var def = LAZY[keys[i++]];
+      try {
+        addTag('link', { rel: 'prefetch', as: 'script', href: 'js/views/' + def.js + '.js' });
+        addTag('link', { rel: 'prefetch', as: 'style', href: 'css/views/' + def.css + '.css' });
+      } catch (e) { /* prefetch is an optimisation only */ }
+      idle(one);
+    }
+    idle(one);
+  }
+  function idle(fn) {
+    if (window.requestIdleCallback) window.requestIdleCallback(fn, { timeout: 4000 });
+    else window.setTimeout(fn, 1200);
+  }
+  // Input modality: lets the page heading take focus after navigation without a ring for pointer users.
+  (function trackInput() {
+    var d = document.documentElement;
+    document.addEventListener('keydown', function (e) { if (e.key !== 'Shift' && e.key !== 'Control' && e.key !== 'Alt' && e.key !== 'Meta') d.setAttribute('data-input', 'keyboard'); }, true);
+    document.addEventListener('pointerdown', function () { d.setAttribute('data-input', 'pointer'); }, true);
+  })();
+
   var NAV = [
     { route: 'home', label: 'Command Center', icon: 'home' },
     { route: 'campaigns', label: 'Campaigns', icon: 'campaigns' },
@@ -112,6 +188,7 @@
         ${MC.catalog.PERSONAS.map(function (x) { return html`<option key=${x.id} value=${x.id}>${x.name + ', ' + x.role}</option>`; })}
       </select></span>
       ${cur && cur.perms.indexOf('approve') < 0 ? html`<span className="app-persona-note">Read only: can't approve or schedule.</span>` : null}
+      <span className="app-persona-note app-persona-demo">Demo: switch roles to see approvals and sign-off rules.</span>
     </div>`;
   }
   function canDo(perm) { return MC.catalog.can(MC.uiStore.getState().persona || 'admin', perm); }
@@ -215,7 +292,7 @@
       <ul>
         ${NAV.map(function (n) {
           var on = n.route === route;
-          var built = !!(MC.views && typeof MC.views[n.route] === 'function');
+          var built = n.route === 'home' || !!LAZY[n.route] || !!(MC.views && typeof MC.views[n.route] === 'function');
           return html`<li key=${n.route}>
             <a href=${'#' + n.route} id=${(p.idPrefix || 'app-nav') + '-' + n.route} className=${cx('app-nav-link', on && 'is-on')}
                 aria-current=${on ? 'page' : null} title=${n.label}
@@ -315,14 +392,18 @@
                 onClick=${function () { setConfirm(true); }}><span>Reset sample data${ELL}</span></button>`}
           ${dismissed ? html`<button type="button" className="app-menu-item" id="app-sample-note"
               onClick=${function () { close(); setUi({ sampleDismissed: false }); }}><span>Show the sample-data note</span></button>` : null}
+          <button type="button" className="app-menu-item" id="app-take-tour" onClick=${function () { close(); startTour(); }}><span>Take the tour</span></button>
         </div>
       <//>` : null}
     </div>`;
   }
 
   function ConnectButton() {
+    useLazyVersion();
     var C = MC.connect && MC.connect.TopButton;
-    return C ? html`<${C} />` : null;
+    if (C) return html`<${C} />`;
+    return html`<button type="button" id="app-connect-btn" className="cx-top" aria-label="Connect Claude"
+        onClick=${function () { setUi({ drawer: 'connect' }); loadLazy('connect'); }}><span className="cx-top-label">Connect Claude</span></button>`;
   }
 
   function Topbar(p) {
@@ -462,11 +543,13 @@
         ${msg ? html`<p className=${'app-msg app-msg--' + msg.tone} role="status">${msg.text}</p>` : null}
         ${frozen.pending > 0 && NewPill ? html`<div className="app-newpill"><${NewPill} count=${frozen.pending} onClick=${frozen.reveal}
             label=${frozen.pending + (frozen.pending === 1 ? ' new proposal' : ' new proposals')} /></div>` : null}
+        ${tab === 'needs' && MC.tour && MC.tour.Inline ? html`<${MC.tour.Inline} />` : null}
         ${shown.length ? html`<ul className="app-prop-list" onMouseEnter=${function () { setHold(true); }} onMouseLeave=${function () { setHold(false); }}
             onFocus=${function () { setHold(true); }} onBlur=${function (ev) { if (!ev.currentTarget.contains(ev.relatedTarget)) setHold(false); }}>
           ${shown.map(function (x) {
-            return html`<li key=${x.id}>${PC ? html`<${PC} id=${x.id} showTarget=${true} />` : html`<${ProposalFallback} p=${x} />`}
+            return html`<li key=${x.id}>
               ${tab === 'needs' ? html`<${DecisionNote} id=${x.id} risk=${x.risk} signoffs=${x.signoffs} />` : null}
+              ${PC ? html`<${PC} id=${x.id} showTarget=${true} />` : html`<${ProposalFallback} p=${x} />`}
               ${tab === 'history' ? html`<${DecisionMeta} p=${x} />` : null}</li>`;
           })}
         </ul>` : (Empty ? html`<${Empty} icon=${tab === 'needs' ? 'check-circle' : 'inbox'}
@@ -490,6 +573,9 @@
         <${ThemeControl} id="app-menu-theme" block=${true} />
       </section>
       <section className="app-menu-section" aria-label="Viewing as"><${PersonaSwitch} id="app-menu-persona" /></section>
+      <section className="app-menu-section" aria-label="Guide">
+        <button type="button" className="app-menu-item" id="app-menu-take-tour" onClick=${function () { closeMenu(); startTour(); }}><span>Take the tour</span></button>
+      </section>
       <div className="app-tenant">
         <span className="app-tenant-name">Fernway Outfitters</span>
         <span className="app-tenant-note">Sample data</span>
@@ -527,19 +613,54 @@
   function Unbuilt(p) {
     var Empty = ui('EmptyState');
     var title = TITLES[p.route] || 'This area';
+    var failed = p.failed;
     var ready = NAV.filter(function (n) { return MC.views && typeof MC.views[n.route] === 'function'; }).map(function (n) { return n.label; });
-    var body = ready.length > 1 ? ready.slice(0, -1).join(', ') + ' and ' + ready[ready.length - 1] + ' are ready to explore while this one is finished.'
+    var body = failed ? "Check your connection, then try again." : ready.length > 1 ? ready.slice(0, -1).join(', ') + ' and ' + ready[ready.length - 1] + ' are ready to explore while this one is finished.'
       : ready.length ? ready[0] + ' is ready to explore while this one is finished.' : 'Check back after the next deployment.';
     return html`<section className="app-unbuilt">
       <h1 id="page-title" tabIndex="-1" className="app-page-h1">${title}</h1>
-      ${Empty ? html`<${Empty} icon="sparkle" title="This area is still being built." body=${body} />`
-        : html`<p>This area is still being built.</p>`}
+      ${Empty ? html`<${Empty} icon="sparkle" title=${failed ? "This view didn't load." : 'This area is still being built.'} body=${body} />`
+        : html`<p>${failed ? "This view didn't load." : 'This area is still being built.'}</p>`}
+      ${failed ? html`<button type="button" className="k-btn k-btn--primary k-btn--md" id="app-view-retry" onClick=${p.onRetry}><span className="k-btn-label">Try again</span></button>` : null}
+    </section>`;
+  }
+
+  // Placeholder blocks in the shape of the Command Center, shown while the world or a view's code is on its way.
+  function Skeleton(p) {
+    return html`<section className="app-skel" aria-busy="true">
+      <header className="app-skel-head">
+        <span className="sk sk-line sk-w40" aria-hidden="true"></span>
+        <h1 id="page-title" tabIndex="-1" className="app-page-h1">${p.title}</h1>
+      </header>
+      <p className="app-skel-status" role="status">${p.status || ''}</p>
+      <div className="app-skel-figs" aria-hidden="true">
+        <span className="sk sk-tile"></span><span className="sk sk-tile"></span><span className="sk sk-tile"></span><span className="sk sk-tile"></span>
+      </div>
+      <div className="app-skel-grid" aria-hidden="true">
+        <span className="sk sk-panel"></span><span className="sk sk-panel"></span>
+      </div>
     </section>`;
   }
 
   function ViewHost(p) {
     var rs = useState(0), reloads = rs[0], setReloads = rs[1];
+    useLazyVersion();
+    var status = p.route === 'home' ? 'ready' : lazyStatus(p.route);
     var View = MC.views && typeof MC.views[p.route] === 'function' ? MC.views[p.route] : null;
+    var was = useRef(status);
+    useEffect(function () {
+      if (status === 'loading') loadLazy(p.route);
+    }, [p.route, status, reloads]);
+    useEffect(function () {
+      // The heading the skeleton showed was replaced by the real one: put focus back on it if it was lost.
+      if (was.current === 'loading' && status === 'ready') {
+        var a = document.activeElement;
+        if (!a || a === document.body) { var h = document.getElementById('page-title'); if (h) { try { h.focus({ preventScroll: true }); } catch (e) { h.focus(); } } }
+      }
+      was.current = status;
+    }, [status]);
+    if (status === 'loading') return html`<${Skeleton} title=${TITLES[p.route] || 'Loading'} status=${'Loading ' + (TITLES[p.route] || 'this view') + '…'} />`;
+    if (status === 'error') return html`<${Unbuilt} route=${p.route} failed=${true} onRetry=${function () { delete lazyState[p.route]; setReloads(reloads + 1); lazyNotify(); }} />`;
     return html`<${ErrorBoundary} key=${p.route + ':' + reloads} onReload=${function () { setReloads(reloads + 1); }}>
       ${View ? html`<${View} />` : html`<${Unbuilt} route=${p.route} />`}
     <//>`;
@@ -550,7 +671,8 @@
     { id: 'profiles', label: 'Loading 6,000 customer profiles' },
     { id: 'history', label: 'Loading 60 days of campaign history' },
     { id: 'scores', label: 'Scoring propensity, churn and lifetime value' },
-    { id: 'agents', label: 'Starting the agents' }
+    { id: 'agents', label: 'Starting the agents' },
+    { id: 'catchup', label: 'Catching up to today' }
   ];
   function BootCard(p) {
     var idx = -1;
@@ -562,18 +684,8 @@
         <button type="button" className="k-btn k-btn--primary k-btn--md" id="app-boot-retry" onClick=${p.onRetry}><span className="k-btn-label">Try again</span></button>
       </section>`;
     }
-    return html`<section className="app-bootcard" role="status" aria-label="Loading Fernway Outfitters">
-      <p className="app-bootcard-title">Loading Fernway Outfitters${ELL}</p>
-      <ol className="app-phases">
-        ${PHASES.map(function (ph, i) {
-          var state = i < idx ? 'done' : (i === idx ? 'now' : 'todo');
-          return html`<li key=${ph.id} className=${'is-' + state}>
-            <span className="app-phase-mark" aria-hidden="true">${state === 'done' ? html`<${Icon} name="check" size=${14} />` : null}</span>
-            <span>${ph.label}</span>
-          </li>`;
-        })}
-      </ol>
-    </section>`;
+    var label = idx >= 0 ? PHASES[idx].label : 'Loading Fernway Outfitters';
+    return html`<${Skeleton} title=${TITLES[p.route] || 'Command Center'} status=${label + ELL} />`;
   }
 
   var bootState = { phase: null, error: null, started: false };
@@ -710,7 +822,7 @@
     var ready = useSel(selReady);
     var missing = useMemo(function () {
       if (!ready) return [];
-      try { return (MC.contract && MC.contract.check ? MC.contract.check().missing : []) || []; } catch (e) { return []; }
+      try { return ((MC.contract && MC.contract.check ? MC.contract.check().missing : []) || []).filter(function (m) { return !/^MC\.views\.(\w+)$/.test(m) || !LAZY[RegExp.$1] || m === 'MC.views.home'; }); } catch (e) { return []; }
     }, [ready]);
     if (!missing.length) return null;
     return html`<details className="app-devcheck">
@@ -719,6 +831,19 @@
       <ul>${missing.map(function (m) { return html`<li key=${m}><code>${m}</code></li>`; })}</ul>
     </details>`;
   }
+
+  /* ---------------- guided first run (js/views/tour.js, loaded only when it can start) ---------------- */
+  function tourEligible() {
+    try { if (navigator.webdriver && !window.MC_TOUR_FORCE) return false; } catch (e) { /* ignore */ }
+    var h = String(window.location.hash || '').replace(/^#/, '');
+    if (h && h !== 'home') return false;
+    var f = MC.uiStore.getState().firstRun;
+    return !f || (!f.done && !f.skipped);
+  }
+  function startTour() {
+    loadLazy('tour').then(function () { if (MC.tour && MC.tour.start) MC.tour.start(); }, report);
+  }
+  var tourWanted = tourEligible();
 
   /* ---------------- app ---------------- */
   function focusMain() {
@@ -735,6 +860,13 @@
     var narrow = useMedia('(max-width: 1199.98px)');
     var Drawer = ui('Drawer'), Toasts = ui('ToastHost');
     var first = useRef(true);
+    useLazyVersion();
+    useEffect(function () {
+      if (!ready) return undefined;
+      if (tourWanted) loadLazy('tour').catch(report);
+      var t = window.setTimeout(prefetchViews, 2500);
+      return function () { window.clearTimeout(t); };
+    }, [ready]);
 
     useEffect(function () { MC.uiStore.applyTheme(theme); }, [theme]);
     useEffect(function () {
@@ -758,20 +890,21 @@
         <${Topbar} phone=${phone} narrow=${narrow} />
         <main id="app-main" className="app-main" tabIndex="-1">
           <${SampleStrip} />
-          ${ready ? html`<${ViewHost} route=${route} />` : html`<${BootCard} phase=${boot.phase} error=${boot.error} onRetry=${startBoot} />`}
+          ${ready ? html`<${ViewHost} route=${route} />` : html`<${BootCard} phase=${boot.phase} route=${route} error=${boot.error} onRetry=${startBoot} />`}
           <${DevCheck} />
         </main>
       </div>
       ${Drawer ? html`<${Drawer} id="approvals-drawer" open=${drawer === 'approvals'} onClose=${closeDrawer} title="Approvals" width=${440}>
         <${ApprovalsPanel} />
       <//>` : null}
-      ${Drawer && MC.connect ? html`<${Drawer} id="connect-drawer" open=${drawer === 'connect'} onClose=${closeDrawer} title="Connect Claude" width=${400}>
+      ${Drawer && MC.connect ? html`<${Drawer} id="connect-drawer" open=${drawer === 'connect'} onClose=${closeDrawer} title=${MC.connect.TITLE || 'Connect Claude'} initialFocus=${MC.connect.INITIAL_FOCUS} width=${400}>
         <${MC.connect.Panel} onClose=${closeDrawer} />
       <//>` : null}
       ${Drawer ? html`<${Drawer} id="app-menu" side="left" open=${drawer === 'menu'} onClose=${closeDrawer} title="Menu" width=${320}>
         <${MenuContent} />
       <//>` : null}
       ${Toasts ? html`<${Toasts} />` : null}
+      ${MC.tour && MC.tour.Host ? html`<${MC.tour.Host} />` : null}
     </div>`;
   }
 
@@ -786,6 +919,7 @@
     return;
   }
   watchToasts();
+  loadLazy('connect').catch(report);
   // Let the boot card paint before the (synchronous) world generation starts.
   window.requestAnimationFrame(function () { window.setTimeout(startBoot, 0); });
 })();
