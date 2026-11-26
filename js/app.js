@@ -61,6 +61,7 @@
   function agentName(id) { return MC.ui && MC.ui.agentName ? MC.ui.agentName(id) : id; }
 
   /* ---------------- on-demand views: a view's script and stylesheet load the first time its route opens ---------------- */
+  var VQ = '?v=' + encodeURIComponent(MC.BUILD || '0');
   var LAZY = {
     campaigns: { js: 'campaigns', css: 'campaigns' }, content: { js: 'content', css: 'content' },
     audiences: { js: 'audiences', css: 'audiences' }, analytics: { js: 'analytics', css: 'analytics' },
@@ -87,14 +88,14 @@
     st = lazyState[key] = { error: false };
     var parts = [new Promise(function (resolve, reject) {
       var sc = document.createElement('script');
-      sc.src = 'js/views/' + def.js + '.js';
+      sc.src = 'js/views/' + def.js + '.js' + VQ;
       sc.onload = function () { resolve(); };
       sc.onerror = function () { sc.remove(); reject(new Error('Could not load ' + key)); };
       document.body.appendChild(sc);
     })];
     if (def.css && !document.querySelector('link[data-lazy="' + key + '"]')) {
       parts.push(new Promise(function (resolve) {
-        addTag('link', { rel: 'stylesheet', href: 'css/views/' + def.css + '.css', onload: resolve, onerror: resolve }).setAttribute('data-lazy', key);
+        addTag('link', { rel: 'stylesheet', href: 'css/views/' + def.css + '.css' + VQ, onload: resolve, onerror: resolve }).setAttribute('data-lazy', key);
       }));
     }
     st.promise = Promise.all(parts).then(function () { lazyNotify(); }, function (e) { st.error = true; lazyNotify(); throw e; });
@@ -118,8 +119,8 @@
       if (i >= keys.length) return;
       var def = LAZY[keys[i++]];
       try {
-        addTag('link', { rel: 'prefetch', as: 'script', href: 'js/views/' + def.js + '.js' });
-        addTag('link', { rel: 'prefetch', as: 'style', href: 'css/views/' + def.css + '.css' });
+        addTag('link', { rel: 'prefetch', as: 'script', href: 'js/views/' + def.js + '.js' + VQ });
+        addTag('link', { rel: 'prefetch', as: 'style', href: 'css/views/' + def.css + '.css' + VQ });
       } catch (e) { /* prefetch is an optimisation only */ }
       idle(one);
     }

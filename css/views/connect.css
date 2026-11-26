@@ -5,7 +5,7 @@
 .cx-off, .cx-on { display: grid; gap: var(--space-4); }
 .cx-line { margin: 0; font-size: 14px; line-height: 1.5; color: var(--ink-2); }
 .cx-state { margin: 0; display: flex; align-items: center; gap: 8px; font-size: 15px; font-weight: 600; }
-.cx-usage { margin: 0; font-size: 13px; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.cx-usage { margin: 0; font-size: 13px; color: var(--ink-3); }
 .cx-steps { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-4); }
 .cx-step { display: grid; gap: 6px; }
 .cx-step .k-btn { width: 100%; justify-content: center; text-decoration: none; }

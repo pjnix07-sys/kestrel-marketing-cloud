@@ -2,7 +2,6 @@
    One bordered surface per region, hairline dividers, no edge stripes, no translucency. */
 .v-content { display: flex; flex-direction: column; gap: 16px; min-width: 0; color: var(--ink); }
 .v-content * { box-sizing: border-box; }
-.v-content .num { font-variant-numeric: tabular-nums; }
 .v-content :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 .v-content p { margin: 0; }
 .v-content .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }

@@ -4,7 +4,6 @@
 .v-agents { display: grid; gap: 20px; min-width: 0; color: var(--ink); }
 .v-agents * { box-sizing: border-box; }
 .v-agents > *, .v-agents .cn-panel > * { min-width: 0; }
-.v-agents .num { font-variant-numeric: tabular-nums; }
 .v-agents :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 .v-agents .cn-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 

@@ -202,15 +202,58 @@
   }
   E.catchUp = catchUp;
 
+  /* ---- off-thread build: the same generate + catch-up code runs in js/core/boot-worker.js ---- */
+  function coreScripts() {
+    var out = [], list = document.querySelectorAll ? document.querySelectorAll('script[src]') : [];
+    for (var i = 0; i < list.length; i++) {
+      var src = list[i].getAttribute('src') || '';
+      if (/^js\/(core|agents)\//.test(src)) out.push(src);
+    }
+    return out;
+  }
+  function canUseWorker() {
+    try {
+      return typeof Worker === 'function' && typeof document !== 'undefined' && /^https?:$/.test(location.protocol) && coreScripts().length > 0;
+    } catch (e) { return false; }
+  }
+  function buildInWorker(seed, target, onPhase) {
+    return new Promise(function (resolve, reject) {
+      var wk;
+      try { wk = new Worker('js/core/boot-worker.js' + (MC.BUILD ? '?v=' + MC.BUILD : '')); } catch (e) { reject(e); return; }
+      var done = false;
+      function end(fn, v) { if (done) return; done = true; try { wk.terminate(); } catch (e) { /* already gone */ } fn(v); }
+      wk.onmessage = function (ev) {
+        var m = ev.data || {};
+        if (m.type === 'phase') tell(onPhase, m.id);
+        else if (m.type === 'done') end(resolve, m.world);
+        else if (m.type === 'error') end(reject, new Error(m.message || 'The sample world could not be built.'));
+      };
+      wk.onerror = function (ev) { if (ev && ev.preventDefault) ev.preventDefault(); end(reject, new Error('worker failed to start')); };
+      wk.postMessage({ type: 'build', seed: seed, target: target, scripts: coreScripts() });
+    });
+  }
+  // Finished world at the catch-up target. Uses a worker when possible, else (or if it fails) the in-thread path.
+  E.build = function (seed, opts) {
+    opts = opts || {};
+    var target = opts.target !== undefined ? opts.target : (opts.catchUp === false ? 0 : E.catchUpTarget(opts.now));
+    function inThread() {
+      return generateWorld(seed, opts.onPhase).then(function (w) { return target ? catchUp(w, target, opts.onPhase) : w; });
+    }
+    if (opts.worker === false || !canUseWorker()) return inThread();
+    return buildInWorker(seed, target, opts.onPhase).then(function (w) {
+      w = E.prepare(w);
+      E.workerBuilds = (E.workerBuilds || 0) + 1;
+      return w;
+    }, function (e) { report(e); return inThread(); });
+  };
+
   E.boot = function (opts) {
     opts = opts || {};
     if (bootPromise) return bootPromise;
     var seed = opts.seed === undefined ? MC.SEED : opts.seed;
     // Pin the display calendar before any text is generated (catch-up writes feed and insight text).
     try { if (MC.time && MC.time.anchorDisplay) MC.time.anchorDisplay('2026-11-07', 0); } catch (e) { report(e); }
-    bootPromise = generateWorld(seed, opts.onPhase).then(function (w) {
-      return opts.catchUp === false ? w : catchUp(w, E.catchUpTarget(opts.now), opts.onPhase);
-    }).then(function (w) {
+    bootPromise = E.build(seed, opts).then(function (w) {
       E.checkpoints = {};
       // Display dates are the season's real calendar (Black Friday = Fri, Nov 27, 2026), so digests never depend on the boot date.
       try { if (MC.time && MC.time.anchorDisplay) MC.time.anchorDisplay('2026-11-07', 0); } catch (e) { report(e); }
@@ -246,9 +289,7 @@
   E.restart = function (seed, onPhase) {
     E.setSpeed('pause');
     var s = seed === undefined || seed === null ? MC.SEED : seed;
-    return generateWorld(s, onPhase).then(function (w) {
-      return catchUp(w, E.catchUpTarget(), onPhase);
-    }).then(function (w) {
+    return E.build(s, { onPhase: onPhase }).then(function (w) {
       E.checkpoints = {};
       E.lastError = null;
       try { if (MC.uiStore && MC.uiStore.clearToasts) MC.uiStore.clearToasts(); } catch (e) { report(e); }

@@ -936,7 +936,7 @@
     var propSel = React.useCallback(function (w) { return call('proposalsFor', w, c.id) || EMPTY; }, [c.id]);
     var props = useSel(propSel) || EMPTY;
     var pending = props.filter(function (x) { return x.status === 'pending'; });
-    var applied = props.filter(function (x) { return x.status === 'applied' || x.status === 'auto' || x.status === 'undone'; }).slice(0, 8);
+    var applied = props.filter(function (x) { return x.status === 'applied' || x.status === 'auto' || x.status === 'undone'; });
     var LC = chart('LineChart');
     var PC = MC.ui && MC.ui.ProposalCard;
     var Panel = ui('Panel');
@@ -968,6 +968,7 @@
       </div>` : null;
 
     var segs = useSel(React.useCallback(function (w) { return w.segments; }, []));
+    var shs = React.useState(false), showAll = shs[0], setShowAll = shs[1];
     var seg = segs && segs.byId ? segs.byId[c.segmentId] : null;
     var briefText = typeof c.brief === 'string' ? c.brief : (c.brief && c.brief.notes) || '';
     var planPanel = h`<${Panel} id="cmp-plan-summary" title="Plan" sub=${c.status === 'draft' ? 'Draft. Agents never change drafts; schedule it when preflight checks pass.' : 'Scheduled. It goes live on ' + dayLabel(dayOf(c.startTick)) + '.'}>
@@ -1014,13 +1015,13 @@
           </section>` : null}
         <section className="cm-side-sec" aria-labelledby="cmp-changes-title">
           <h2 className="cm-h3" id="cmp-changes-title">Agent changes</h2>
-          ${applied.length ? h`<ol className="cm-timeline">${applied.map(function (pr) {
+          ${applied.length ? h`<ol className="cm-timeline">${(showAll ? applied : applied.slice(0, 3)).map(function (pr) {
             return h`<li key=${pr.id}>
               <${AgentNote} text=${agentName(pr.agentId) + MID + rel(pr.appliedTick, tick)} />
               <p className=${cx('cm-tl-title', pr.status === 'undone' && 'is-undone')}>${pr.title}</p>
               ${pr.status === 'undone' ? h`<span className="cm-muted cm-small">Undone</span>` : null}
             </li>`;
-          })}</ol>` : h`<p className="cm-muted cm-small">${c.status === 'draft' ? 'Agents never change drafts. They start once the campaign is live.' : 'No agent changes yet.'}</p>`}
+          })}</ol>${applied.length > 3 ? h`<${Link} id="cmp-changes-toggle" onClick=${function () { setShowAll(!showAll); }}>${showAll ? 'Show fewer' : 'Show all ' + applied.length}<//>` : null}` : h`<p className="cm-muted cm-small">${c.status === 'draft' ? 'Agents never change drafts. They start once the campaign is live.' : 'No agent changes yet.'}</p>`}
         </section>
         ${hasSel('campaignLift') ? h`<${LiftCard} campaign=${c} />` : h`<section className="cm-side-sec" aria-labelledby="cmp-lift-title">
           <h2 className="cm-h3" id="cmp-lift-title">Lift vs control</h2>

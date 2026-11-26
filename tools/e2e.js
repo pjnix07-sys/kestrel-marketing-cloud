@@ -5,6 +5,8 @@
    - Fails if any request leaves localhost, except api.anthropic.com which is stubbed with page routes.
    - One line per check: PASS|FAIL|WARN <name> — <detail>; a summary line; exit 1 on any FAIL.
    - Screenshots only for failures, written to --out.
+   - --only takes a comma list of groups: boot, dates, home, approvals, campaigns, content, audiences, agents, connect, determinism (default: all).
+   - --port is the static server port; --out is where failure screenshots go.
    - --date pins the browser clock (YYYY-MM-DD at 10:00 local); default pins to the moment the suite started so
      every context sees the same date.
    WARN = a feature's UI was not found, so the check was skipped (not a failure). */
@@ -252,8 +254,9 @@ async function secApprovals() {
     if (done) {
       await check('approving reduces the pending count', done.st.open === open.length - 1, `open ${open.length} -> ${done.st.open}`, page);
       await page.mouse.move(2, 2);   // the list freezes while hovered
-      await page.getByRole('tab', { name: done.st.status === 'auto' ? /Applied by agents/ : /^History/ }).click();   // approved-by-you lands in History
+      await page.getByRole('tab', { name: /^Applied/ }).click();   // everything applied (by agents or by you) lands in Applied
       const same = page.locator('article:has(#' + done.titleId + ')');
+      if (!(await same.count())) { const old = page.getByRole('tab', { name: /^History/ }); if (await old.count()) await old.click(); }   // older builds kept approved-by-you under History
       for (let k = 0; k < 4 && !(await same.count()); k++) { const more = page.locator('#approvals-more'); if (!(await more.count())) break; await more.click(); await page.waitForTimeout(250); }
       await same.waitFor({ timeout: 3000 }).catch(() => {});
       const undoBtn = same.getByRole('button', { name: 'Undo' });

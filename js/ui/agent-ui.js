@@ -204,7 +204,7 @@
     var th = { textAlign: 'left', fontWeight: 600, fontSize: 12, color: 'var(--ink-3)', padding: '4px 8px 4px 0', borderBottom: '1px solid var(--line)' };
     var td = { padding: '5px 8px 5px 0', fontSize: 13, borderBottom: '1px solid var(--line)', verticalAlign: 'top', overflowWrap: 'anywhere' };
     return html`<div className="ag-diff k-scroll-x" style=${{ overflowX: 'auto', maxWidth: '100%' }}>
-      <table className="num" style=${{ borderCollapse: 'collapse', width: '100%', fontVariantNumeric: 'tabular-nums' }}>
+      <table className="num" style=${{ borderCollapse: 'collapse', width: '100%' }}>
         <thead><tr><th scope="col" style=${th}>Change</th><th scope="col" style=${th}>Before</th><th scope="col" aria-hidden="true" style=${th}></th><th scope="col" style=${th}>After</th></tr></thead>
         <tbody>${rows.map(function (r, i) {
           var b = cellText(r.before), a = cellText(r.after), changed = b !== a;
@@ -333,7 +333,7 @@
   }
   var STATUS_NOTE = {
     rejected: 'Dismissed', expired: 'Expired unreviewed', superseded: 'Replaced by a newer proposal for the same target',
-    undone: 'Undone', stale: 'No longer applies: the campaign changed since this was proposed.'
+    undone: 'Undone', stale: 'Out of date: the campaign changed after this was suggested.'
   };
   var SEC = { display: 'grid', gridTemplateColumns: 'minmax(78px, 96px) minmax(0, 1fr)', gap: '4px 10px', alignItems: 'start' };
   var SEC_LABEL = { fontSize: 12, fontWeight: 600, color: 'var(--ink-3)', paddingTop: 2, margin: 0 };
@@ -407,7 +407,7 @@
       var ok = act(type, payload, fallback);
       if (ok) { announce(said + ': ' + (pr.title || 'proposal')); settleFocus(); }
     }
-    function approve() { decide('proposal/approve', { id: id }, "Couldn't approve this change.", 'Approved'); }
+    function approve() { decide('proposal/approve', { id: id }, "Couldn't approve this change. Reload and try again.", 'Approved'); }
     function reject(reason) { setMenu(false); decide('proposal/reject', { id: id, reason: reason }, "Couldn't dismiss this proposal.", 'Dismissed'); }
     function undo() { decide('proposal/undo', { id: id }, "Couldn't undo this change.", 'Undone'); }
     function closeMenu(restore) {
@@ -448,7 +448,7 @@
         <${Btn} raw=${true} kind="secondary" aria-expanded=${menuOpen ? 'true' : 'false'} data-ag-dismiss="true" onClick=${function () { if (menuOpen) closeMenu(false); else setMenu(true); }}>Dismiss <span aria-hidden="true">▾</span><//>
         ${!compact && (camp || (pr.target && (pr.target.kind === 'segment' || pr.target.kind === 'variant')))
           ? html`<${Btn} kind="ghost" onClick=${openTarget}>${camp ? 'Open campaign' : (pr.target.kind === 'segment' ? 'Open segment' : 'Open variant')}<//>` : null}
-        ${expires != null ? html`<span style=${{ marginLeft: 'auto', fontSize: 12, color: 'var(--ink-3)' }}>${'Expires in ' + expires + 'h'}</span>` : null}
+        ${expires != null ? html`<span style=${{ marginLeft: 'auto', fontSize: 12, color: 'var(--ink-3)' }}>${'Expires in ' + (expires > 24 ? Math.round(expires / 24) + (Math.round(expires / 24) === 1 ? ' day' : ' days') : expires + 'h')}</span>` : null}
       </div>`;
     } else if (pr.status === 'applied' || pr.status === 'auto') {
       var canUndo = !undoState || undoState.ok;
@@ -496,7 +496,7 @@
         <div style=${SEC}><p style=${SEC_LABEL}>Why</p>
           <div style=${{ fontSize: 13, color: 'var(--ink)', minWidth: 0, overflowWrap: 'anywhere' }}>
             ${pr.rationale}
-            ${pr.evidence && pr.evidence.length ? html`<ul style=${{ listStyle: 'none', margin: '4px 0 0', padding: 0, display: 'flex', flexWrap: 'wrap', gap: '2px 12px', fontSize: 12, color: 'var(--ink-2)', fontVariantNumeric: 'tabular-nums' }}>
+            ${pr.evidence && pr.evidence.length ? html`<ul style=${{ listStyle: 'none', margin: '4px 0 0', padding: 0, display: 'flex', flexWrap: 'wrap', gap: '2px 12px', fontSize: 12, color: 'var(--ink-2)' }}>
               ${pr.evidence.map(function (ev, i) { return html`<li key=${(ev.label || '') + i}>${ev.label}: <span style=${{ color: 'var(--ink)' }}>${cellText(ev.value)}</span></li>`; })}
             </ul>` : null}
           </div>
@@ -517,7 +517,7 @@
   }
 
   /* ================= TraceView ================= */
-  var MONO = { fontSize: 12, fontVariantNumeric: 'tabular-nums' };
+  var MONO = { fontSize: 12 };
   var H4 = { margin: '0 0 4px', fontSize: 13, fontWeight: 600, color: 'var(--ink-2)' };
   function rowCells(r) {
     if (Array.isArray(r)) return r;
@@ -531,7 +531,7 @@
     var rows = (p.rows || []).slice(0, 40);
     if (!rows.length) return null;
     return html`<div className="k-scroll-x" style=${{ overflowX: 'auto', marginTop: 4 }}>
-      <table className="num" style=${{ borderCollapse: 'collapse', fontSize: 12, fontVariantNumeric: 'tabular-nums', minWidth: '60%' }}>
+      <table className="num" style=${{ borderCollapse: 'collapse', fontSize: 12, minWidth: '60%' }}>
         <tbody>${rows.map(function (r, i) {
           var cells = rowCells(r);
           return html`<tr key=${i}>${cells.map(function (c, j) {

@@ -1,3 +1,5 @@
+> **Historical document.** The current source of truth is [AI-FLEET.md](AI-FLEET.md), [critique/SYNTHESIS.md](critique/SYNTHESIS.md) and [ARCHITECTURE.md](ARCHITECTURE.md). Where this contract disagrees with them, they win.
+
 > **Binding build contract.** Derived from the marketer-workflow architecture proposal. Section 10 (Amendments), when present, overrides anything earlier in this document.
 
 # Marketing Cloud: Architecture Proposal (Marketer-Workflow Lens)
@@ -24,7 +26,7 @@ The inspiration vendor's product names, logos and trademarks never appear in UI 
 
 ## 1. Feature map
 
-| Inspiration capability | Kestrel area / surface | Deterministic mechanism | Responsible agent(s) |
+| Inspiration capability | Marketing Cloud area / surface | Deterministic mechanism | Responsible agent(s) |
 |---|---|---|---|
 | Campaign creation from a brief | Campaigns → **Planner** (Brief + Plan draft) | Rule tables (goal → journey template, channel priors) + segment EV ranking + equal-marginal budget split + `MC.copy.generate` + response-curve forecast | **Campaign Planner** (`planner`): on-demand preview plus a weekly "next campaign" draft |
 | Segment intelligence / NL segmentation | Audiences → **Describe your audience**, Builder, Suggested segments | Phrase lexicon parser → rule tree. Compiled predicates over columns. Greedy depth-2 lift splits. | **Segment Scout** (`scout`) |
@@ -638,7 +640,7 @@ MC.runtime.register({
 
 **Sidebar (232px)**
 
-- Kestrel mark (inline SVG bird glyph) with "Kestrel".
+- Marketing Cloud mark (inline SVG bird glyph) with "Marketing Cloud".
 - Nav: Command Center, Campaigns, Content Studio, Audiences, Analytics, Agents. Agents carries a russet count badge for pending approvals.
 - Footer: "Fernway Outfitters" with a `Sample data` pill, and a theme segmented control labeled `System · Light · Dark`.
 

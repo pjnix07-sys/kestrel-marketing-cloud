@@ -106,10 +106,10 @@
 
     return html`<div className="cx-panel" id="connect-panel">
       <div className="cx-live" role="status" aria-live="polite">
-        ${connecting ? 'Checking your key…' : (on ? 'Connected to Claude, ' + (g.modelLabel || '') : '')}
+        ${connecting ? 'Checking your key…' : (on ? 'Connected to Claude' : '')}
       </div>
       ${on ? html`<div className="cx-on">
-        <p className="cx-state"><span className="cx-dot is-on" aria-hidden="true"></span><span>${'Connected · ' + (g.modelLabel || 'Claude')}</span></p>
+        <p className="cx-state"><span className="cx-dot is-on" aria-hidden="true"></span><span>${'Connected to Claude'}</span></p>
         <p className="cx-line">Your agents can now reason about each run and write copy, and you can describe audiences and campaigns in plain words.</p>
         ${typeof A.usageLine === 'function' ? html`<p className="cx-usage num">${A.usageLine()}</p>` : null}
         ${Check ? html`<${Check} id="connect-remember" label="Remember on this device" checked=${remember} onChange=${changeRemember} />` : null}

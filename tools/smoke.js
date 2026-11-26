@@ -1,10 +1,14 @@
-// Headless smoke test: loads core + agents in Node, boots the sample world and advances it.
-// Usage: node tools/smoke.js [ticks=200]
+// Headless smoke test: loads js/core and js/agents in Node (no browser), boots the sample world,
+// advances it and audits the result.
+// Usage:  node tools/smoke.js [hours=200]
+//   hours  how many simulated hours to advance (default 200; 400 is the usual pre-merge run).
+// Output: one summary line plus the audit; exit code 1 if the audit reports any error.
+// Run it twice after touching js/core or js/agents: the output must be identical (the world is deterministic).
 'use strict';
 const fs = require('fs'), path = require('path'), vm = require('vm');
 const root = path.join(__dirname, '..');
 const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
-const srcs = [...html.matchAll(/src="(js\/[^"]+)"/g)].map(m => m[1])
+const srcs = [...html.matchAll(/src="(js\/[^"?]+)(?:\?v=[^"]*)?"/g)].map(m => m[1])
   .filter(s => s.startsWith('js/core/') || s.startsWith('js/agents/'));
 const ctx = { console, setTimeout, clearTimeout, performance: { now: () => Date.now() },
   Math, Date, JSON, Float64Array, Uint8Array, Uint16Array, Uint32Array, Int32Array, Float32Array, Map, Set, Promise };
@@ -17,6 +21,11 @@ for (const s of srcs) {
   catch (e) { console.log('LOAD FAIL ' + s + ': ' + e.stack); process.exitCode = 1; }
 }
 const MC = ctx.MC;
+{ // Every same-origin script/stylesheet in index.html must carry ?v=<MC.BUILD>.
+  const refs = [...html.matchAll(/(?:src|href)="((?:js|css|vendor)\/[^"]+)"/g)].map(m => m[1]);
+  const bad = refs.filter(r => r.split('?v=')[1] !== MC.BUILD);
+  if (bad.length) { console.log('BUILD MISMATCH (MC.BUILD=' + MC.BUILD + '):', bad.slice(0, 5).join(', ')); process.exitCode = 1; }
+}
 const ticks = +process.argv[2] || 200;
 (async () => {
   try {

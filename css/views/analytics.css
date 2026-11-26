@@ -3,7 +3,6 @@
 
 .v-analytics { display: flex; flex-direction: column; gap: 16px; min-width: 0; color: var(--ink); }
 .v-analytics *, .v-analytics *::before, .v-analytics *::after { box-sizing: border-box; }
-.v-analytics .num { font-variant-numeric: tabular-nums; }
 .v-analytics .an-visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 
 /* page head */
@@ -112,7 +111,7 @@
 
 /* tables */
 .v-analytics .an-table-wrap { overflow-x: auto; min-width: 0; max-width: 100%; }
-.v-analytics .an-table { width: 100%; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
+.v-analytics .an-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .v-analytics .an-th { text-align: left; font-weight: 600; font-size: 12px; color: var(--ink-3); padding: 6px 8px; border-bottom: 1px solid var(--line-strong); white-space: nowrap; }
 .v-analytics .an-th.is-right, .v-analytics .an-td.is-right { text-align: right; }
 .v-analytics .an-td { padding: 8px; border-bottom: 1px solid var(--line); color: var(--ink); vertical-align: top; }

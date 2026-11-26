@@ -200,7 +200,7 @@
     base: { stroke: 'var(--line-strong)' },
     head: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap', marginBottom: 6, minWidth: 0 },
     toggle: { font: 'inherit', fontSize: 12, color: 'var(--accent)', background: 'transparent', border: '1px solid var(--line)', borderRadius: 6, padding: '4px 8px', minHeight: 28, cursor: 'pointer', marginLeft: 'auto' },
-    tip: { position: 'absolute', pointerEvents: 'none', zIndex: 5, background: 'var(--surface)', color: 'var(--ink)', border: '1px solid var(--line-strong)', borderRadius: 6, boxShadow: 'var(--shadow-pop)', padding: '6px 10px', fontSize: 12, lineHeight: 1.45, whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums' },
+    tip: { position: 'absolute', pointerEvents: 'none', zIndex: 5, background: 'var(--surface)', color: 'var(--ink)', border: '1px solid var(--line-strong)', borderRadius: 6, boxShadow: 'var(--shadow-pop)', padding: '6px 10px', fontSize: 12, lineHeight: 1.45, whiteSpace: 'nowrap' },
     empty: { display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--ink-3)', fontSize: 13, border: '1px dashed var(--line)', borderRadius: 6, background: 'var(--surface-2)', textAlign: 'center', padding: 12 },
     svg: { display: 'block', width: '100%', height: 'auto', overflow: 'visible' }
   };
@@ -259,7 +259,7 @@
     var th = { textAlign: 'left', fontWeight: 600, color: 'var(--ink-2)', padding: '6px 8px', borderBottom: '1px solid var(--line-strong)', whiteSpace: 'nowrap' };
     var td = { padding: '5px 8px', borderBottom: '1px solid var(--line)', color: 'var(--ink)' };
     return html`<div className="ch-table-wrap k-scroll-x" style=${{ overflowX: 'auto', maxHeight: 360, overflowY: 'auto' }}>
-      <table className="ch-table num" style=${{ borderCollapse: 'collapse', width: '100%', fontSize: 12, fontVariantNumeric: 'tabular-nums' }}>
+      <table className="ch-table num" style=${{ borderCollapse: 'collapse', width: '100%', fontSize: 12 }}>
         ${p.caption ? html`<caption style=${{ textAlign: 'left', color: 'var(--ink-3)', fontSize: 12, padding: '0 0 6px' }}>${p.caption}</caption>` : null}
         <thead><tr>${cols.map(function (c) {
           return html`<th key=${c.key} scope="col" style=${Object.assign({}, th, { textAlign: c.align || (c.key === cols[0].key ? 'left' : 'right') })}>${c.label}</th>`;
@@ -375,7 +375,7 @@
       <circle cx=${c} cy=${c} r=${r} fill="none" strokeWidth=${sw} style=${{ stroke: 'var(--line)' }} />
       ${v != null && v > 0 ? html`<circle cx=${c} cy=${c} r=${r} fill="none" strokeWidth=${sw} strokeLinecap="round"
           strokeDasharray=${r2(circ * v / 100) + ' ' + r2(circ)} transform=${'rotate(-90 ' + c + ' ' + c + ')'} style=${{ stroke: 'var(--accent)' }} />` : null}
-      <text x=${c} y=${c} textAnchor="middle" dominantBaseline="central" style=${{ fill: 'var(--ink)', fontSize: Math.max(10, Math.round(size * 0.32)), fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>${v == null ? DASH : Math.round(v)}</text>
+      <text x=${c} y=${c} textAnchor="middle" dominantBaseline="central" style=${{ fill: 'var(--ink)', fontSize: Math.max(10, Math.round(size * 0.32)), fontWeight: 600 }}>${v == null ? DASH : Math.round(v)}</text>
     </svg>`;
   }
 
@@ -701,7 +701,7 @@
                 <line x1=${ci[0]} x2=${ci[0]} y1=${by + 3} y2=${by + bh - 3} />
                 <line x1=${ci[1]} x2=${ci[1]} y1=${by + 3} y2=${by + bh - 3} />
               </g>` : null}
-            <text x=${lx} y=${y + rowH / 2} dominantBaseline="central" style=${{ fill: 'var(--ink)', fontSize: 11, fontVariantNumeric: 'tabular-nums' }}>${f(d.value)}</text>
+            <text x=${lx} y=${y + rowH / 2} dominantBaseline="central" style=${{ fill: 'var(--ink)', fontSize: 11 }}>${f(d.value)}</text>
           </g>`;
         });
         return html`<div style=${{ position: 'relative' }}>
@@ -735,7 +735,7 @@
               <line x1=${cx} x2=${cx} y1=${ci[0]} y2=${ci[1]} />
               <line x1=${cx - 4} x2=${cx + 4} y1=${ci[0]} y2=${ci[0]} /><line x1=${cx - 4} x2=${cx + 4} y1=${ci[1]} y2=${ci[1]} />
             </g>` : null}
-          ${slot >= 34 ? html`<text x=${cx} y=${Math.min(ye, ci ? Math.min(ci[0], ci[1]) : ye) - 5} textAnchor="middle" style=${{ fill: 'var(--ink)', fontSize: 11, fontVariantNumeric: 'tabular-nums' }}>${f(d.value)}</text>` : null}
+          ${slot >= 34 ? html`<text x=${cx} y=${Math.min(ye, ci ? Math.min(ci[0], ci[1]) : ye) - 5} textAnchor="middle" style=${{ fill: 'var(--ink)', fontSize: 11 }}>${f(d.value)}</text>` : null}
           <text x=${cx} y=${Hv - mbv + 16} textAnchor="middle" style=${{ fill: 'var(--ink-2)', fontSize: 11 }}>${truncate(d.label || d.key, Math.max(3, Math.floor(slot / 6.5)))}</text>
         </g>`;
       });
@@ -812,7 +812,7 @@
         return html`<g key=${'r-' + r.key}>
           <text x=${labW - 8} y=${y + rowH / 2} textAnchor="end" dominantBaseline="central" style=${{ fill: 'var(--ink-2)', fontSize: 12 }}>${truncate(r.label || r.key, Math.floor((labW - 10) / 7))}</text>
           ${segs}
-          <text x=${sx(totals[ri]) + 6} y=${y + rowH / 2} dominantBaseline="central" style=${{ fill: 'var(--ink)', fontSize: 11, fontVariantNumeric: 'tabular-nums' }}>${f(totals[ri])}</text>
+          <text x=${sx(totals[ri]) + 6} y=${y + rowH / 2} dominantBaseline="central" style=${{ fill: 'var(--ink)', fontSize: 11 }}>${f(totals[ri])}</text>
         </g>`;
       });
       return html`<div style=${{ position: 'relative' }}>
@@ -862,9 +862,9 @@
           var sp = stepPct(i);
           return html`<g key=${'f-' + s.key}>
             <text x="0" y=${y + 14} style=${{ fill: 'var(--ink)', fontSize: 12, fontWeight: 500 }}>${s.label}
-              <tspan dx="8" style=${{ fill: 'var(--ink)', fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>${f(s.value)}</tspan>
+              <tspan dx="8" style=${{ fill: 'var(--ink)', fontWeight: 600 }}>${f(s.value)}</tspan>
             </text>
-            ${sp != null ? html`<text x=${W} y=${y + 14} textAnchor="end" style=${{ fill: 'var(--ink-3)', fontSize: 11, fontVariantNumeric: 'tabular-nums' }}>${FORMATS.pct(sp) + ' of ' + String(stages[i - 1].label).toLowerCase()}</text>` : null}
+            ${sp != null ? html`<text x=${W} y=${y + 14} textAnchor="end" style=${{ fill: 'var(--ink-3)', fontSize: 11 }}>${FORMATS.pct(sp) + ' of ' + String(stages[i - 1].label).toLowerCase()}</text>` : null}
             <rect x="0" y=${y + 22} width=${W} height=${bh} rx="3" style=${{ fill: 'var(--surface-2)' }} />
             ${bw > 0 ? html`<path d=${barPathH(0, bw, y + 22, bh, 4)} style=${{ fill: tokenColor(p.color || 'chart-1', 0) }} />` : null}
           </g>`;
@@ -1017,7 +1017,7 @@
                   <rect x=${x + 1} y=${y + 1} width=${cell - 2} height=${cell - 2} rx="3"
                     style=${v == null ? { fill: 'var(--surface-2)' } : { fill: 'var(--chart-1)', fillOpacity: 0.08 + 0.92 * t }} />
                   <text x=${x + cell / 2} y=${y + cell / 2} textAnchor="middle" dominantBaseline="central"
-                    style=${{ fill: t > 0.55 ? 'var(--on-accent)' : 'var(--ink)', fontSize: 11, fontVariantNumeric: 'tabular-nums' }}>${v == null ? DASH : f(v)}</text>
+                    style=${{ fill: t > 0.55 ? 'var(--on-accent)' : 'var(--ink)', fontSize: 11 }}>${v == null ? DASH : f(v)}</text>
                   <title>${label}</title>
                 </g>`;
               })}

@@ -844,7 +844,7 @@
         if (kind !== 'all' && x.kind !== kind) return;
         var item = { id: x.id, risk: x.risk };
         if (x.status === 'pending') out.needs.push(item);
-        else if (x.status === 'auto') out.applied.push(item);
+        else if (x.status === 'auto' || x.status === 'applied') out.applied.push(item);
         else out.history.push(item);
       });
       return out;
@@ -859,20 +859,20 @@
     function approveLow() {
       var r = dispatch('proposal/approveMany', { ids: low });
       setConfirm(false);
-      setMsg(r.ok ? { tone: 'good', text: 'Approved ' + plural(low.length, 'low-risk change') + '.' } : { tone: 'crit', text: r.error || "Couldn't approve." });
+      setMsg(r.ok ? { tone: 'good', text: 'Approved ' + plural(low.length, 'low-risk change') + '.' } : { tone: 'crit', text: r.error || "Couldn't approve these changes. Reload and try again." });
     }
     var kindOpts = [{ value: 'all', label: 'All kinds' }].concat(Object.keys(lists.kinds).sort().map(function (k) { return { value: k, label: KIND_LABEL[k] || k }; }));
     var agentOpts = [{ value: 'all', label: 'All agents' }].concat(p.roster.map(function (r) { return { value: r.id, label: displayName(r) }; }));
     var subTabs = [
       { id: 'needs', label: 'Needs you', count: lists.needs.length, countTone: lists.needs.length ? 'agent' : null },
-      { id: 'applied', label: 'Applied by agents', count: lists.applied.length },
-      { id: 'history', label: 'History' }
+      { id: 'applied', label: 'Applied', count: lists.applied.length },
+      { id: 'history', label: 'Dismissed and expired' }
     ];
     var shown = fz.items.slice(0, limit);
     var EMPTY_COPY = {
       needs: ['Nothing needs you right now', 'Suggestions that need your decision show up here.'],
-      applied: ['No autopilot changes yet', 'Changes agents make on their own are listed here, each with Undo. Suggestions you approved are under History.'],
-      history: ['No decisions yet', 'Approved, dismissed, undone and expired suggestions are kept here.']
+      applied: ['Nothing applied yet', 'Changes agents made on their own and suggestions you approved are listed here, each with Undo.'],
+      history: ['Nothing dismissed or expired', 'Dismissed, undone and expired suggestions are kept here.']
     };
     return html`<div className="cn-approvals">
       ${Tabs ? html`<${Tabs} id="agents-approvals-tabs" label="Approval lists" size="sm" tabs=${subTabs} value=${sub} onChange=${function (v) { setSub(v); setLimit(20); }} panelId="agents-approvals-list" />` : null}
@@ -893,7 +893,7 @@
           var pr = P && P.byId ? P.byId[x.id] : null;
           return html`<li key=${x.id}><${Card} id=${x.id} showTarget=${true} flat=${true} />
             ${sub === 'needs' && DN && pr ? html`<${DN} id=${x.id} risk=${pr.risk} signoffs=${pr.signoffs} />` : null}
-            ${sub === 'history' && DM && pr ? html`<${DM} p=${pr} />` : null}</li>`;
+            ${sub !== 'needs' && DM && pr ? html`<${DM} p=${pr} />` : null}</li>`;
         })}</ul>` : html`<${Empty} title=${EMPTY_COPY[sub][0]} body=${EMPTY_COPY[sub][1]} />`}
         ${fz.items.length > limit ? html`<${Link} onClick=${function () { setLimit(limit + 20); }}>Show more<//>` : null}
       </div>
