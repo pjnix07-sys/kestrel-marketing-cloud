@@ -776,6 +776,7 @@
       builderListeners.forEach(function (fn) { fn(); });
       p.onTab('builder');
     }
+    var alt = p.alt;
     return h`<article className="aud-scout-card" aria-labelledby=${'aud-scout-' + pr.id}>
       <div className="aud-scout-top"><${Chip} agentId=${pr.agentId} />
         ${pr.risk ? h`<${Pill} tone=${pr.risk === 'low' ? 'good' : (pr.risk === 'high' ? 'crit' : 'warn')}>${pr.risk === 'low' ? 'Low risk' : pr.risk === 'high' ? 'High risk' : 'Medium risk'}<//>` : null}
@@ -791,29 +792,46 @@
       <div className="aud-scout-actions">
         <${Btn} kind="primary" size="sm" id=${'aud-scout-' + pr.id + '-create'} onClick=${approve}>${includes ? 'Approve' : 'Create segment'}<//>
         <${Btn} kind="ghost" size="sm" id=${'aud-scout-' + pr.id + '-dismiss'} onClick=${dismiss}>Dismiss<//>
-        ${s ? h`<${Btn} kind="ghost" size="sm" id=${'aud-scout-' + pr.id + '-edit'} onClick=${edit}>Copy into builder<//>` : null}
+        ${s ? h`<${Btn} kind="ghost" size="sm" id=${'aud-scout-' + pr.id + '-edit'} onClick=${edit}>Edit in builder<//>` : null}
         ${PC ? h`<button type="button" className="aud-link" aria-expanded=${more ? 'true' : 'false'} onClick=${function () { setMore(!more); }}>${more ? 'Hide details' : 'Details'}</button>` : null}
       </div>
+      ${alt ? h`<p className="aud-muted aud-small">${'A similar suggestion uses a different cutoff. '}<button type="button" className="aud-link" onClick=${alt.onClick}>${'See ' + alt.label}</button></p>` : null}
       ${err ? h`<p className="aud-msg aud-msg-crit" role="alert">${err}</p>` : null}
-      ${more && PC ? h`<div className="aud-scout-more"><${PC} id=${pr.id} /></div>` : null}
+      ${more && PC ? h`<div className="aud-scout-more"><${PC} id=${pr.id} flat=${true} /></div>` : null}
     </article>`;
   }
 
   function ScoutPanel(p) {
+    var React = R();
     var proposals = useSel(function (w) { return w.proposals; });
     var status = useSel(function (w) { var a = w.agents && w.agents.byId.scout; return a ? a.status + '|' + a.autonomy : ''; });
     var list = proposals ? (proposals.open || []).map(function (id) { return proposals.byId[id]; })
       .filter(function (x) { return x && x.agentId === 'scout' && x.status === 'pending'; }) : [];
+    var ps = React.useState({}), pick = ps[0], setPick = ps[1];
+    // Near-duplicates (same name before the first comma) collapse into one card with a link to the other version.
+    var groups = [], byKey = {};
+    list.forEach(function (pr) {
+      var sg = segAction(pr);
+      var k = String((sg && sg.name) || pr.title || pr.id).split(',')[0].trim().toLowerCase();
+      if (!byKey[k]) { byKey[k] = { key: k, items: [] }; groups.push(byKey[k]); }
+      byKey[k].items.push(pr);
+    });
     var parts = (status || '').split('|');
     var note = parts[0] === 'paused' ? 'Segment Scout is paused.' : parts[1] === 'off' ? 'Segment Scout is off.' :
       parts[1] === 'autopilot' ? 'Segment Scout is on Autopilot: low-risk segments are created for you and show up in the table with its badge.' :
       'Segment Scout looks for high-response pockets every two days and queues them here.';
     return h`<section className="aud-scout" aria-labelledby="aud-scout-title">
       <div className="aud-card-head">
-        <h2 id="aud-scout-title" className="aud-h2">Suggested by Segment Scout</h2>
+        <h2 id="aud-scout-title" className="aud-h3">Suggested by Segment Scout</h2>
         <button type="button" className="aud-link" onClick=${function () { go('agents', { tab: 'roster', agentId: 'scout' }); }}>Agent settings</button>
       </div>
-      ${list.length ? h`<div className="aud-scout-grid">${list.map(function (pr) { return h`<${ScoutCard} key=${pr.id} proposal=${pr} onTab=${p.onTab} />`; })}</div>`
+      ${groups.length ? h`<div className="aud-scout-grid">${groups.map(function (g) {
+        var i = (pick[g.key] || 0) % g.items.length, pr = g.items[i];
+        var other = g.items.length > 1 ? g.items[(i + 1) % g.items.length] : null;
+        var os = other && segAction(other);
+        var alt = other ? { label: (os && os.name) || other.title, onClick: function () { var n = {}; n[g.key] = i + 1; setPick(Object.assign({}, pick, n)); } } : null;
+        return h`<${ScoutCard} key=${g.key} proposal=${pr} alt=${alt} onTab=${p.onTab} />`;
+      })}</div>`
         : h`<p className="aud-muted">No suggestions waiting. ${note}</p>`}
     </section>`;
   }
@@ -867,7 +885,6 @@
       setFocus({ segmentId: null });
     }
     return h`<div className="aud-segments">
-      <${ScoutPanel} onTab=${p.onTab} />
       <section className="aud-card" aria-labelledby="aud-seg-title">
         <div className="aud-card-head">
           <h2 id="aud-seg-title" className="aud-h2">Segments <span className="aud-muted num">${fmtNum(rows.length)}</span></h2>
@@ -907,6 +924,7 @@
         </div>
         <${Msg} msg=${msg} />
       </section>` : null}
+      <${ScoutPanel} onTab=${p.onTab} />
     </div>`;
   }
 
@@ -1188,7 +1206,13 @@
     var segCount = useSel(function (w) { return w.segments ? w.segments.order.length : 0; });
     var pending = useSel(function (w) {
       var pr = w.proposals; if (!pr) return 0;
-      var n = 0; (pr.open || EMPTY).forEach(function (id) { var x = pr.byId[id]; if (x && x.agentId === 'scout' && x.status === 'pending') n++; });
+      var seen = {}, n = 0;
+      (pr.open || EMPTY).forEach(function (id) {
+        var x = pr.byId[id];
+        if (!x || x.agentId !== 'scout' || x.status !== 'pending') return;
+        var sg = segAction(x), k = String((sg && sg.name) || x.title || id).split(',')[0].trim().toLowerCase();
+        if (!seen[k]) { seen[k] = 1; n++; }
+      });
       return n;
     });
     var tab = TAB_IDS.indexOf(focus.tab) >= 0 ? focus.tab : 'segments';
@@ -1200,6 +1224,11 @@
     var profileName = useSel(function (w) { return openIdx !== null && w.profiles && openIdx < w.profiles.n ? w.profiles.name[openIdx] : null; });
 
     function setTab(t) { setFocus({ tab: t }); }
+    // Mode changes triggered from inside the view move focus to the page heading.
+    function jumpTab(t) {
+      setTab(t);
+      setTimeout(function () { var el = document.getElementById('page-title'); if (el && el.focus) { try { el.focus({ preventScroll: true }); } catch (e) { el.focus(); } } }, 0);
+    }
     function setSegFilter(id) { viewMemo.segFilter = id; setSegFilterSt(id); }
     function setOverlap(ids) { viewMemo.overlap = ids; setOverlapSt(ids); }
     function openProfile(i) { setFocus({ profileIdx: i }); }
@@ -1214,9 +1243,9 @@
     else if (tab === 'builder') body = h`<${Builder} onOpenProfile=${openProfile} />`;
     else if (tab === 'profiles') body = h`<${ProfilesTab} segFilter=${segFilter} setSegFilter=${setSegFilter} openIdx=${openIdx} onOpen=${openProfile} />`;
     else if (tab === 'overlap') body = h`<${OverlapTab} chosen=${overlap} setChosen=${setOverlap} />`;
-    else body = h`<${SegmentsTab} onTab=${setTab}
-      onProfilesFor=${function (id) { setSegFilter(id); setTab('profiles'); }}
-      onOverlapWith=${function (id) { var next = overlap.indexOf(id) >= 0 ? overlap : [id].concat(overlap).slice(0, MAX_OVERLAP); setOverlap(next); setTab('overlap'); }} />`;
+    else body = h`<${SegmentsTab} onTab=${jumpTab}
+      onProfilesFor=${function (id) { setSegFilter(id); jumpTab('profiles'); }}
+      onOverlapWith=${function (id) { var next = overlap.indexOf(id) >= 0 ? overlap : [id].concat(overlap).slice(0, MAX_OVERLAP); setOverlap(next); jumpTab('overlap'); }} />`;
 
     return h`<section className="v-audiences">
       <header className="aud-header">
@@ -1224,7 +1253,7 @@
           <h1 id="page-title" tabIndex="-1" className="aud-title">Audiences</h1>
           <p className="aud-sub">Segment Fernway Outfitters customers with rules, plain-language descriptions and predicted traits.</p>
         </div>
-        ${pending ? h`<button type="button" className="aud-scout-flag" onClick=${function () { setTab('segments'); }}>
+        ${pending ? h`<button type="button" className="aud-scout-flag" onClick=${function () { jumpTab('segments'); }}>
           ${plural(pending, 'segment suggestion', 'segment suggestions')} from Segment Scout</button>` : null}
       </header>
       <div className="aud-tabs-wrap">

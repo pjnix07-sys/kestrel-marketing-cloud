@@ -370,12 +370,19 @@
     function set(patch) { if (MC.uiStore && MC.uiStore.setFocus) MC.uiStore.setFocus('analytics', patch); }
     var metricOpts = METRICS.slice();
     if (!METRICS.some(function (m) { return m.value === fo.metric; }) && EXTRA_METRICS[fo.metric]) metricOpts.push({ value: fo.metric, label: EXTRA_METRICS[fo.metric] });
+    var React = R();
+    var active = (ids.length ? 1 : 0) + (fo.channel && fo.channel !== 'all' ? 1 : 0) + (fo.metric && fo.metric !== 'revenue' ? 1 : 0) + (fo.showAgents === false ? 1 : 0);
+    var os = React.useState(null), setOpen = os[1];
+    var shown = os[0] === null ? active > 0 : os[0];
     return html`<div className="an-filters" role="group" aria-label="Analytics filters">
       <div className="an-filter">
         <span className="an-filter-label" id="analytics-range-label">Range</span>
         <${Seg} id="analytics-range" label="Date range" value=${String(fo.range)} options=${RANGES}
           onChange=${function (v) { set({ range: rangeValue(v) }); }} />
       </div>
+      <button type="button" id="analytics-filters-toggle" className="an-filters-toggle" aria-expanded=${shown ? 'true' : 'false'} aria-controls="analytics-filters-more"
+          onClick=${function () { setOpen(!shown); }}>${'Filters' + (active ? ' (' + active + ' on)' : '')}</button>
+      <div id="analytics-filters-more" className="an-filters-more" hidden=${!shown}>
       <div className="an-filter an-filter-camps">
         <label className="an-filter-label" htmlFor="analytics-campaigns">Campaign</label>
         <select id="analytics-campaigns" className="an-select" value=${ids.length === 1 ? ids[0] : (ids.length ? '__many' : '')}
@@ -401,7 +408,8 @@
       <div className="an-filter an-filter-toggle">
         <input id="analytics-show-agents" type="checkbox" className="an-check" checked=${fo.showAgents !== false}
           onChange=${function (e) { set({ showAgents: e.target.checked }); }} />
-        <label htmlFor="analytics-show-agents">Show agent actions</label>
+        <label htmlFor="analytics-show-agents">Show agent changes</label>
+      </div>
       </div>
     </div>`;
   }
@@ -1208,7 +1216,7 @@
       </li>`;
     }
     var top = cards.slice(0, 3), rest = cards.slice(3);
-    return html`<${Card} id="analytics-insights" title="Insights" sub="Plain-language readouts of the numbers below, refreshed as results come in.">
+    return html`<${Card} id="analytics-insights" title="Insights" sub="What changed in your numbers, in plain words.">
       ${cards.length ? html`<ul className="an-insights">${top.map(item)}</ul>` : html`<${Empty} title="Insights appear as data comes in." body="The first readouts need a week of complete days." />`}
       ${rest.length ? html`<div className="an-more-insights">
         <button type="button" className="an-link" aria-expanded=${showMore ? 'true' : 'false'} aria-controls="analytics-more-insights"

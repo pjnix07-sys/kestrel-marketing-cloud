@@ -16,12 +16,15 @@
   function T() { return MC.time; }
   function isNum(x) { return typeof x === 'number' && isFinite(x); }
   function r4(x) { return Math.round(x * 1e4) / 1e4; }
-  function money(x) { return MC.fmt.money(x); }
+  // Sentences use compact dollars from $10k up ($26.6k); tables keep exact figures ($26,578).
+  function moneyExact(x) { return MC.fmt.money(x); }
+  function money(x) { return Math.abs(x) >= 10000 ? MC.fmt.money(x, { compact: true }) : MC.fmt.money(x); }
+
   function num(x) { return MC.fmt.num(Math.round(x)); }
   function pct(x, dp) { return MC.fmt.pct(x, dp === undefined ? 1 : dp); }
   function dayLabel(d) { return MC.fmt.dayLabel(d); }
   // "a 35% chance" / "an 18% chance"
-  function chance(p) { if (p < 0.05) return 'under a 5% chance'; var s = pct(p, 0); return (/^(8|11|18|8\d)%/.test(s) ? 'an ' : 'a ') + s + ' chance'; }
+  function chance(p) { if (p < 0.05) return 'a chance below 5%'; var s = pct(p, 0); return (/^(8|11|18|8\d)%/.test(s) ? 'an ' : 'a ') + s + ' chance'; }
 
   var METRICS = [
     { id: 'revenue', label: 'Revenue', fmt: money, dirs: 'both' },
@@ -117,6 +120,7 @@
     return { pts: pts, mean: s };
   }
   function goalFmt(type) { return type === 'revenue' ? money : num; }
+  function goalFmtExact(type) { return type === 'revenue' ? moneyExact : num; }
 
   // A goal warning repeats at most every 3 days unless it gets more serious.
   function recentGoalWarning(world, cid, t, sev) {
@@ -194,15 +198,15 @@
       if (!pace || !g || g.early || !isNum(g.projected) || !isNum(g.p) || pace.status === 'early') { rows.push({ campaign: c.name, outlook: 'Too early to tell' }); return; }
       var actual = MC.util.sum(s), lastDay = T().dayOf(c.endTick - 1), daysLeft = Math.max(0, lastDay - today + 1);
       var projected = g.projected, prob = g.p;
-      var gf = goalFmt(c.goal.type), noun = GOAL_NOUN[c.goal.type] || 'goal';
-      rows.push({ campaign: c.name, pacing: pace.status === 'ahead' ? 'Ahead of pace' : (pace.status === 'on' ? 'On pace' : 'Behind pace'), projected: gf(projected), goal: gf(c.goal.target), chance: pct(prob, 0) });
+      var gf = goalFmt(c.goal.type), gfx = goalFmtExact(c.goal.type), noun = GOAL_NOUN[c.goal.type] || 'goal';
+      rows.push({ campaign: c.name, pacing: pace.status === 'ahead' ? 'Ahead of pace' : (pace.status === 'on' ? 'On pace' : 'Behind pace'), projected: gfx(projected), goal: gfx(c.goal.target), chance: pct(prob, 0) });
       if (pace.status !== 'behind' || !(prob < p.goalRiskThreshold) || daysLeft <= 0) return;
       var sev = prob < 0.2 ? 'crit' : 'warn';
       if (recentGoalWarning(world, c.id, t, sev)) {
         rows.push({ campaign: c.name, outlook: 'Already flagged in the last 3 days' });
       } else insights.push({
         kind: 'goal-risk',
-        title: c.name + ' is on pace for ' + pct(projected / c.goal.target, 0) + ' of its ' + noun + ' goal',
+        title: c.name + ' is heading for ' + pct(projected / c.goal.target, 0) + ' of its ' + noun + ' goal',
         body: 'About ' + gf(projected) + ' of ' + gf(c.goal.target) + ' by ' + dayLabel(lastDay) + ', ' + chance(prob) + ' of hitting it.',
         entity: { kind: 'campaign', id: c.id }, severity: sev, key: 'goal|' + c.id + '|' + today
       });
@@ -222,7 +226,7 @@
         kind: 'extend-campaign', risk: 'medium', mustQueue: true, horizon: days * 24,
         target: { kind: 'campaign', id: c.id },
         title: 'Extend ' + c.name + ' by ' + days + (days === 1 ? ' day' : ' days'),
-        rationale: 'It is on pace for ' + pct(projected / c.goal.target, 0) + ' of its ' + noun + ' goal (' + gf(projected) + ' of ' + gf(c.goal.target) +
+        rationale: 'The campaign is heading for ' + pct(projected / c.goal.target, 0) + ' of its ' + noun + ' goal (' + gf(projected) + ' of ' + gf(c.goal.target) +
           '). At the recent pace of ' + gf(meanDaily) + ' a day, ' + days + ' more ' + (days === 1 ? 'day' : 'days') +
           ' lifts that to about ' + pct(share2, 0) + '. The budget stays the same and is spread over the longer run.',
         evidence: [

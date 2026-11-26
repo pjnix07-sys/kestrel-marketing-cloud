@@ -269,6 +269,8 @@
 
     var names = {};
     (world.segments.order || []).forEach(function (id) { var s = world.segments.byId[id]; if (s) names[s.name.toLowerCase()] = true; });
+    // Titles carry the rule, so two segments with similar names can't read as duplicates.
+    function withRule(desc, name) { return desc && desc.length <= 80 && desc.toLowerCase() !== String(name).toLowerCase() ? ' (' + desc + ')' : ''; }
     picks.forEach(function (x, idx) {
       var rule = ruleOf(x.conds), name = S().nameFor(rule);
       for (var c2 = x.conds.length - 1; c2 >= 0 && names[name.toLowerCase()]; c2--) {
@@ -294,7 +296,7 @@
         var c = ret.c;
         proposals.push({
           kind: 'retarget', target: { kind: 'campaign', id: c.id },
-          title: 'Add \u201c' + name + '\u201d to the ' + c.name + ' audience',
+          title: 'Add \u201c' + name + '\u201d' + withRule(desc, name) + ' to the ' + c.name + ' audience',
           rationale: why + ' ' + num(ret.fresh) + ' of them can get ' + chName(c.channels[0]) + ' and aren\u2019t in ' + c.name + ' yet. ' +
             'The campaign\u2019s own audience stays as it is; this adds a new segment alongside it.',
           evidence: evidence.concat([{ label: 'New people for the campaign', value: num(ret.fresh) }]),
@@ -315,7 +317,7 @@
       }
       proposals.push({
         kind: 'new-segment', target: { kind: 'segment', id: 'rule-' + MC.util.digest(rule) },
-        title: 'New segment: ' + name,
+        title: 'New segment: ' + name + withRule(desc, name),
         rationale: why + ' Saving it as a segment lets you target or exclude them; nothing else changes.',
         evidence: evidence, impact: impact, risk: 'low', horizon: 0,
         actions: [{ type: 'segment/create', payload: { segment: segment } }],

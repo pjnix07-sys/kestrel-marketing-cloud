@@ -15,6 +15,7 @@
   function chLower(ch) { return ch === 'sms' ? 'SMS' : chName(ch).toLowerCase(); }
   function pct(x, dp) { return MC.fmt.pct(x, dp === undefined ? 0 : dp); }
   function num(x) { return MC.fmt.num(Math.round(x)); }
+  function moneyS(x) { return Math.abs(x) >= 10000 ? MC.fmt.money(x, { compact: true }) : MC.fmt.money(x); }
   function money(x) { return MC.fmt.money(x); }
 
   function observe(world, ctx) {
@@ -96,11 +97,11 @@
         proposals.push({
           kind: 'fatigue-suppress', risk: 'low', horizon: horizon,
           target: { kind: 'campaign', id: cid },
-          title: 'Rest ' + num(total) + (total === 1 ? ' person' : ' people') + ' from ' + chText + ' on ' + name + ' for ' + restDays + (restDays === 1 ? ' day' : ' days'),
+          title: 'Pause ' + chText + ' to ' + num(total) + ' over-messaged ' + (total === 1 ? 'person' : 'people') + ' on ' + name + ' for ' + restDays + (restDays === 1 ? ' day' : ' days'),
           rationale: num(total) + (total === 1 ? ' person has' : ' people have') + ' had so many recent messages that each further ' + chText +
             ' send carries a ' + pct(prm.unsubRiskThreshold, 1) + ' or higher chance of an unsubscribe. Resting them for ' + restDays +
             (restDays === 1 ? ' day' : ' days') + ' avoids about ' + num(avoided) + (Math.round(avoided) === 1 ? ' unsubscribe' : ' unsubscribes') +
-            ' and gives up about ' + money(forgone) + ' in revenue from the skipped messages.',
+            ' and gives up about ' + moneyS(forgone) + ' in revenue from the skipped messages.',
           evidence: evid.concat([{ label: 'Rest until', value: MC.fmt.stamp(until) }]),
           impact: { metric: 'unsubs avoided', unit: '#', delta: Math.round(avoided * 10) / 10, lo: Math.round(avoided * 6) / 10, hi: Math.round(avoided * 14) / 10,
             horizonDays: horizon / 24, tradeoff: { metric: 'revenue', unit: '$', delta: -Math.round(forgone) } },

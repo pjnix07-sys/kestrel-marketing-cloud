@@ -21,7 +21,7 @@
 .v-audiences .aud-empty { color: var(--ink-2); padding: 8px 0; margin: 8px 0; }
 
 /* cards */
-.v-audiences .aud-card { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 16px; min-width: 0; }
+.v-audiences .aud-card { background: none; border: 0; border-radius: 0; padding: 0; min-width: 0; }
 .v-audiences .aud-card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
 .v-audiences .aud-scroll { overflow-x: auto; max-width: 100%; }
 
@@ -141,9 +141,9 @@
 
 /* scout */
 .v-audiences .aud-segments { display: flex; flex-direction: column; gap: 16px; }
-.v-audiences .aud-scout { padding: 0; }
-.v-audiences .aud-scout-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
-.v-audiences .aud-scout-card { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 12px; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.v-audiences .aud-scout { padding: 16px 0 0; border-top: 1px solid var(--line); }
+.v-audiences .aud-scout-grid { display: flex; flex-direction: column; max-width: 720px; }
+.v-audiences .aud-scout-card { background: none; border: 0; border-top: 1px solid var(--line); border-radius: 0; padding: 12px 0; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
 .v-audiences .aud-scout-card .aud-h3 { margin: 4px 0 0; }
 .v-audiences .aud-scout-top { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
 .v-audiences .aud-scout-why { margin: 0; font-size: 14px; color: var(--ink-2); }
@@ -151,7 +151,11 @@
 .v-audiences .aud-evidence dt { font-size: 12px; color: var(--ink-3); }
 .v-audiences .aud-evidence dd { margin: 0; font-weight: 600; }
 .v-audiences .aud-scout-actions { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-top: 4px; }
+.v-audiences .aud-scout-card:first-child { border-top: 0; padding-top: 0; }
 .v-audiences .aud-scout-more { margin-top: 8px; }
+/* fallback when ProposalCard has no flat variant: drop its own frame */
+.v-audiences .aud-scout-more > * { border: 0 !important; box-shadow: none !important; padding-left: 0 !important; padding-right: 0 !important; background: none !important; }
+.v-audiences .cn-sr, .v-audiences .aud-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 
 /* tables */
 .v-audiences .aud-table { width: 100%; border-collapse: collapse; font-size: 14px; }
@@ -260,3 +264,5 @@
 .v-audiences .aud-reading { margin: 8px 0 0; min-height: 0; }
 .v-audiences .aud-reading:empty { display: none; }
 .v-audiences .aud-why { margin: 0; max-width: 68ch; }
+
+.v-audiences .aud-seg-detail { padding-top: 16px; border-top: 1px solid var(--line); }

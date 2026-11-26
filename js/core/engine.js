@@ -193,7 +193,7 @@
       try { if (onPhase) onPhase('catchup', { index: 4, total: 5, label: 'Catching up to today' }); } catch (e) { report(e); }
       (function chunk() {
         try {
-          var stop = Math.min(target, w.meta.tick + 48);
+          var stop = Math.min(target, w.meta.tick + 12);
           while (w.meta.tick < stop) w = E.advance(w);
         } catch (e) { return reject(e); }
         if (w.meta.tick >= target) resolve(w); else yieldThen(chunk);

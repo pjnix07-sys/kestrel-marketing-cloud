@@ -29,6 +29,15 @@
   function open() { if (MC.uiStore && MC.uiStore.set) MC.uiStore.set({ drawer: 'connect' }); }
   function close() { if (MC.uiStore && MC.uiStore.set) MC.uiStore.set({ drawer: null }); }
 
+  // Module scope on purpose: a component declared inside Panel is a new type on every render,
+  // which remounts the anchor and drops keyboard focus.
+  function LinkBtn(q) {
+    return html`<a className=${cx('k-btn', 'k-btn--' + q.kind, 'k-btn--md', 'k-btn--block')} href=${q.href} target="_blank" rel="noopener noreferrer"
+      id="connect-create" onClick=${q.onClick}><span className="k-btn-label">Create a key at Anthropic</span></a>`;
+  }
+
+  var TITLE = 'Connect your Anthropic key';
+
   /* ---------- the panel ---------- */
   function Panel(p) {
     var React = R();
@@ -88,16 +97,12 @@
     function changeRemember(v) { setRemember(!!v); if (on && typeof A.setRemember === 'function') A.setRemember(!!v); }
     function disconnect() { if (typeof A.disconnect === 'function') A.disconnect(); setLocalMsg(null); setVisited(false); setManual(false); }
 
+    function markVisited() { setVisited(function (v) { return v || true; }); }
     var KEY_URL = A.KEY_URL || 'https://platform.claude.com/settings/keys';
     var msgText = localMsg ? localMsg.text : ((g.state === 'invalid' || g.state === 'blocked') ? g.message : '');
     var msgTone = localMsg ? localMsg.tone : 'crit';
     var hasDisabledAi = typeof A.connect !== 'function';
     var pasteIsMain = visited === 'back' && !manual;
-
-    function LinkBtn(q) {
-      return html`<a className=${cx('k-btn', 'k-btn--' + q.kind, 'k-btn--md', 'k-btn--block')} href=${KEY_URL} target="_blank" rel="noopener noreferrer"
-        id="connect-create" onClick=${function () { setVisited(function (v) { return v || true; }); }}><span className="k-btn-label">Create a key at Anthropic</span></a>`;
-    }
 
     return html`<div className="cx-panel" id="connect-panel">
       <div className="cx-live" role="status" aria-live="polite">
@@ -110,11 +115,11 @@
         ${Check ? html`<${Check} id="connect-remember" label="Remember on this device" checked=${remember} onChange=${changeRemember} />` : null}
         ${Button ? html`<${Button} kind="secondary" size="md" id="connect-disconnect" onClick=${disconnect}>Disconnect<//>` : null}
       </div>` : html`<div className="cx-off">
-        <p className="cx-line">Connect Claude to let the agents reason and write. It uses your own Anthropic key.</p>
+        <p className="cx-line">Optional. With a key, agents write and explain their decisions with Claude instead of fixed rules.</p>
         ${connecting ? html`<p className="cx-state"><span className="cx-spin" aria-hidden="true"></span><span>Checking your key…</span></p>` : null}
         ${!connecting ? html`<ol className="cx-steps">
           <li className="cx-step">
-            <${LinkBtn} kind=${pasteIsMain ? 'secondary' : 'primary'} />
+            <${LinkBtn} kind=${pasteIsMain ? 'secondary' : 'primary'} href=${KEY_URL} onClick=${markVisited} />
             <p className="cx-hint">Name it Marketing Cloud and pick a 7-day expiry.</p>
           </li>
           <li className="cx-step">
@@ -148,5 +153,5 @@
     </button>`;
   }
 
-  MC.connect = { Panel: Panel, TopButton: TopButton, open: open, close: close };
+  MC.connect = { TITLE: TITLE, INITIAL_FOCUS: '#connect-create', Panel: Panel, TopButton: TopButton, open: open, close: close };
 })();

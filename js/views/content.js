@@ -830,9 +830,23 @@
         return nr;
       }) });
     }
-    function fixResult(key, fix) {
+    function fixResult(key, c) {
       var r = (g.results || EMPTY).filter(function (x) { return x.key === key; })[0];
-      if (r && fix) editResult(key, fix.field, fix.value);
+      if (!r || !c || !c.fix) return;
+      var v = r;
+      for (var i = 0; i < 8; i++) {
+        var cur = i === 0 ? c : CP().check(v, brand, gctx).filter(function (x) { return x.id === c.id; })[0];
+        if (!cur || cur.status === 'pass' || !cur.fix) break;
+        var nv = CP().applyFix(v, cur.fix);
+        if (JSON.stringify(nv.fields) === JSON.stringify(v.fields)) break;
+        v = nv;
+      }
+      patchG({ results: (g.results || EMPTY).map(function (x) {
+        if (x.key !== key) return x;
+        var nr = Object.assign({}, x, { fields: v.fields });
+        try { var sc = CP().score(nr, gctx); nr.predicted = { score: sc.score, open: sc.predOpen, click: sc.predClick }; } catch (e) { /* keep old */ }
+        return nr;
+      }) });
     }
     function addChosen() {
       var ok = 0, err = null, firstId = null;
@@ -911,9 +925,9 @@
       </div>
       <div className="cs-gen-go">
         <${Btn} kind=${results.length ? 'secondary' : 'primary'} id="cs-generate" busy=${busy} onClick=${generate}>${results.length ? 'Generate again' : 'Generate ' + o.count}<//>
-        ${busy ? h`<span className="cs-muted cs-busy">Writing variants${ELL}</span>` : null}
+        <span className="cs-muted cs-busy" role="status" aria-live="polite">${busy ? 'Writing variants' + ELL : (results.length && g.n ? plural(results.length, 'variant') + ' ready' : '')}</span>
       </div>
-      ${results.length ? h`<div className="cs-results">
+      ${results.length ? h`<div className="cs-results" aria-busy=${busy ? 'true' : 'false'}>
         <ul className="cs-result-list">${results.map(function (r) {
           var on = !!g.selected[r.key], openCard = !!(g.open && g.open[r.key]);
           var sid = 'cs-gen-' + r.key.replace(/[^a-z0-9]/gi, '-');
@@ -937,7 +951,7 @@
               })}
               ${checks.length ? h`<ul className="cs-result-issues">${checks.map(function (c) {
                 return h`<li key=${c.id} className=${'is-' + c.status}><span><strong>${c.label}.</strong> ${c.detail}</span>
-                  ${c.fix ? h`<button type="button" className="cs-link" onClick=${function () { fixResult(r.key, c.fix); }}>Fix</button>` : null}</li>`;
+                  ${c.fix ? h`<button type="button" className="cs-link" onClick=${function () { fixResult(r.key, c); }}>Fix</button>` : null}</li>`;
               })}</ul>` : h`<p className="cs-note">No issues found.</p>`}
               <button type="button" className="cs-link" onClick=${function () { p.onEdit(r); }}>Open in composer</button>
             </div>` : null}
@@ -1091,7 +1105,7 @@
         return h`<li key=${c.id} className=${'cs-check-row is-' + c.status}>
           <span className="cs-check-icon" role="img" aria-label=${c.status === 'pass' ? 'Passed' : c.status === 'warn' ? 'Warning' : 'Failed'}><${Icon} name=${CHECK_ICON[c.status]} size=${16} /></span>
           <div className="cs-check-body"><p className="cs-check-label">${c.label}</p><p className="cs-check-detail">${c.detail}</p></div>
-          ${c.fix && c.status !== 'pass' && !p.readOnly ? h`<${Btn} kind="ghost" size="sm" id=${'cs-fix-' + c.id} onClick=${function () { p.onFix(c.fix); }}>Fix<//>` : null}
+          ${c.fix && c.status !== 'pass' && !p.readOnly ? h`<${Btn} kind="ghost" size="sm" id=${'cs-fix-' + c.id} onClick=${function () { p.onFix(c); }}>Fix<//>` : null}
         </li>`;
       })}</ul>
       ${fixes.length > 1 && !p.readOnly ? h`<button type="button" id="cs-fix-all" className="cs-link" onClick=${p.onFixAll}>Fix all ${fixes.length}</button>` : null}
@@ -1139,7 +1153,19 @@
     var reviewed = viewMemo.reviewed[p.draftKey] === fieldsKey;
 
     function setProfileIdx(i) { viewMemo.profileIdx = i; setPi(i); }
-    function fix(f) { if (has(CP(), 'applyFix')) S.update({ fields: CP().applyFix(vlike, f).fields }); }
+    // One click fixes every occurrence the check flagged, across all fields.
+    function fix(c) {
+      if (!has(CP(), 'applyFix')) return;
+      var v = vlike;
+      for (var i = 0; i < 8; i++) {
+        var cur = i === 0 ? c : CP().check(v, brand, ctx).filter(function (x) { return x.id === c.id; })[0];
+        if (!cur || cur.status === 'pass' || !cur.fix) break;
+        var nv = CP().applyFix(v, cur.fix);
+        if (JSON.stringify(nv.fields) === JSON.stringify(v.fields)) break;
+        v = nv;
+      }
+      S.update({ fields: v.fields });
+    }
     function fixAll() { if (has(CP(), 'fixAll')) S.update({ fields: CP().fixAll(vlike, brand, ctx).fields }); }
     function toggleReview() { if (reviewed) delete viewMemo.reviewed[p.draftKey]; else viewMemo.reviewed[p.draftKey] = fieldsKey; setRev(function (x) { return x + 1; }); }
 

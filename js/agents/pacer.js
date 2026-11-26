@@ -12,6 +12,7 @@
   function isNum(x) { return typeof x === 'number' && isFinite(x); }
   function r4(x) { return Math.round(x * 1e4) / 1e4; }
   function chName(ch) { return MC.CH.LABEL[ch] || ch; }
+  function moneyS(x) { return Math.abs(x) >= 10000 ? MC.fmt.money(x, { compact: true }) : MC.fmt.money(x); }  // sentences: compact from $10k; tables stay exact
   function money(x, cents) { return MC.fmt.money(x, cents ? { cents: true } : undefined); }
   function pct(x, dp) { return MC.fmt.pct(x, dp === undefined ? 0 : dp); }
   function isPaid(ch) { return MC.CH.PAID.indexOf(ch) >= 0; }
@@ -60,13 +61,13 @@
         var pace = avg / planned;
         if (Math.abs(pace - 1) <= prm.paceTolerance) return;
         var under = pace < 1, left = Math.max(0, x.budget - x.spent);
-        var body = chName(x.ch) + ' spent ' + money(avg) + ' a day over the last 3 days against a plan of ' + money(planned) + ' a day. ' +
-          (x.paused ? 'The channel is paused, so ' + money(left) + ' of its budget is waiting.'
-            : (under ? money(left) + ' is left for the remaining ' + c.daysLeft + (c.daysLeft === 1 ? ' day' : ' days') + '.'
+        var body = chName(x.ch) + ' spent ' + moneyS(avg) + ' a day over the last 3 days against a plan of ' + moneyS(planned) + ' a day. ' +
+          (x.paused ? 'The channel is paused, so ' + moneyS(left) + ' of its budget is waiting.'
+            : (under ? moneyS(left) + ' is left for the remaining ' + c.daysLeft + (c.daysLeft === 1 ? ' day' : ' days') + '.'
               : 'At this rate the channel budget runs out early.'));
         insights.push({
           kind: 'pacing', key: 'pacing|' + c.cid + '|' + x.ch,
-          title: chName(x.ch) + ' on ' + c.name + ' is ' + (under ? 'under' : 'over') + 'spending: ' + pct(Math.abs(pace - 1)) + (under ? ' below' : ' above') + ' plan',
+          title: chName(x.ch) + ' on ' + c.name + (/ads$/.test(chName(x.ch)) ? ' are' : ' is') + ' spending ' + pct(Math.abs(pace - 1)) + (under ? ' below' : ' above') + ' plan',
           body: body, entity: { kind: 'campaign', id: c.cid },
           severity: Math.abs(pace - 1) > 2 * prm.paceTolerance ? 'warn' : 'info'
         });
@@ -131,9 +132,9 @@
       proposals.push({
         kind: 'budget-shift', risk: share <= 0.10 ? 'low' : 'medium', horizon: horizon,
         target: { kind: 'campaign', id: c.cid },
-        title: 'Move ' + money(movedTotal) + ' from ' + chName(from.e.ch) + ' to ' + chName(to.e.ch) + ' on ' + c.name,
+        title: 'Move ' + moneyS(movedTotal) + ' from ' + chName(from.e.ch) + ' to ' + chName(to.e.ch) + ' on ' + c.name,
         rationale: chName(to.e.ch) + (/ads$/.test(chName(to.e.ch)) ? ' return ' : ' returns ') + money(mTo, true) + ' per extra $1 vs ' + money(mFrom, true) + ' on ' + chName(from.e.ch).replace('Social ads', 'social').replace('Web ads', 'web') +
-          ' at current spend. The campaign total stays ' + money(c.total) + '.',
+          ' at current spend. The campaign total stays ' + moneyS(c.total) + '.',
         evidence: [
           { label: 'Days left', value: String(c.daysLeft) },
           { label: chName(to.e.ch) + ' return per extra $1', value: money(mTo, true) },

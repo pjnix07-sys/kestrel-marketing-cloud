@@ -62,18 +62,18 @@
   var BANK = {
     subject: {
       practical: [['Built for {SE}: {THEP}'], ['{OPC}, this week only', 'o'], ['3 reasons {THEP} earns a spot in your pack'],
-        ['{first_name}, your checklist for {SE}'], ['What to pack for {SE}?'], ['Restock your {G} before the weekend'],
+        ['Your checklist for {SE}'], ['What to pack for {SE}?'], ['Restock your {G} before the weekend'],
         ['Field-tested: why we stand behind {THEP}']],
-      adventurous: [['Your next big day starts with {THEP}'], ['{first_name}, {PL} is calling'], ['Go farther this weekend with {O}', 'o'],
+      adventurous: [['Your next big day starts with {THEP}'], ['{PLC} is calling'], ['Go farther this weekend with {O}', 'o'],
         ['Ready for {SE}?'], ['5 routes worth the early alarm'], ['Chase first light with {THEP}']],
-      warm: [['{first_name}, we picked this one for you'], ['A little something for {SE}: {O}', 'o'], ['Gear we keep reaching for: {THEP}'],
-        ['From our trail crew to yours'], ['Gear we would hand to a friend'], ['{first_name}, thanks for exploring with us']],
-      urgent: [['Ends soon: {OP}', 'o'], ['Last call for {THEP}'], ['{first_name}, your offer ends soon', 'o'], ['Time to get {G} sorted'],
+      warm: [['We picked this one for you'], ['A little something for {SE}: {O}', 'o'], ['Gear we keep reaching for: {THEP}'],
+        ['From our trail crew to yours'], ['Gear we would hand to a friend'], ['Thanks for exploring with us']],
+      urgent: [['Ends soon: {OP}', 'o'], ['Last call for {THEP}'], ['Your offer ends soon', 'o'], ['Time to get {G} sorted'],
         ['Members get {O}', 'o'], ['Don’t miss it: {SE} prep ends soon']]
     },
     preheader: {
       practical: [['Specs, sizing and care tips in one place.'], ['Everything you need for {SE}, nothing you don’t.'],
-        ['Free returns within 60 days on every order.'], ['{OPC}. Details inside.', 'o']],
+        ['Free returns within 60 days.'], ['{OPC}. Details inside.', 'o']],
       adventurous: [['The weather window is open. Let’s go.'], ['Pack light, go far, come back with stories.'],
         ['{OPC} while the trails are quiet.', 'o'], ['New routes, fresh gear, big views.']],
       warm: [['A note from the Fernway crew.'], ['Hand-picked for the way you get outside.'],
@@ -84,7 +84,7 @@
       practical: [['Gear that works as hard as you do'], ['Built for {SE}'], ['The {G} checklist']],
       adventurous: [['Go farther this season'], ['Your next adventure starts here'], ['Chase the weather window']],
       warm: [['Picked with you in mind'], ['Warm layers, warmer welcomes'], ['Thanks for getting outside with us']],
-      urgent: [['Last chance to gear up'], ['The clock is ticking'], ['Time is running out']]
+      urgent: [['Last chance to gear up'], ['Shop before the offer ends', 'o'], ['Gear up today']]
     },
     body: {
       practical: [['Hi {first_name}. {THEPC} is built for {SE}. It is light, tough and easy to care for. {OS}'],
@@ -96,9 +96,9 @@
       warm: [['Hi {first_name}, thank you for exploring with us. We think you will love {THEP} for {SE}. {OS}'],
         ['Our crew picked {THEP} for days like these. It is the gear we hand to friends. {OS}'],
         ['Here is a small thank-you from all of us at Fernway. {OS} We hope to see you out on {PL}.']],
-      urgent: [['{first_name}, time is almost up. {OS} Order today so you are set for {SE}.'],
-        ['This is the last call for {THEP}. {OS} Once it ends, it ends.'],
-        ['Time is running out. {OS} Grab {THEP} before the offer ends.']]
+      urgent: [['{first_name}, there is still time to get set for {SE}. {OS} Order today.'],
+        ['This is the last call for {THEP}. {OS} Order today to be set for {SE}.'],
+        ['{OS} Grab {THEP} while the offer is open.']]
     },
     cta: {
       practical: [['Shop now'], ['See the details'], ['Build your kit'], ['Get yours']],
@@ -114,7 +114,7 @@
       warm: [['Fernway: Hi {first_name}, we picked something for {SE}. {OSS}See it: {link}'], ['Fernway: Thank you for exploring with us. {OSS}Take a look: {link}'],
         ['Fernway: Picked for you by our crew: {THEP}. {OSS}Take a look: {link}']],
       urgent: [['Fernway: Last call, {first_name}. {OSS}Shop before it ends: {link}'], ['Fernway: Time to grab {THEP}. {OSS}Get yours: {link}'],
-        ['Fernway: Your pick is waiting. {OSS}Order today: {link}']]
+        ['Fernway: Still thinking about {THEP}? {OSS}Order today: {link}']]
     },
     pushTitle: {
       practical: [['Meet {P}'], ['Your {G} checklist'], ['Built for {SE}']],
@@ -132,7 +132,7 @@
       practical: [['{THEPC}: built and field-tested for {SE}. {OS}'], ['Restock your {G} with gear we tested ourselves. {OS}']],
       adventurous: [['Your next big day starts here. {PLC} is calling. {OS}'], ['Chase the weather window with {THEP}. {OS}']],
       warm: [['Gear we would hand to a friend, picked by our crew. {OS}'], ['Made for cozy camps and early starts. With thanks from Fernway. {OS}']],
-      urgent: [['Ends soon. {OS} Last call for {THEP}.', 'o'], ['Time is running out. {OS}']]
+      urgent: [['Ends soon. {OS} Last call for {THEP}.', 'o'], ['Get {THEP} today. {OS}']]
     },
     socialHeadline: {
       practical: [['Built for {SE}'], ['Field-tested {G}'], ['Restock your {G}']],

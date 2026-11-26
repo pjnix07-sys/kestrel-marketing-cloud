@@ -87,7 +87,7 @@
   }
   function defaults() {
     return {
-      theme: 'system', route: 'home', drawer: null, sampleDismissed: false, verifying: null,
+      theme: 'system', route: 'home', drawer: null, sampleDismissed: false, firstRun: null, verifying: null,
       focus: {
         campaigns: { mode: 'board', id: null, tab: 'overview' },
         content: { variantId: null, channel: 'email' },
@@ -107,7 +107,7 @@
       return o && typeof o === 'object' ? o : null;
     } catch (e) { return null; }
   }
-  function persisted(s) { return { theme: s.theme, route: s.route, sampleDismissed: s.sampleDismissed, notify: s.notify }; }
+  function persisted(s) { return { theme: s.theme, route: s.route, sampleDismissed: s.sampleDismissed, firstRun: s.firstRun, notify: s.notify }; }
   var lastPersist = '';
   function writePersisted(s) {
     try {
@@ -124,12 +124,26 @@
     return h;
   }
 
+  // Guided first run (docs/DEMO.md part 2): {step 1..6, done, skipped, resumes, shown}. Lives in this UI state only,
+  // never in the world or the action log. A guide left mid-way resumes once on the next visit, then ends.
+  function readFirstRun(v) {
+    if (!v || typeof v !== 'object') return null;
+    var step = Math.max(1, Math.min(6, v.step | 0 || 1));
+    var out = { step: step, done: v.done === true, skipped: v.skipped === true, resumes: Math.max(0, v.resumes | 0), shown: Math.max(0, v.shown | 0) };
+    if (!out.done && !out.skipped) {
+      if (out.resumes >= 1) out.done = true;
+      else out.resumes = 1;
+    }
+    return out;
+  }
+
   function initialState() {
     var s = defaults();
     var p = readPersisted();
     if (p) {
       if (THEMES.indexOf(p.theme) >= 0) s.theme = p.theme;
       if (typeof p.sampleDismissed === 'boolean') s.sampleDismissed = p.sampleDismissed;
+      s.firstRun = readFirstRun(p.firstRun);
       if (p.notify && typeof p.notify === 'object') {
         Object.keys(p.notify).forEach(function (k) { if (NOTIFY_LEVELS.indexOf(p.notify[k]) >= 0) s.notify[k] = p.notify[k]; });
       }
@@ -142,6 +156,7 @@
   }
 
   var uiState = initialState();
+  if (uiState.firstRun && !uiState.firstRun.done && !uiState.firstRun.skipped) writePersisted(uiState);   // count this visit as the one resume
   var uiVersion = 0;
   var uiSubs = [];
 
