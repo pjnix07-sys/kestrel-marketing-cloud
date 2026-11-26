@@ -378,6 +378,7 @@
       channel: ch, hookField: hookField, len: hook.length,
       hasNumber: /\d/.test(hook) ? 1 : 0,
       personal: /\{first_name[|}]/.test(all) ? 1 : 0,
+      urgencyUnbacked: URGENCY_RE.test(hook + ' ' + main) && !hasEnd(v, ctx) ? 1 : 0,
       urgency: URGENCY_RE.test(hook + ' ' + main) && hasEnd(v, ctx) ? 1 : 0,   // no credit for urgency without an offer end date
       question: hook.indexOf('?') >= 0 ? 1 : 0,
       ctaStrength: cta,
@@ -467,7 +468,7 @@
     var hk = HOOK_LABEL[ft.channel] || 'subject', HK = cap1(hk), tl = CP.TONE_LABEL[tone] || 'chosen';
     if (k === 'num') return x ? 'Number in ' + hk : 'No number in ' + hk;
     if (k === 'personal') return x ? 'Personalized with first name' : 'Not personalized';
-    if (k === 'urgency') return x ? 'Urgency words' : 'No urgency';
+    if (k === 'urgency') return x ? 'Urgency words' : (ft.urgencyUnbacked ? 'Urgency words, but no offer end date (no credit)' : 'No urgency');
     if (k === 'len') return x > 0 ? HK + ' ' + ft.len + ' chars (over 45)' : HK + ' ' + ft.len + ' chars';
     if (k === 'caps') return x ? 'ALL CAPS words' : 'No ALL CAPS';
     if (k === 'toneFit') return (x >= 1 ? 'Matches the ' : (x > 0 ? 'Partly matches the ' : 'Doesn’t sound ')) + tl + (x > 0 ? ' tone' : '') + (side === 'o' ? ' (opens)' : ' (clicks)');
@@ -504,8 +505,27 @@
   };
 
   /* ---------------- brand & compliance checks ---------------- */
-  var DEFAULT_BRAND = { banned: ['cheap', 'guaranteed', 'act now', '!!!'], smsOptOut: true, maxSubject: 60, maxGrade: 8, noAllCaps: true };
+  // Approved claims: copy may state these because a source backs them. `match` lists extra phrasings the claim covers.
+  var DEFAULT_CLAIMS = [
+    { id: 'returns-60', text: 'Free returns within 60 days', source: 'Returns policy, updated October 2026' },
+    { id: 'primaloft', text: 'PrimaLoft insulation', source: 'Product spec: Summit Insulated Jacket' },
+    { id: 'field-tested', text: 'Field-tested by the Fernway crew', match: ['field-tested', 'tested through rain, mud and cold'], source: 'Product testing notes' }
+  ];
+  var DEFAULT_BRAND = { banned: ['cheap', 'guaranteed', 'act now', '!!!'], smsOptOut: true, maxSubject: 60, maxGrade: 8, noAllCaps: true, claims: DEFAULT_CLAIMS };
+  CP.VOICE = {
+    pillars: [
+      { id: 'honest', title: 'Plain and honest', text: 'Say what the gear does and what the offer is. If we can’t back a claim, we don’t make it.' },
+      { id: 'outdoors', title: 'Outdoors first', text: 'Write like someone who has been out there: specific places, weather and routes, never hype.' },
+      { id: 'warm', title: 'Warm, not pushy', text: 'Talk to one person. Thank them, help them pack, and let the offer speak for itself.' }
+    ],
+    pairs: [
+      { dont: 'Best jacket ever made. Selling out fast!', doText: 'Built for the first frost, with PrimaLoft insulation.', why: 'Superlatives and stock pressure need a source.' },
+      { dont: 'Hurry, ends tonight!', doText: 'Take 25% off through Friday, Nov 27.', why: 'Deadlines match the campaign dates.' },
+      { dont: 'Waterproof to 10,000m', doText: 'Seam-sealed shell for wet days on the trail.', why: 'Performance numbers come from the spec sheet.' }
+    ]
+  };
   var SAFE_SWAP = { cheap: 'great-value', guaranteed: 'built to last', 'act now': 'shop today', '!!!': '!' };
+  CP.SAFE_SWAP = SAFE_SWAP;
   var TEXT_FIELDS = ['subject', 'preheader', 'headline', 'body', 'cta', 'sms', 'pushTitle', 'pushBody', 'socialText', 'socialHeadline', 'alt'];
   var HARD_LIMIT = { sms: true, pushTitle: true, pushBody: true, socialText: true, socialHeadline: true, cta: true };
   function esc(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
@@ -520,14 +540,105 @@
     return { pcts: pcts, ship: /free shipping|shipping is on us/.test(t), gift: /free gift/.test(t), token: t.indexOf('{offer}') >= 0 };
   }
   var OFFER_PCT = { pct15: 15, pct25: 25 };
+
+  /* ---- claims, scarcity, urgency ---- */
+  var SUPERLATIVE_RE = /\b(best|greatest|finest|ultimate|unbeatable|unmatched|perfect|#1|number one|world[- ]class|top[- ]rated|award[- ]winning|lightest|warmest|toughest|strongest|most (?:durable|comfortable|popular|reliable|versatile|breathable|advanced)|better than|like no other|ever made)\b/i;
+  var PERFORMANCE_RE = /\b(waterproof(?:ing)?|water[- ]resistant|windproof|weatherproof|all[- ]weather|breathable|clinically proven|scientifically proven|proven|tested to|rated to|indestructible|bombproof|lifetime warranty|warranty|price match|free returns|returns? within \d+ days|\d+[- ]day returns|primaloft|gore-tex|merino|recycled|organic|sustainabl\w*|eco-friendly|carbon neutral)\b|-?\d[\d,]*\s?(?:m\b|ft\b|°|degrees?)/i;
+  var SCARCITY_RE = /\b(back in stock|in stock|only \d+ left|\d+ left|few left|selling out|sells? out|sold out|going fast|almost gone|nearly gone|while supplies last|limited (?:stock|quantities|supply|edition)|low stock|last (?:ones|pieces|units))\b/i;
+  var DEADLINE_RE = /\b(ends? (?:tonight|today|soon|at midnight|in \d+)|ending (?:tonight|today|soon)|tonight|today only|last call|last chance|hurry|final hours|hours? left|\d+ hours|running out|clock is ticking|once it ends|before (?:it ends|midnight)|before the offer ends|time is almost up|this week only|limited time|midnight|(?:thru|through|until|till) (?:sun|mon|tues?|wed(?:nes)?|thu(?:rs)?|fri|sat(?:ur)?)\w*)\b/i;
+  var STRICT_TONIGHT_RE = /\b(ends? (?:tonight|today|at midnight)|ending (?:tonight|today)|tonight|today only|midnight|\d+ hours|hours? left|final hours)\b/i;
+  var WEEKDAYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+  function claimMask(text, claims) {
+    var t = str(text);
+    (claims || []).forEach(function (c) {
+      [c.text].concat(c.match || []).forEach(function (m) { if (m) t = t.replace(new RegExp(esc(str(m)), 'ig'), ' '); });
+    });
+    return t;
+  }
+  function firstHit(re, flds, f, claims, masked) {
+    for (var i = 0; i < flds.length; i++) {
+      var raw = str(f[flds[i]]), m = re.exec(masked ? claimMask(raw, claims) : raw);
+      if (m) return { field: flds[i], phrase: m[0] };
+    }
+    return null;
+  }
+  // Drops the sentence that holds `phrase`; returns null when nothing else would be left to say.
+  function dropSentence(text, phrase) {
+    var parts = str(text).split(/(?<=[.!?])\s+/), keep = parts.filter(function (x) { return x.toLowerCase().indexOf(phrase.toLowerCase()) < 0; });
+    return keep.length && keep.length < parts.length ? tidy(keep.join(' ')) : null;
+  }
+  function dayInfo(ctx) {
+    var T = MC.time, out = { label: '', dow: -1 };
+    if (!ctx || typeof ctx.endDay !== 'number' || !T) return out;
+    try { out.label = T.dayLabel(ctx.endDay); out.dow = T.displayCalendar(ctx.endDay).dow; } catch (e) { /* no label */ }
+    return out;
+  }
+  // The campaign's dates for a stored variant, when the app has a world to look them up in.
+  function ctxOf(v, ctx) {
+    if (ctx) return ctx;
+    var out = {};
+    if (typeof v.offerEnd === 'number') out.endDay = v.offerEnd;
+    try {
+      var w = MC.store && typeof MC.store.getState === 'function' ? MC.store.getState() : null;
+      var c = w && v.campaignId && w.campaigns && w.campaigns.byId[v.campaignId];
+      if (c) {
+        if (c.offer && c.offer !== 'none' && typeof c.end === 'number') { out.endDay = Math.floor((c.end - 1) / 24); out.startDay = Math.floor(c.start / 24); }
+        out.today = MC.time.dayOf(w.meta.tick);
+      }
+    } catch (e) { /* no campaign context */ }
+    return out;
+  }
+  CP.ctxOf = ctxOf;
+
+  /* ---- SMS encoding ---- */
+  var GSM_BASIC = '@£$¥èéùìòÇ\nØø\rÅåΔ_ΦΓΛΩΠΨΣΘΞÆæßÉ !"#¤%&\'()*+,-./0123456789:;<=>?¡ABCDEFGHIJKLMNOPQRSTUVWXYZÄÖÑÜ§¿abcdefghijklmnopqrstuvwxyzäöñüà';
+  var GSM_EXT = '^{}\\[~]|€';
+  // smsInfo(text) -> { encoding: 'GSM-7'|'Unicode', units, perSegment, segments, odd: [chars that force Unicode] }
+  CP.smsInfo = function (text) {
+    var t = str(text), units = 0, odd = [], i, ch;
+    for (i = 0; i < t.length; i++) {
+      ch = t.charAt(i);
+      if (GSM_BASIC.indexOf(ch) >= 0) units += 1;
+      else if (GSM_EXT.indexOf(ch) >= 0) units += 2;
+      else if (odd.indexOf(ch) < 0) odd.push(ch);
+    }
+    var uni = odd.length > 0;
+    if (uni) units = t.length;
+    var single = uni ? 70 : 160, multi = uni ? 67 : 153;
+    return { encoding: uni ? 'Unicode' : 'GSM-7', units: units, perSegment: single, multiPer: multi, segments: units <= single ? 1 : Math.ceil(units / multi), odd: odd };
+  };
+  // Straightens curly quotes, dashes and ellipses so a text can go out as GSM-7.
+  CP.straighten = function (text) {
+    return str(text).replace(/[‘’‛′]/g, "'").replace(/[“”″]/g, '"').replace(/[–—−]/g, '-')
+      .replace(/…/g, '...').replace(/[   ]/g, ' ');
+  };
+
+  /* ---- dedupe ---- */
+  function normText(x) { return str(x).toLowerCase().replace(/\{[^}]*\}/g, ' ').replace(/[^a-z0-9]+/g, ' ').trim(); }
+  // dedupe(drafts, existing) -> { kept, dropped }: drops drafts whose hook or whole message matches an existing variant or an earlier draft.
+  CP.dedupe = function (drafts, existing) {
+    var seenHook = {}, seenAll = {}, kept = [], dropped = [];
+    function keys(v) {
+      var ch = CP.HOOK[v.channel] ? v.channel : 'email', f = v.fields || {};
+      return { hook: ch + '|' + normText(f[CP.HOOK[ch]]), all: ch + '|' + normText(allText({ channel: ch, fields: f })) };
+    }
+    (existing || []).forEach(function (v) { var k = keys(v); seenHook[k.hook] = 1; seenAll[k.all] = 1; });
+    (drafts || []).forEach(function (d) {
+      var k = keys(d);
+      if (seenHook[k.hook] || seenAll[k.all]) { dropped.push(d); return; }
+      seenHook[k.hook] = 1; seenAll[k.all] = 1; kept.push(d);
+    });
+    return { kept: kept, dropped: dropped };
+  };
   function clipMeasured(text, max, ctx) {
     var over = measure(text, ctx) - max;
     return over > 0 ? clip(text, Math.max(1, text.length - over)) : text;
   }
 
   // check(variant, brand) -> [{id, label, status:'pass'|'warn'|'fail', detail, fix?:{field, value}}]
-  CP.check = function (variant, brand) {
+  CP.check = function (variant, brand, ctx0) {
     var v = variant || {}, f = v.fields || {}, out = [];
+    var cx0 = ctxOf(v, ctx0);
     var b = {}; Object.keys(DEFAULT_BRAND).forEach(function (k) { b[k] = brand && brand[k] !== undefined ? brand[k] : DEFAULT_BRAND[k]; });
     var ch = CP.FIELDS[v.channel] ? v.channel : 'email', flds = fieldsOf({ channel: ch });
     var ctx = contextFor(v.productId, v.offer || 'none');
@@ -575,8 +686,11 @@
     // 4. alt text
     if (flds.indexOf('alt') >= 0 && str(f.imageId)) {
       var img = imageById(f.imageId);
-      if (str(f.alt).trim()) item('alt', 'Image alt text', 'pass', 'Alt text describes the image.');
-      else item('alt', 'Image alt text', 'fail', 'The image needs alt text for screen readers.', { field: 'alt', value: img ? img.alt : 'Fernway Outfitters gear outdoors' });
+      var altT = str(f.alt).trim(), altWords = altT ? altT.split(/\s+/).length : 0, altFix = { field: 'alt', value: img ? img.alt : 'Hiker in outdoor gear on a ridge trail above the valley' };
+      if (!altT) item('alt', 'Image alt text', 'fail', 'The image needs alt text for screen readers.', altFix);
+      else if (/\.(png|jpe?g|gif|webp|svg)$/i.test(altT) || altT === str(f.imageId)) item('alt', 'Image alt text', 'fail', 'Alt text looks like a file name. Describe what the image shows.', altFix);
+      else if (altWords < 5) item('alt', 'Image alt text', 'fail', 'Alt text is ' + altWords + (altWords === 1 ? ' word' : ' words') + '. Describe the image in at least 5 words.', altFix);
+      else item('alt', 'Image alt text', 'pass', 'Alt text describes the image.');
     }
 
     // 5. reading grade
@@ -614,7 +728,51 @@
       item('offer', 'Offer matches', 'warn', 'The ' + CP.OFFER_LABEL[offer].toLowerCase() + ' offer isn’t mentioned.', { field: mf, value: add });
     } else item('offer', 'Offer matches', 'pass', offer === 'none' ? 'No discount is promised.' : 'The copy matches the ' + CP.OFFER_LABEL[offer].toLowerCase() + ' offer.');
 
-    // 8. SMS opt-out
+    // 7b. claims, stock and deadlines
+    var claims = b.claims || [];
+    var cl = firstHit(SUPERLATIVE_RE, flds, f, claims, true) || firstHit(PERFORMANCE_RE, flds, f, claims, true);
+    if (cl) {
+      var isSup = SUPERLATIVE_RE.test(cl.phrase);
+      var cfx = dropSentence(f[cl.field], cl.phrase);
+      item('claims', 'Claims backed', 'fail', '“' + cl.phrase + '” in the ' + (CP.FIELD_LABEL[cl.field] || cl.field).toLowerCase() + ' isn’t in the approved claims. ' +
+        (isSup ? 'Superlatives need a source.' : 'Performance and product claims need a source.'), cfx ? { field: cl.field, value: cfx } : null);
+    } else item('claims', 'Claims backed', 'pass', 'No superlatives or performance claims outside the approved list.');
+    var sc = firstHit(SCARCITY_RE, flds, f, claims, true);
+    if (sc) {
+      var sfx = dropSentence(f[sc.field], sc.phrase);
+      item('scarcity', 'Stock claims', 'fail', '“' + sc.phrase + '” says something about inventory we can’t confirm here.', sfx ? { field: sc.field, value: sfx } : null);
+    } else item('scarcity', 'Stock claims', 'pass', 'No scarcity or stock claims.');
+    var dl = firstHit(DEADLINE_RE, flds, f, claims, false), di = dayInfo(cx0);
+    var today = typeof cx0.today === 'number' ? cx0.today : null, left = null;
+    if (typeof cx0.endDay === 'number' && today !== null) left = cx0.endDay - Math.max(today, typeof cx0.startDay === 'number' ? cx0.startDay : today);
+    if (!dl) item('urgency', 'Deadlines match', 'pass', 'No deadline or urgency phrases.');
+    else if (typeof cx0.endDay !== 'number') {
+      item('urgency', 'Deadlines match', 'warn', '“' + dl.phrase + '” implies a deadline, but no offer end date is set. Set one, or soften the line.');
+    } else {
+      var strict = firstHit(STRICT_TONIGHT_RE, flds, f, claims, false), badDay = null, wd = /\b(thru|through|until|till|by)\s+(sun|mon|tues?|wed(?:nes)?|thu(?:rs)?|fri|sat(?:ur)?)[a-z]*/i;
+      flds.forEach(function (k) {
+        var m = wd.exec(str(f[k])); if (m && !badDay) { var dw = -1; WEEKDAYS.forEach(function (n, ix) { if (n.indexOf(m[2].toLowerCase()) === 0) dw = ix; }); if (dw >= 0 && di.dow >= 0 && dw !== di.dow) badDay = { k: k, m: m }; }
+      });
+      if (strict && left !== null && left >= 2) {
+        var sf = str(f[strict.field]).replace(/\b(ends?|ending)\s+(tonight|at midnight|today)\b/i, '$1 ' + di.label).replace(/\btoday only\b/i, 'through ' + di.label)
+          .replace(/\b\d+\s+hours?\s+left\b/i, 'ends ' + di.label);
+        item('urgency', 'Deadlines match', 'fail', '“' + strict.phrase + '” says it’s ending now, but the offer runs until ' + di.label + '.', sf !== str(f[strict.field]) ? { field: strict.field, value: tidy(sf) } : null);
+      } else if (badDay) {
+        item('urgency', 'Deadlines match', 'fail', '“' + badDay.m[0] + '” doesn’t match the offer end date, ' + di.label + '.',
+          { field: badDay.k, value: tidy(str(f[badDay.k]).replace(wd, '$1 ' + di.label)) });
+      } else item('urgency', 'Deadlines match', 'pass', 'Deadline wording fits the offer end date, ' + di.label + '.');
+    }
+
+    // 8. SMS encoding and segments, then opt-out
+    if (ch === 'sms') {
+      var si = CP.smsInfo(expand(f.sms, ctx));
+      if (si.encoding === 'Unicode') {
+        var shown = si.odd.slice(0, 3).map(function (c) { return '“' + c + '”'; }).join(' ');
+        var sfix = CP.straighten(f.sms);
+        item('sms-encoding', 'Text encoding', 'warn', shown + ' switches this text to Unicode: ' + si.segments + (si.segments === 1 ? ' segment' : ' segments') +
+          ' at ' + si.perSegment + ' characters each instead of 160.', CP.smsInfo(expand(sfix, ctx)).encoding === 'GSM-7' ? { field: 'sms', value: sfix } : null);
+      } else item('sms-encoding', 'Text encoding', 'pass', 'Standard characters: ' + si.segments + (si.segments === 1 ? ' segment' : ' segments') + ' (' + si.units + ' of ' + si.perSegment + ').');
+    }
     if (ch === 'sms' && b.smsOptOut) {
       var s = str(f.sms);
       if (/reply stop/i.test(s)) item('optout', 'SMS opt-out', 'pass', 'Includes “Reply STOP to opt out”.');
@@ -625,11 +783,22 @@
     var badTok = null;
     flds.forEach(function (k) {
       if (badTok) return;
-      (str(f[k]).match(/\{[^}]*\}/g) || []).forEach(function (tk) { if (!badTok && CP.TOKENS.indexOf(tk) < 0) badTok = { k: k, tk: tk }; });
+      (str(f[k]).match(/\{[^}]*\}/g) || []).forEach(function (tk) {
+        var pm = /^\{([a-z_]+)(?:\|[^{}]*)?\}$/.exec(tk);
+        if (!badTok && (!pm || CP.TOKEN_NAMES.indexOf(pm[1]) < 0)) badTok = { k: k, tk: tk };
+      });
     });
-    if (badTok) item('tokens', 'Merge fields', 'fail', badTok.tk + ' isn’t a merge field we can fill. Use ' + CP.TOKENS.join(', ') + '.',
+    if (badTok) item('tokens', 'Merge fields', 'fail', badTok.tk + ' isn’t a merge field we can fill. Use ' + CP.TOKENS.join(', ') + ', or add a fallback like {first_name|there}.',
       { field: badTok.k, value: tidy(str(f[badTok.k]).split(badTok.tk).join('')) });
-    else item('tokens', 'Merge fields', 'pass', 'All merge fields can be filled.');
+    else {
+      var noFb = null;
+      flds.forEach(function (k) { if (!noFb && /\{first_name\}/.test(str(f[k]))) noFb = k; });
+      if (noFb) {
+        var before = str(f[noFb]).split('{first_name}')[0];
+        item('tokens', 'Merge fields', 'warn', '{first_name} has no fallback, so people without a name would read “' + (nameFallback(before) || 'there') + '”. Add one, like {first_name|there}.',
+          { field: noFb, value: str(f[noFb]).replace(/\{first_name\}/, '{first_name|' + nameFallback(before) + '}') });
+      } else item('tokens', 'Merge fields', 'pass', 'All merge fields can be filled.');
+    }
     return out;
   };
   CP.DEFAULT_BRAND = DEFAULT_BRAND;
@@ -653,21 +822,34 @@
   };
 
   /* ---------------- rendering ---------------- */
-  // render(variant, world, profileIdx) -> fields with {first_name} {product} {offer} {link} filled.
-  CP.render = function (variant, world, profileIdx) {
+  CP.LONG_NAME = 'Maximilian-Alexander';
+  // render(variant, world, profileIdx, opts) -> fields with {first_name} {product} {offer} {link} filled.
+  // A token's own fallback ({first_name|there}) is used when there is no value; opts.name overrides the profile's
+  // first name ('' previews someone with no name on file).
+  CP.render = function (variant, world, profileIdx, opts) {
     var v = variant || {}, f = v.fields || {}, out = {};
-    var first = 'there';
-    if (world && world.profiles && profileIdx >= 0 && profileIdx < world.profiles.n) first = str(world.profiles.name[profileIdx]).split(' ')[0] || first;
+    var first = '';
+    if (opts && typeof opts.name === 'string') first = opts.name;
+    else if (world && world.profiles && profileIdx >= 0 && profileIdx < world.profiles.n) first = str(world.profiles.name[profileIdx]).split(' ')[0];
     var p = prodOf(v.productId);
     if (!p && world && world.campaigns && v.campaignId) { var c = world.campaigns.byId[v.campaignId]; if (c) p = prodOf(c.productFocus); }
     var link = str(f.link) || contextFor(p ? p.id : null, v.offer || 'none').link;
-    var map = { '{first_name}': first, '{product}': p ? p.name : 'our new-season gear', '{offer}': OFFER_TEXT[v.offer] ? OFFER_TEXT[v.offer].O : '', '{link}': link };
+    var vals = { first_name: first, product: p ? p.name : '', offer: OFFER_TEXT[v.offer] ? OFFER_TEXT[v.offer].O : '', link: link };
+    var dflt = { product: 'our new-season gear' };
     Object.keys(f).forEach(function (k) {
-      var s = str(f[k]);
-      Object.keys(map).forEach(function (tk) { s = s.split(tk).join(map[tk]); });
-      out[k] = k === 'imageId' || k === 'link' ? str(f[k]) : tidy(s);
+      var s = str(f[k]), startsWithToken = /^\s*\{/.test(s);
+      s = s.replace(TOKEN_RE, function (m, name, fb, off) {
+        if (!Object.prototype.hasOwnProperty.call(vals, name)) return m;
+        if (vals[name]) return vals[name];
+        if (fb !== undefined) return fb;
+        if (name === 'first_name') return nameFallback(s.slice(0, off)) || 'there';
+        return dflt[name] || '';
+      });
+      if (k === 'imageId' || k === 'link') { out[k] = str(f[k]); return; }
+      s = tidy(s).replace(/,\s*([.!?])/g, '$1').replace(/^[,;:\s]+/, '');
+      out[k] = startsWithToken ? cap1(s) : s;
     });
-    out.firstName = first;
+    out.firstName = first || 'there';
     out.productName = p ? p.name : null;
     return out;
   };

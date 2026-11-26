@@ -522,6 +522,7 @@
       var word = STATUS_WORD[r.status] || r.status;
       return { r: r, k: k, visible: visible, s0: s0, e0: e0, open: open, range: range, word: word, before: e0 < from };
     });
+    function vis(b) { return Math.min(b.e0, to - 1) - Math.max(b.s0, from); }
     var style = { gridTemplateColumns: 'var(--cal-label) repeat(' + n + ', var(--cal-day))' };
     return h`<div className="cm-calendar">
       <p className="cm-muted cm-small">${dayLabel(from)} to ${dayLabel(to - 1)}. Select a bar to open the campaign.</p>
@@ -553,7 +554,7 @@
             </div>
             ${b.visible ? h`<button type="button" className=${cx('cm-cal-bar', 'is-' + b.r.status, b.open && 'is-open')} aria-label=${label} title=${label}
                 style=${{ gridColumn: col(b.s0) + ' / ' + (col(b.e0) + 1), gridRow: row }} onClick=${function () { openDetail(b.r.id); }}>
-                <span className="cm-cal-bartext">${b.e0 - b.s0 >= 8 ? b.word + MID + b.range : b.e0 - b.s0 >= 3 ? b.word : ''}</span></button>`
+                <span className="cm-cal-bartext">${vis(b) >= 8 ? b.word + MID + b.range : vis(b) >= 3 ? b.word : ''}</span></button>`
               : h`<span className="cm-cal-off cm-muted" style=${{ gridColumn: '2 / span ' + n, gridRow: row }}>${b.before ? 'Ended ' + dayShort(b.e0) : 'Starts ' + dayShort(b.s0)}</span>`}<//>`;
           })}
         </div>

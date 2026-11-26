@@ -86,7 +86,10 @@
     grid-template-areas: "feed needs" "feed agents" "live live";
     align-items: start;
   }
-  .v-home .hm-area-feed .hm-feed-scroll { max-height: 560px; }
+  .v-home .hm-area-feed { align-self: stretch; grid-template-rows: auto minmax(0, 1fr); }
+  .v-home .hm-area-feed .hm-panel-body { grid-template-rows: minmax(0, 1fr); }
+  .v-home .hm-area-feed .hm-feed-wrap { min-height: 460px; height: 100%; }
+  .v-home .hm-area-feed .hm-feed-scroll { position: absolute; inset: 0; max-height: none; }
 }
 
 /* ---------- panels: flat on the ground; only the feed carries a hairline ---------- */

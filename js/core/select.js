@@ -951,7 +951,14 @@
       var steps = c.journey.steps, out = {}, counts = new Array(steps.length);
       for (var s = 0; s < steps.length; s++) counts[s] = 0;
       var en = w.enroll && w.enroll[cid];
-      if (en && en.step) for (var i = 0; i < en.step.length; i++) { var x = en.step[i]; if (x >= 0 && x < steps.length) counts[x]++; }
+      var exitIdx = -1, completed = 0;
+      for (var q = 0; q < steps.length; q++) if (steps[q].type === 'exit') { exitIdx = q; break; }
+      if (en && en.step) for (var i = 0; i < en.step.length; i++) {
+        var x = en.step[i];
+        if (x >= 0 && x < steps.length) counts[x]++;
+        else if (x === -2) completed++;   // finished the journey (exited)
+      }
+      if (exitIdx >= 0) counts[exitIdx] += completed;
       var te = entry(w, today(w)), tcd = te && te.c && te.c[cid];
       var yes = {}, no = {}, days = w.metrics.days;
       for (var d = 0; d < days.length; d++) {
@@ -960,7 +967,7 @@
         sortedKeys(cd.steps).forEach(function (sid) { yes[sid] = (yes[sid] || 0) + cd.steps[sid][1]; no[sid] = (no[sid] || 0) + cd.steps[sid][2]; });
       }
       steps.forEach(function (st, idx) {
-        var row = { inStep: counts[idx], sentToday: tcd && tcd.steps && tcd.steps[st.id] ? tcd.steps[st.id][0] : 0 };
+        var row = { inStep: counts[idx], completed: idx === exitIdx ? completed : undefined, sentToday: tcd && tcd.steps && tcd.steps[st.id] ? tcd.steps[st.id][0] : 0 };
         if (st.type === 'decide') {
           var y = yes[st.id] || 0, n = no[st.id] || 0;
           row.yesPct = y + n > 0 ? y / (y + n) : null;
