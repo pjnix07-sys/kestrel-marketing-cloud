@@ -174,7 +174,7 @@
   }
 
   // call(opts) -> Promise<{ok, data?, error?, usage, ms}>. Never rejects.
-  // opts: {system: string|blocks, messages?|user?: string, schema?, maxTokens?, effort?, timeoutMs?, kind?: 'agent'|'task', name?}
+  // opts: {system: string|blocks, messages?|user?: string, schema?, maxTokens?, effort?, timeoutMs? (whole call, queue wait included), requestMs? (the request alone), kind?: 'agent'|'task', name?}
   AI.call = function (opts) {
     opts = opts || {};
     var t0 = clock();
@@ -190,7 +190,8 @@
       body.messages = opts.messages || [{ role: 'user', content: String(opts.user || '') }];
       var job = {
         run: function () {
-          var timeout = Math.max(1, (opts.timeoutMs || 30000) - (clock() - t0));
+          var total = Math.max(1, (opts.timeoutMs || 30000) - (clock() - t0));
+          var timeout = opts.requestMs ? Math.min(opts.requestMs, total) : total;   // requestMs: the request's own budget, queue wait not counted
           return request(k, body, { timeoutMs: timeout }).then(function (r) {
             usage.calls++;
             usage.ms += clock() - t0;

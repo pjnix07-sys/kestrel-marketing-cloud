@@ -152,7 +152,7 @@
     if (Object.keys(CH_WORDS).some(function (ch) { return CH_WORDS[ch].test(title) && !CH_WORDS[ch].test(blob); })) return false;
     var own = String(cand.title || '').toLowerCase(), wide = (title.match(SCOPE_RE) || []).map(function (x) { return x.toLowerCase(); });
     // "every campaign" widens one campaign's change to all of them; the draft title never claims that
-    if (wide.some(function (x) { return own.indexOf(x) < 0; }) && /\b(campaigns|audiences|customers|channels|segments|budgets?)\b/i.test(title)) return false;
+    if (wide.some(function (x) { return own.indexOf(x) < 0; }) && /\b(campaigns?|audiences?|customers|channels?|segments?|budgets?)\b/i.test(title)) return false;
     return true;
   };
 
@@ -336,14 +336,16 @@
     inflight[job.runId] = true;
     function finish(fn) { if (done) return; done = true; delete inflight[job.runId]; later(fn); }
     if (!(AI.isOn && AI.isOn())) { finish(function () { fallback(job, 'off'); }); return; }
-    setTimeout(function () { finish(function () { fallback(job, 'timeout'); }); }, FL.DEADLINE_MS);
+    // DEADLINE_MS is what one request may take; waiting behind the 3-in-flight limit gets two more rounds before the run falls back to Rules
+    var overall = FL.DEADLINE_MS * 3;
+    setTimeout(function () { finish(function () { fallback(job, 'timeout'); }); }, overall);
     later(function () {
       var world = MC.store.getState();
       if (!world || !world.ai || !world.ai.pending || !world.ai.pending[job.runId]) { done = true; delete inflight[job.runId]; return; }
       var ctx;
       try { ctx = AI.context.build(world, job); } catch (e) { report(e); finish(function () { fallback(job, 'context'); }); return; }
       AI.call({ system: ctx.system, user: ctx.user, schema: FL.schemaFor(job.agentId), maxTokens: 4000, effort: 'low', kind: 'agent',
-        timeoutMs: Math.max(200, FL.DEADLINE_MS - (clock() - t0)) }).then(function (r) {
+        timeoutMs: Math.max(200, overall - (clock() - t0)), requestMs: FL.DEADLINE_MS }).then(function (r) {
         if (done) return;
         if (!r.ok) { finish(function () { fallback(job, r.error); }); return; }
         var w = MC.store.getState(), v;

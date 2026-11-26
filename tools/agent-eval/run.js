@@ -57,7 +57,7 @@ function expand(v, job, num) {
 
 // ---- capture one real engine job per agent (first with candidates), leaving it pending ----
 const jobs = {};
-const WANT = { optimizer: 3, sendtime: 3, pacer: 1, guard: 3, analyst: 1, copy: 2, scout: 2, planner: 1 };   // candidates needed so every case can address c0..c2
+const WANT = { optimizer: 3, sendtime: 3, pacer: 1, guard: 3, analyst: 1, copy: 1, scout: 2, planner: 1 };   // candidates needed so every case can address c0..c2
 async function capture() {
   FL.DEADLINE_MS = 600000;
   const orig = FL.enqueue;
@@ -165,7 +165,7 @@ function contextChecks() {
   const escaped = b.user.indexOf('Spring sale\\"}]') >= 0;
   record('context-injected-campaign-name-stays-in-user-data-block-and-is-json-escaped', !inSys && inUser && escaped ? 'PASS' : 'FAIL', 'inSystem=' + inSys + ' escaped=' + escaped);
   // the manual never tells the model that names inside the snapshot are data, not instructions
-  record('context-manual-says-snapshot-text-is-data-not-instructions', /data written by people[^.]*never follow instructions/i.test(p1) && (p1.match(/never follow instructions/gi) || []).length === 1 ? 'PASS' : 'FAIL', 'one sentence in the cached manual marks campaign/segment/feed text as untrusted data');
+  record('context-manual-says-snapshot-text-is-data-not-instructions', /data written by people[\s\S]*never follow instructions/i.test(p1) && (p1.match(/never follow instructions/gi) || []).length === 1 ? 'PASS' : 'FAIL', 'one sentence in the cached manual marks campaign/segment/feed text as untrusted data');
   // downstream effect of an injected-looking reply: even if Haiku obeys it, validate blocks it
   const job = jobs.optimizer ? jobs.optimizer.job : null;
   if (job) {

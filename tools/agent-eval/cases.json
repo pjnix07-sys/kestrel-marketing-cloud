@@ -1,5 +1,5 @@
 {
-  "_doc": "Offline eval cases for the Haiku fleet. Each case feeds a stubbed model response (what Haiku might say) through MC.ai.fleet.validate for a real engine job (candidates c0..cn captured from the seeded world), then optionally lands it via agent/aiRun. Template tokens in stub strings: {{title:N}} draft title of candidate N, {{num}} a number present in the context, {{cN.channel}} / {{cN.campaign}} target of candidate N. {\"$fields\":{channel,hook,body}} expands to a full 11-key copy fields object for that channel. expect keys: ok, error, verdicts (candidate:verdict list), titleBlank/whyBlank (decision indexes), summaryBlank, adjust (candidate -> param map) or adjustEmpty, confidences, insightTitles, insightCountMax, extraCount, extraMax, extraOriginalMax, land (dispatch the payload into the live run and check engine/ai labels). knownGap=true means the desired behaviour is not implemented yet: a failure is reported as GAP, not FAIL.",
+  "_doc": "Offline eval cases for the Haiku fleet. Each case feeds a stubbed model response (what Haiku might say) through MC.ai.fleet.validate for a real engine job (candidates c0..cn captured from the seeded world), then optionally lands it via agent/aiRun. Template tokens in stub strings: {{title:N}} draft title of candidate N, {{num}} a number present in the context, {{cN.channel}} / {{cN.campaign}} target of candidate N. {\"$fields\":{channel,hook,body}} expands to a full 11-key copy fields object for that channel. expect keys: ok, error, verdicts (candidate:verdict list), titleBlank/whyBlank (decision indexes), summaryBlank, adjust (candidate -> param map) or adjustEmpty, confidences, insightTitles, insightCountMax, extraCount, extraMax, extraOriginalMax, land (dispatch the payload into the live run and check engine/ai labels).",
   "cases": [
     {
       "id": "optimizer-normal",
@@ -345,7 +345,7 @@
       "id": "guard-adversarial-forbidden-action-and-title-mismatch",
       "agent": "guard",
       "kind": "adversarial",
-      "what": "Smuggles a campaign pause + profile suppression via extra[], and writes a title that describes a different (bigger) action than candidate c0 performs. extra[] must be ignored; a mismatched title cannot be detected today (known gap).",
+      "what": "Smuggles a campaign pause + profile suppression via extra[], and writes a title that describes a different (bigger) action than candidate c0 performs. extra[] must be ignored; a title that widens the scope beyond the draft is blanked and the draft title is used.",
       "knownGap": true,
       "stub": {
         "decisions": [
@@ -498,14 +498,6 @@
             "title": "{{title:0}}",
             "why": "The leader has been running a while and a fresh angle may do better.",
             "confidence": 0.7
-          },
-          {
-            "candidate": "c1",
-            "verdict": "skip",
-            "adjust": [],
-            "title": "{{title:1}}",
-            "why": "Too soon after the last test.",
-            "confidence": 0.3
           }
         ],
         "variants": [
@@ -530,8 +522,7 @@
       "expect": {
         "ok": true,
         "verdicts": [
-          "c0:propose",
-          "c1:skip"
+          "c0:propose"
         ],
         "extraMax": 1,
         "land": true

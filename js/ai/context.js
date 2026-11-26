@@ -373,7 +373,7 @@
      digits an attacker puts in a name cannot launder an invented figure. `ground` is a plain string of engine numbers
      (space separated); it is built here and only read by CX.grounded. */
   var TEXT_KEYS = { rationale: 1, value: 1, before: 1, after: 1, body: 1, title: 1, draftTitle: 1 };
-  var SKIP_KEYS = { idx: 1, tick: 1, tickOf: 1, untilTick: 1, startTick: 1, endTick: 1, cands: 1, labels: 1, bestHr: 1 };
+  var SKIP_KEYS = { idx: 1, tick: 1, tickOf: 1, untilTick: 1, startTick: 1, endTick: 1, cands: 1, labels: 1, bestHr: 1, contentScore: 1 };
   function isNumArr(a) { return a.length > 8 && a.every(function (x) { return isNum(x) || (Array.isArray(x) && x.every(isNum)); }); }
   function stripNames(str, names) {
     names.forEach(function (n) { if (n && str.indexOf(n) >= 0) str = str.split(n).join(' '); });
@@ -402,15 +402,9 @@
     ((MC.data && MC.data.PRODUCTS) || []).forEach(function (p) { out.push(p.name); });
     return out.filter(function (n) { return typeof n === 'string' && n.length > 2; }).sort(function (a, b) { return b.length - a.length; });
   }
-  function staticNumbers() {
-    var out = [], C = MC.copy || {};
-    Object.keys(C.LIMITS || {}).forEach(function (k) { if (isNum(C.LIMITS[k])) out.push(C.LIMITS[k]); });
-    ((MC.data && MC.data.PRODUCTS) || []).forEach(function (p) { if (isNum(p.price)) out.push(p.price); });
-    return out;
-  }
   // ground string from the engine-owned parts of a call
   function groundOf(world, parts) {
-    var out = staticNumbers(), names = nameList(world);
+    var out = [], names = nameList(world);
     parts.forEach(function (p) { collect(p, out, names, '', 0); });
     var seen = {}, list = [];
     out.forEach(function (n) { var k = String(Math.round(n * 10000) / 10000); if (!seen[k]) { seen[k] = 1; list.push(k); } });
@@ -441,7 +435,7 @@
     for (var i = 0; i < list.length; i++) {
       var g = list[i], tol = Math.max(p.half, p.v * 0.002);
       if (Math.abs(p.v - g) <= tol) return true;
-      if (p.pct && Math.abs(p.v - g * 100) <= Math.max(p.half, p.v * 0.002)) return true;   // 12% for 0.12
+      if (p.pct && g <= 1 && Math.abs(p.v - g * 100) <= Math.max(p.half, p.v * 0.002)) return true;   // 12% for 0.12
     }
     return false;
   }

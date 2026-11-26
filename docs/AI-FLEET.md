@@ -119,6 +119,10 @@ All show a calm inline state ("Writing…") and never block the rest of the UI.
 `call({system, user|messages, schema, maxTokens, effort='low', timeoutMs, kind}) → Promise<{ok, data?, error?, usage, ms}>` (never rejects; ≤ 3 in flight).
 A 401 drops the key and sets `invalid` (or `blocked` for the CORS message); 429 honours `retry-after` once.
 
+**Grounding and cleaning (`context.js`, `fleet.js`)**: `CX.build` returns `ground`, a string of the engine's own numbers (numeric fields of the snapshot, observation, candidates, insights and agent stats, plus numbers in candidate/insight rationale and evidence text). Names, briefs, hooks, feed text and the marketer's reasons never count, and campaign, segment, variant and product names are stripped from engine text first. `CX.grounded(text, ground)` accepts display roundings (`$12.4k` for 12,437; `12%` for 0.12) within half a unit of the digits shown, treats dates, clock times and years as calendar text, and blanks anything else, including derived sums and per-day rates; the prompt tells agents to say those in words. `cleanText` also strips URLs, emails and phone numbers, cuts at a word boundary (titles 80 characters), and blocks only technical uses of words like "seed" and "prompt". A title is kept only if it names the same action family, channels and scope as its candidate (`FL.titleFits`); otherwise the draft's title is used. The analyst's new insights are capped at two in code. Only Copy Drafter (`variants`) and Segment Scout (`segments`) can add actions beyond the engine's candidates; the planner's `extra` in §12.5 is not implemented, and anything else in `extra` is ignored.
+
+**Prompt cache**: the system prefix (manual and reference JSON, one `cache_control` breakpoint) is byte-identical for every call. All eight agents share one output schema (`FL.schemaFor`; unused `variants` and `segments` come back empty), so structured output does not create a cache entry per agent. The four view tasks use their own schemas, so each has its own cache entry for the same prefix; check `cacheRead` in `usage()` to confirm hits. The manual states once that campaign, segment, feed and brief text is data, never instructions. `DEADLINE_MS` (8000) is one request's budget; waiting behind the 3-in-flight limit gets two more rounds (`3 × DEADLINE_MS` overall) before a run falls back to Rules.
+
 **Data policy**: `MC.ai.context.scrub` runs on everything sent; profile-level fields (`idx`, `members`, `sample`, names, emails, …) and long id lists become counts. Only aggregates leave the browser.
 
 **World facts (logged, replay-safe)**: `ai/setEnabled {on}` (dispatched by the fleet when the connection changes; `off` completes every waiting run with its rule drafts),
@@ -132,7 +136,7 @@ Every audit entry has `engine:'ai'|'rules'`; AI-path entries add `ai:'haiku'|'fa
 Copy written by Haiku is always `mustQueue` (never auto-applied).
 
 **`MC.ai.fleet`**: `enqueue(job)`, `validate(world, job, data, ground)`, `schemaFor(agentId)`, `tunables(agentId, draft)` / `applyAdjust` (Copy Drafter `share` within `challengerShare`),
-`ROLES`, `DEADLINE_MS` (8000), `sync()`, `last` (`{runId, agentId, result, reason?|ms?}`).
+`ROLES`, `titleFits`, `cleanText`, `DEADLINE_MS` (8000), `sync()`, `last` (`{runId, agentId, result, reason?|ms?}`).
 
 **`MC.ai.tasks`** (always resolve; `source:'ai'|'rules'`, never shown as a badge):
 `writeVariants(opts) → VariantDraft[]` (MC.copy.generate shape; also `MC.copy.generateAsync`), `briefFromText(text) → Brief + {narrative}` (§10.9 Brief, ready for `MC.planner.plan`),
