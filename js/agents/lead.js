@@ -272,6 +272,7 @@
     if (has(/protect|unsubscrib|fatigue|list health|opt.?outs?|over.?messag|spam complain|too many (?:emails|messages)/)) out.template = 'protect';
     else if (has(/win.?back|reactivat|lapsed|dormant|come back|re-?engage|inactive|bring back/)) out.template = 'winback';
     else if (has(/\blaunch|introduc|unveil|new (?:product|collection|arrival|jacket|boot|line|release|gear)|debut|roll(?:ing)? out/)) out.template = 'launch';
+    else if (has(/sign.?ups?|subscribers/) && !has(/\$\s?\d/) && !has(/win.?back|reactivat|lapsed/)) out.template = 'grow';
     else if (out.event || has(/\bsale\b|early access|flash|gift guide|holiday|\bevent\b|promotion|doorbuster/) || has(/\$\s?\d/)) out.template = has(/\$\s?\d|revenue|sales\b|sell/) || out.event ? 'event' : null;
     if (!out.template && has(/grow|increase|expand|build|more (?:members|subscribers|customers)|sign.?ups?|subscribers|join/)) out.template = 'grow';
     if (!out.template && has(/revenue|sales\b|sell\b/)) out.template = 'event';

@@ -1302,7 +1302,7 @@
     }
     return html`<section className="v-analytics">
       <header className="an-pagehead">
-        <h1 id="page-title" tabIndex="-1" className="an-h1">Analytics</h1>
+        <h1 id="page-title" tabIndex="-1" className="an-h1">Analytics <span className="mc-art-tag">read by your agents, for your missions</span></h1>
         <${AsOf} />
       </header>
       <${FilterBar} focus=${focus} campaigns=${list} />

@@ -14,7 +14,7 @@
 
   var AGENT_NAMES = {
     optimizer: 'Variant Optimizer', sendtime: 'Send-Time Tuner', pacer: 'Budget Pacer', guard: 'Fatigue Guard',
-    analyst: 'Insight Analyst', copy: 'Copy Drafter', scout: 'Segment Scout', planner: 'Campaign Planner'
+    analyst: 'Insight Analyst', copy: 'Copy Drafter', scout: 'Segment Scout', planner: 'Campaign Planner', lead: 'Lead'
   };
   var AGENT_ORDER = ['optimizer', 'sendtime', 'pacer', 'guard', 'analyst', 'copy', 'scout', 'planner'];
   var KIND_LABEL = {
@@ -731,6 +731,46 @@
     </div>`;
   }
 
+
+  /* ---------- agent marks, colours and cursors (shared by the mission room, studio views, team) ---------- */
+  // One fixed glyph (16x16 stroke paths) and one colour per agent. Colours are >= 3:1 on the light paper and the dark ground
+  // used by the mission room; use them for marks, dots and cursor flags, never as a chart series.
+  var AGENT_GLYPH = {
+    lead: '<path d="M3 13V3l5 6 5-6v10"/>',
+    planner: '<path d="M2 13.5 8 2.5l6 11z"/>',
+    analyst: '<path d="M3 13.5V8.5M8 13.5v-10M13 13.5v-7"/>',
+    scout: '<circle cx="8" cy="8" r="4.5"/><path d="M8 1v3M8 12v3M1 8h3M12 8h3"/>',
+    copy: '<path d="M2 4h12M2 8h8M2 12h12"/>',
+    guard: '<path d="M8 1.8 13.3 4v4c0 3-2.3 5-5.3 6.2C5 13 2.7 11 2.7 8V4z"/>',
+    optimizer: '<path d="M2.5 2.5h4.5v11H2.5zM9 2.5h4.5v11H9z"/>',
+    pacer: '<path d="M8 2a6 6 0 1 0 6 6H8z"/>',
+    sendtime: '<circle cx="8" cy="8" r="6"/><path d="M8 4.5V8l2.6 1.8"/>'
+  };
+  var AGENT_COLOR = {
+    lead: '#112019', planner: '#4B58A6', analyst: '#3F7A2C', scout: '#17667F', copy: '#9A3F7A',
+    guard: '#8C6410', optimizer: '#B0443F', pacer: '#1F5C46', sendtime: '#2E6FA3'
+  };
+  function agentColor(id) { return AGENT_COLOR[id] || '#53645A'; }
+  // AgentMark: the agent's glyph, optionally in a filled square badge. props: id, size (px, default 16), badge (bool), title
+  function AgentMark(p) {
+    var size = p.size || 16, id = p.id, col = agentColor(id), g = AGENT_GLYPH[id] || '<circle cx="8" cy="8" r="4"/>';
+    var svg = html`<svg className="ag-mark-svg" viewBox="0 0 16 16" width=${size} height=${size} aria-hidden="true" focusable="false"
+      style=${{ flex: 'none', fill: 'none', stroke: p.badge ? '#fff' : col, strokeWidth: 1.7, strokeLinecap: 'round', strokeLinejoin: 'round' }}
+      dangerouslySetInnerHTML=${{ __html: g }} />`;
+    if (!p.badge) return svg;
+    var box = Math.round(size * 1.6);
+    return html`<span className="ag-mark" title=${p.title || agentName(id)} style=${{ flex: 'none', width: box, height: box, borderRadius: 3, background: col, display: 'inline-grid', placeItems: 'center' }}>${svg}</span>`;
+  }
+  // AgentCursor: a named pointer for an agent that is mid-task inside a panel. Render it only while the work is real.
+  // props: id, label (default the agent's name), style (position it: left/top), className
+  function AgentCursor(p) {
+    var col = agentColor(p.id), label = p.label || agentName(p.id);
+    return html`<span className=${'ag-cursor' + (p.className ? ' ' + p.className : '')} aria-hidden="true" style=${Object.assign({ position: 'absolute', zIndex: 5, pointerEvents: 'none', color: col }, p.style || null)}>
+      <svg viewBox="0 0 16 16" width="16" height="16" style=${{ display: 'block', fill: col, stroke: '#fff', strokeWidth: 1, strokeLinejoin: 'round' }}><path d="M2 1.5 13.5 7 8.2 8.6 6.4 14z"/></svg>
+      <span style=${{ position: 'absolute', left: 12, top: 12, whiteSpace: 'nowrap', background: col, color: '#fff', fontSize: 11, fontWeight: 700, lineHeight: 1, padding: '3px 7px 4px', borderRadius: '2px 8px 8px 8px' }}>${label}</span>
+    </span>`;
+  }
+
   /* ---------- exports ---------- */
   MC.ui.AgentChip = AgentChip;
   MC.ui.ProposalCard = ProposalCard;
@@ -741,4 +781,10 @@
   MC.ui.TraceView = TraceView;
   MC.ui.AgentPulse = AgentPulse;
   MC.ui.AutonomyControl = AutonomyControl;
+  MC.ui.AgentMark = AgentMark;
+  MC.ui.AgentCursor = AgentCursor;
+  MC.ui.agentColor = agentColor;
+  MC.ui.agentName = MC.ui.agentName || agentName;
+  MC.ui.AGENT_GLYPH = AGENT_GLYPH;
+  MC.ui.AGENT_COLOR = AGENT_COLOR;
 })();

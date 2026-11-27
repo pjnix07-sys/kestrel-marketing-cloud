@@ -43,6 +43,7 @@ const ticks = +process.argv[2] || 200;
     const errs = audit.filter(a => a.error);
     console.log('audit entries', audit.length, 'with errors', errs.length);
     errs.slice(0, 5).forEach(a => console.log('  ERR', a.agentId, a.tick, String(a.error).slice(0, 300)));
+    { const ms = Object.values((w.missions && w.missions.byId) || {}); console.log('missions', ms.length, ms.map(m => m.id + ':' + m.status + '/' + m.phase).join(' ')); }
     console.log('feed items', (w.feed && (w.feed.items || w.feed).length) || 0);
   } catch (e) { console.log('RUN FAIL', e.stack); process.exitCode = 1; }
 })();

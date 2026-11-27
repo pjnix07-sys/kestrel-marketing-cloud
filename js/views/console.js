@@ -1,5 +1,6 @@
-/* Marketing Cloud - Agents (#agents): MC.views.agents.
-   Opens on the roster with recent activity. Tabs: Roster · Activity · Approvals · Guardrails · Run history.
+/* Marketing Cloud - Team (#team; still MC.views.agents): each agent as a working teammate (what it is doing now and on which
+   mission, hand-offs, record, settings behind a disclosure). Activity, Approvals, Guardrails and Run history remain reachable
+   and exported on MC.views.teamParts.
    Run traces read as plain language (what the agent saw, what it decided, what changed) and are
    rendered from data fields only (step text, rows, rationale, optional summary), so richer
    explanations appear without code changes. No digests, no ticks, no simulation controls.
@@ -89,6 +90,7 @@
   function agentName(id) {
     if (!id) return '';
     if (id === 'user') return 'You';
+    if (id === 'lead') return (MC.lead && MC.lead.NAME) || 'Lead';
     var d = agentDef(id);
     return (d && d.name) || AGENT_NAMES[id] || String(id);
   }
@@ -119,7 +121,7 @@
     } catch (e) { /* best effort */ }
   }
   function setFocus(patch) {
-    try { if (MC.uiStore && typeof MC.uiStore.setFocus === 'function') MC.uiStore.setFocus('agents', patch); } catch (e) { /* noop */ }
+    try { if (MC.uiStore && typeof MC.uiStore.setFocus === 'function') { MC.uiStore.setFocus('agents', patch); MC.uiStore.setFocus('team', patch); } } catch (e) { /* noop */ }
   }
   function dispatch(type, payload) {
     try {
@@ -1075,13 +1077,218 @@
     </div>`;
   }
 
+  /* ================= Team: each agent as a working teammate ================= */
+  var LEAD_ID = 'lead';
+  var ORDER = ['lead', 'scout', 'copy', 'guard', 'sendtime', 'pacer', 'planner', 'optimizer', 'analyst'];
+  var GLYPH = {
+    lead: '<path d="M8 1.5 14.5 8 8 14.5 1.5 8z"/>',
+    planner: '<path d="M2 13.5 8 2.5l6 11z"/>',
+    analyst: '<path d="M3 13.5V8.5M8 13.5v-10M13 13.5v-7"/>',
+    scout: '<circle cx="8" cy="8" r="4.5"/><path d="M8 1v3M8 12v3M1 8h3M12 8h3"/>',
+    copy: '<path d="M2 4h12M2 8h8M2 12h12"/>',
+    guard: '<path d="M8 1.8 13.3 4v4c0 3-2.3 5-5.3 6.2C5 13 2.7 11 2.7 8V4z"/>',
+    optimizer: '<path d="M2.5 2.5h4.5v11H2.5zM9 2.5h4.5v11H9z"/>',
+    pacer: '<path d="M8 2a6 6 0 1 0 6 6H8z"/>',
+    sendtime: '<circle cx="8" cy="8" r="6"/><path d="M8 4.5V8l2.6 1.8"/>'
+  };
+  var ROLE = {
+    lead: 'Turns your goal into a plan, hands out the work, re-plans when results drift.'
+  };
+  var STATE_WORD = { work: 'Working', wait: 'Waiting on you', watch: 'Watching', idle: 'Idle', off: 'Off', paused: 'Paused' };
+
+  function Mark(p) {
+    return html`<svg className="tm-mark" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" focusable="false"
+      dangerouslySetInnerHTML=${{ __html: GLYPH[p.id] || GLYPH.lead }}></svg>`;
+  }
+  function selMissionState(w) { return w.missions || null; }
+  function missionsOf(ms) { return ms && ms.order ? ms.order.map(function (id) { return ms.byId[id]; }).filter(Boolean) : EMPTY; }
+  function shortGoal(m) { return m.title || m.goalText || 'this mission'; }
+  function missionHref(m) { return '#missions/' + encodeURIComponent(m.id); }
+  function firstSentence(s) { s = String(s || ''); var i = s.search(/[.!?](\s|$)/); return i > 12 && i < s.length - 1 ? s.slice(0, i + 1) : s; }
+
+  // What each agent is doing right now, its hand-offs and its voice, read from the missions' steps and beats.
+  function deriveWork(missions, id, tick) {
+    var now = null, waitAsk = null, lastDone = null, voice = null, hands = [], steps = 0, done = 0, asks = 0;
+    var names = ORDER.map(function (a) { return { id: a, name: agentName(a) }; });
+    missions.forEach(function (m) {
+      var live = m.status !== 'stopped' && m.status !== 'done';
+      (m.plan || EMPTY).forEach(function (s) {
+        if (s.agentId !== id) return;
+        steps++;
+        if (s.status === 'done') {
+          done++;
+          if (!lastDone || (s.doneTick || 0) > (lastDone.s.doneTick || 0)) lastDone = { s: s, m: m };
+        }
+        if (live && s.status === 'working' && !now) now = { s: s, m: m };
+        if (live && s.status === 'blocked' && !waitAsk) waitAsk = { s: s, m: m };
+      });
+      (m.asks || EMPTY).forEach(function (a) {
+        if (a.agentId === id) asks++;
+        if (live && a.agentId === id && a.status === 'open' && !waitAsk) waitAsk = { ask: a, m: m };
+      });
+      (m.log || EMPTY).forEach(function (b) {
+        if (b.agentId === id && (!voice || b.tick >= voice.b.tick) && b.kind !== 'handoff') voice = { b: b, m: m };
+        if (b.kind !== 'handoff') return;
+        var to = null;
+        names.forEach(function (n) { if (n.id !== b.agentId && b.text.indexOf(n.name) >= 0) to = n.id; });
+        if (b.agentId === id) hands.push({ dir: 'out', other: to, b: b, m: m });
+        else if (to === id) hands.push({ dir: 'in', other: b.agentId, b: b, m: m });
+      });
+    });
+    hands.sort(function (a, z) { return z.b.tick - a.b.tick; });
+    var state = 'idle', text = '', where = null;
+    if (waitAsk) {
+      state = 'wait'; where = waitAsk.m;
+      text = waitAsk.ask ? waitAsk.ask.question : (waitAsk.s.note || waitAsk.s.title);
+    } else if (now) {
+      state = 'work'; where = now.m; text = now.s.title;
+    } else if (voice && voice.m.phase === 'monitoring' && voice.m.status === 'running') {
+      state = 'watch'; where = voice.m; text = firstSentence(voice.b.text);
+    } else if (lastDone) {
+      where = lastDone.m; text = 'Finished: ' + lastDone.s.title;
+    }
+    return { state: state, text: text, where: where, voice: voice, hands: hands.slice(0, 3), steps: steps, done: done, asks: asks, lastDone: lastDone, tick: tick };
+  }
+
+  function Hand(p) {
+    var h = p.h, out = h.dir === 'out', other = h.other ? agentName(h.other) : (out ? 'the team' : 'the team');
+    return html`<li className="tm-hand">
+      <span className="tm-hand-who"><span className="tm-wire" aria-hidden="true">${out ? '→' : '←'}</span>
+        <span className="sr-only tm-sr">${out ? 'To ' : 'From '}</span>${other}</span>
+      <span className="tm-hand-text">${h.b.text}</span>
+      <span className="tm-hand-meta num">${rel(h.b.tick, p.tick)}${h.m ? html` · <a href=${missionHref(h.m)}>${shortGoal(h.m)}</a>` : null}</span>
+    </li>`;
+  }
+
+  function SettingsPanel(p) {
+    var React = R();
+    var row = p.row, id = p.id, ms = React.useState(null), msg = ms[0], setMsg = ms[1];
+    var on = useAiOn();
+    if (!row) {
+      return html`<div className="tm-settings-body">
+        <p className="tm-note">${on ? 'Lead plans from your own words with Claude, and checks every plan against your limits before anything moves.'
+          : 'Lead plans with its built-in planner. Connect Claude and it plans from free text instead.'}</p>
+        <p className="tm-note">Lead has no schedule: it acts when you set a goal, steer a mission or answer an ask.</p>
+      </div>`;
+    }
+    var st = stateOf(row), paused = row.agentStatus === 'paused' || st === 'paused', def = agentDef(id);
+    function runNow() {
+      var r = dispatch('agent/runNow', { id: id });
+      setMsg(r.ok ? { tone: 'good', text: 'Queued. It runs within the hour and the result shows under Runs.' } : { tone: 'crit', text: r.error || "Couldn't start a run." });
+    }
+    function togglePause() {
+      var r = dispatch('agent/setStatus', { id: id, status: paused ? 'active' : 'paused' });
+      setMsg(r.ok ? null : { tone: 'crit', text: r.error || "Couldn't change the agent." });
+    }
+    var rs = React.useState(!!p.auditId), showRuns = rs[0], setShowRuns = rs[1];
+    var ps = React.useState(false), showParams = ps[0], setShowParams = ps[1];
+    return html`<div className="tm-settings-body">
+      <div className="tm-settings-actions">
+        <${Btn} kind="secondary" size="md" id=${'agents-' + id + '-run'} onClick=${runNow} disabled=${!def || st === 'queued'}>${st === 'queued' ? 'Queued' : 'Run now'}<//>
+        <${Btn} kind="secondary" size="md" id=${'agents-' + id + '-pause'} onClick=${togglePause}>${paused ? 'Resume agent' : 'Pause agent'}<//>
+      </div>
+      ${msg ? html`<p className=${msg.tone === 'crit' ? 'cn-error' : 'cn-ok'} role="status">${msg.text}</p>` : null}
+      <${Overview} row=${row} tick=${p.tick} impact=${p.impact} />
+      <div className="tm-sub-toggles">
+        <${Link} aria-expanded=${showParams ? 'true' : 'false'} onClick=${function () { setShowParams(!showParams); }}>${showParams ? 'Hide parameters' : 'Parameters and guardrails it must pass'}<//>
+        <${Link} aria-expanded=${showRuns ? 'true' : 'false'} onClick=${function () { setShowRuns(!showRuns); }}>${showRuns ? 'Hide runs' : 'Runs and how it decided'}<//>
+      </div>
+      ${showParams ? html`<${Settings} key=${id} agentId=${id} />` : null}
+      ${showRuns ? html`<${RunsList} agentId=${id} entries=${p.entries} auditId=${p.auditId} tick=${p.tick} cadence=${row.cadence} />` : null}
+    </div>`;
+  }
+
+  function TeamRow(p) {
+    var React = R();
+    var id = p.id, row = p.row, w = p.work, tick = p.tick;
+    var os = React.useState(!!p.open), open = os[0], setOpen = os[1];
+    React.useEffect(function () { if (p.open) setOpen(true); }, [p.open]);
+    var name = row ? displayName(row) : agentName(id);
+    var state = w.state;
+    if (row) {
+      var rs = stateOf(row);
+      if (rs === 'off') state = 'off'; else if (rs === 'paused') state = 'paused';
+      else if (row.awaiting && state === 'idle') state = 'work';
+    }
+    var role = (row && (row.short || (agentDef(id) || {}).short)) || ROLE[id] || AGENT_SHORT[id] || '';
+    var sid = 'team-' + id + '-settings';
+    var tr = row ? trackRecord(row, p.impact) : null, stat = row ? (row.stats || {}) : {};
+    var realized = 0, expected = 0, nReal = 0;
+    if (row) ((p.impact && p.impact.rows) || EMPTY).forEach(function (r) {
+      if (r.agentId === id && r.unit === '$' && r.status === 'realized' && fin(r.realized)) { realized += r.realized; if (fin(r.expected)) expected += r.expected; nReal++; }
+    });
+    var applied = row ? (stat.applied || 0) + (stat.auto || 0) : w.done;
+    var undone = row ? (stat.undone || 0) : 0;
+    var nowText = w.text || (row && row.awaiting ? 'Thinking' + ELL : (role || 'Nothing on right now.'));
+    return html`<li className=${cx('tm-row', 'is-' + state)} id=${'agents-row-' + id}>
+      <div className="tm-id">
+        <div className="tm-name"><span className="tm-led" aria-hidden="true"></span><${Mark} id=${id} /><h2 className="tm-h">${name}</h2></div>
+        <p className="tm-state">${STATE_WORD[state]}${row && !loaded(id) ? '' : ''}</p>
+        <p className="tm-role">${role}</p>
+      </div>
+      <div className="tm-now">
+        <p className="tm-k">Right now</p>
+        <p className="tm-now-text">${nowText}</p>
+        ${w.where ? html`<p className="tm-on">${state === 'work' || state === 'wait' || state === 'watch' ? 'On ' : 'On '}<a href=${missionHref(w.where)}>${shortGoal(w.where)}</a></p>` : html`<p className="tm-on">${state === 'idle' ? 'Not on a mission' : ''}</p>`}
+        ${w.voice && firstSentence(w.voice.b.text) !== firstSentence(nowText) ? html`<p className="tm-voice">“${firstSentence(w.voice.b.text)}” <span className="tm-voice-t num">${rel(w.voice.b.tick, tick)}</span></p>` : null}
+      </div>
+      <div className="tm-hands">
+        <p className="tm-k">Hand-offs</p>
+        ${w.hands.length ? html`<ul className="tm-hand-list">${w.hands.map(function (h, i) { return html`<${Hand} key=${i} h=${h} tick=${tick} />`; })}</ul>` : html`<p className="tm-none">None yet.</p>`}
+      </div>
+      <div className="tm-rec">
+        <p className="tm-k">Record</p>
+        <p className="tm-rec-main"><span className="tm-big num">${applied}</span> <span>${id === LEAD_ID ? 'steps handed out' : (applied === 1 ? 'change applied' : 'changes applied')}</span></p>
+        <p className="tm-rec-sub num">${row ? (undone ? undone + ' undone' : 'None undone') : plural(w.asks, 'ask') + ' raised'}${nReal ? MID + 'realised ' + money(realized) + ' of ' + money(expected) + ' expected' : (row && tr && /measuring/.test(tr.text) ? MID + 'impact still measuring' : '')}</p>
+        ${row && row.pending > 0 ? html`<p className="tm-rec-sub"><${Link} onClick=${function () { openAsks(); }}>${plural(row.pending, 'suggestion') + ' waiting for you'}<//></p>` : null}
+      </div>
+      <div className="tm-foot">
+        <button type="button" className="tm-toggle" aria-expanded=${open ? 'true' : 'false'} aria-controls=${sid}
+          onClick=${function () { setOpen(!open); }}>${open ? 'Hide settings' : 'Settings'}<span className="tm-toggle-sub">${row ? ' · ' + (AUTONOMY_LABEL[row.autonomy] || DASH) + ', ' + cadenceLabel(row.cadence).toLowerCase() : ''}</span></button>
+      </div>
+      ${open ? html`<div className="tm-settings" id=${sid}><${SettingsPanel} id=${id} row=${row} tick=${tick} impact=${p.impact} entries=${p.entries} auditId=${p.auditId} /></div>` : null}
+    </li>`;
+  }
+
+  function openAsks() {
+    try { if (MC.uiStore && typeof MC.uiStore.set === 'function') MC.uiStore.set({ drawer: 'approvals' }); } catch (e) { /* noop */ }
+  }
+
+  function TeamBoard(p) {
+    var ms = useSel(selMissionState);
+    var entries = useSel(selAudit) || EMPTY;
+    var impact = useSel(selImpact);
+    var missions = R().useMemo(function () { return missionsOf(ms); }, [ms]);
+    var ids = R().useMemo(function () {
+      var have = {}; p.roster.forEach(function (r) { have[r.id] = r; });
+      var out = ORDER.filter(function (i) { return i === LEAD_ID || have[i]; });
+      p.roster.forEach(function (r) { if (out.indexOf(r.id) < 0) out.push(r.id); });
+      return out;
+    }, [p.roster]);
+    var byId = {}; p.roster.forEach(function (r) { byId[r.id] = r; });
+    return html`<ol className="tm-list" aria-label="Your agents">
+      ${ids.map(function (id) {
+        return html`<${TeamRow} key=${id} id=${id} row=${byId[id] || null} work=${deriveWork(missions, id, p.tick)} tick=${p.tick}
+          impact=${impact} entries=${entries} open=${p.focusId === id} auditId=${p.focusId === id ? p.auditId : null} />`;
+      })}
+    </ol>`;
+  }
+
   /* ================= View ================= */
-  function AgentsView() {
+  var SUBNAV = [
+    { id: 'team', label: 'Team' },
+    { id: 'activity', label: 'Activity' },
+    { id: 'approvals', label: 'Approvals' },
+    { id: 'guardrails', label: 'Guardrails' },
+    { id: 'history', label: 'Run history' }
+  ];
+  function TeamView() {
     var ready = useSel(selReady);
     var tick = useSel(selTick) || 0;
     var baseRoster = useSel(selRoster) || EMPTY;
     var waitingIds = useSel(selAwaiting) || '';
     var rulesIds = useSel(selAiModes) || '';
+    var ms = useSel(selMissionState);
     var connected = useAiOn();
     var roster = React_useMemoSafe(function () {
       var w = waitingIds ? waitingIds.split(',') : [], r = rulesIds ? rulesIds.split(',') : [];
@@ -1090,44 +1297,47 @@
       });
     }, [baseRoster, waitingIds, rulesIds]);
     var openCount = useSel(selOpenCount) || 0;
-    var focus = useUiSel(function (s) { return s.focus && s.focus.agents; }) || {};
+    var fTeam = useUiSel(function (s) { return s.focus && s.focus.team; }) || {};
+    var fOld = useUiSel(function (s) { return s.focus && s.focus.agents; }) || {};
+    var focus = Object.assign({}, fOld, fTeam);
     var tab = focus.tab === 'audit' ? 'history' : focus.tab;
-    if (TABS.indexOf(tab) < 0) tab = 'roster';
-    var Tabs = kit('Tabs');
-    var tabs = [
-      { id: 'roster', label: 'Roster' },
-      { id: 'activity', label: 'Activity' },
-      { id: 'approvals', label: 'Approvals', count: openCount, countTone: openCount ? 'agent' : null },
-      { id: 'guardrails', label: 'Guardrails' },
-      { id: 'history', label: 'Run history' }
-    ];
-    var hasDefs = false;
-    try { hasDefs = !!(MC.runtime && typeof MC.runtime.defs === 'function' && MC.runtime.defs().length); } catch (e) { hasDefs = false; }
-    var working = roster.filter(function (r) { var s = stateOf(r); return s === 'running' || s === 'queued'; }).length;
-    var sub = !roster.length ? 'Agents watch your live campaigns and propose or make changes inside your guardrails.'
-      : (working ? plural(working, 'agent') + ' working' : 'All agents are paused or off') + (openCount ? MID + plural(openCount, 'suggestion') + ' waiting for you' : MID + 'nothing needs you');
+    if (tab === 'roster' || TABS.indexOf(tab) < 0) tab = 'team';
+    var missions = missionsOf(ms);
+    var working = 0, asking = 0;
+    ORDER.forEach(function (id) { var s = deriveWork(missions, id, tick).state; if (s === 'work') working++; if (s === 'wait') asking++; });
     var body;
-    if (ready === undefined) body = html`<p className="cn-muted">Loading agents${ELL}</p>`;
-    else if (!roster.length) {
-      body = html`<${Empty} title=${hasDefs ? 'Agents are starting' : 'No agents are set up yet'}
-        body=${hasDefs ? 'They appear here after their first check-in.' : 'Once agents are added to this workspace they appear here with their recent activity, settings and track record.'} />`;
-    } else if (tab === 'roster') body = html`<${RosterTab} roster=${roster} tick=${tick} agentId=${focus.agentId} auditId=${focus.auditId} />`;
+    if (ready === undefined) body = html`<p className="cn-muted">Loading the team${ELL}</p>`;
+    else if (tab === 'team') body = html`<${TeamBoard} roster=${roster} tick=${tick} focusId=${focus.agentId || null} auditId=${focus.auditId || null} />`;
     else if (tab === 'activity') body = html`<${ActivityTab} roster=${roster} tick=${tick} />`;
     else if (tab === 'approvals') body = html`<${ApprovalsTab} roster=${roster} tick=${tick} />`;
     else if (tab === 'guardrails') body = html`<${GuardrailsTab} />`;
     else body = html`<${HistoryTab} roster=${roster} tick=${tick} />`;
-    return html`<section className="v-agents">
-      <header className="cn-head">
-        <h1 id="page-title" tabIndex="-1" className="cn-title">Agents</h1>
+    var sub = (working ? working + ' working now' : 'Nothing running right now') + (asking ? MID + plural(asking, 'teammate') + ' waiting on you' : '') +
+      (openCount ? MID + plural(openCount, 'suggestion') + ' to review' : '');
+    return html`<section className="v-agents v-team">
+      <header className="tm-head">
+        <h1 id="page-title" tabIndex="-1" className="tm-title">Your team of nine</h1>
         <p className="cn-sr" role="status" aria-live="polite">${roster.filter(function (r) { return r.awaiting; }).map(function (r) { return displayName(r) + ' is thinking' + ELL; }).join(' ')}</p>
-        <p className="cn-sub num">${sub}</p>
-        ${!connected && roster.length ? html`<p className="cn-sub cn-connect-line">Agents follow built-in rules for now. Connect Claude so they can explain their choices and write copy.</p>` : null}
+        <p className="tm-sub num">${sub}</p>
+        ${!connected ? html`<p className="tm-sub tm-connect">Agents follow built-in rules for now. Connect Claude so they can explain their choices and write copy.</p>` : null}
+        <nav className="tm-subnav" aria-label="Team sections">
+          ${SUBNAV.map(function (s) {
+            var on = s.id === tab;
+            return html`<button key=${s.id} type="button" className=${cx('tm-subnav-btn', on && 'is-on')} aria-current=${on ? 'page' : null}
+              onClick=${function () { setFocus({ tab: s.id === 'team' ? 'roster' : s.id, agentId: null, auditId: null }); }}>${s.label}${s.id === 'approvals' && openCount ? html` <span className="num">${openCount}</span>` : null}</button>`;
+          })}
+        </nav>
       </header>
-      ${roster.length && Tabs ? html`<${Tabs} id="agents-tabs" label="Agent sections" tabs=${tabs} value=${tab}
-          onChange=${function (t) { setFocus({ tab: t }); }} panelId="agents-panel" />` : null}
-      <div id="agents-panel" role=${roster.length ? 'tabpanel' : null} aria-labelledby=${roster.length ? 'agents-tabs-' + tab : null} className="cn-panel">${body}</div>
+      <div id="agents-panel" className="cn-panel">${body}</div>
     </section>`;
   }
 
-  MC.views.agents = AgentsView;
+  MC.views.agents = TeamView;
+  MC.views.team = TeamView;
+  // Approvals, activity, guardrails and run history stay available for reuse (the Asks drawer, deep links).
+  MC.views.teamParts = {
+    ApprovalsTab: ApprovalsTab, ActivityTab: ActivityTab, GuardrailsTab: GuardrailsTab, HistoryTab: HistoryTab,
+    RunsList: RunsList, RunStory: RunStory, ChangeItem: ChangeItem, FeedRow: FeedRow, RecentActivity: RecentActivity,
+    AgentMark: Mark, deriveWork: deriveWork
+  };
 })();

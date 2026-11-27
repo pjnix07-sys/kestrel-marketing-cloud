@@ -15,6 +15,22 @@
 
   function R() { return window.React; }
   function h() { return MC.html.apply(null, arguments); }
+
+  /* Quiet "Made by <mission goal> · <agent>" back-link for objects a mission produced (mission.artifacts). */
+  function MadeBy(p) {
+    var ms = MC.hooks && MC.hooks.useSelect ? MC.hooks.useSelect(function (w) { return w ? w.missions || null : null; }) : null;
+    if (!ms || !ms.order || !p.id) return null;
+    var hit = null, ag = null;
+    ms.order.forEach(function (mid) {
+      var m = ms.byId[mid];
+      if (!m || hit) return;
+      (m.artifacts || []).forEach(function (a) { if (a.kind === p.kind && a.id === p.id) hit = m; });
+    });
+    if (!hit) return null;
+    (hit.plan || []).forEach(function (s) { if (s.artifact && s.artifact.kind === p.kind && s.artifact.id === p.id) ag = s.agentId; });
+    var nm = ag && MC.lead && MC.lead.agentName ? MC.lead.agentName(ag) : null;
+    return h`<p className="mc-madeby">Made by <a href=${'#missions/' + encodeURIComponent(hit.id)}>${hit.title || hit.goalText}</a>${nm ? ' \u00b7 ' + nm : ''}</p>`;
+  }
   function fin(x) { return typeof x === 'number' && isFinite(x); }
   function has(o, n) { return !!o && typeof o[n] === 'function'; }
   function str(x) { return typeof x === 'string' ? x : (x == null ? '' : String(x)); }
@@ -1326,7 +1342,8 @@
 
     return h`<section className="v-content">
       <header className="cs-header">
-        <h1 id="page-title" tabIndex="-1" className="cs-title">Content Studio</h1>
+        <h1 id="page-title" tabIndex="-1" className="cs-title">Content Studio <span className="mc-art-tag">made and maintained by your agents</span></h1>
+        ${variant ? h`<${MadeBy} kind="campaign" id=${variant.campaignId} />` : null}
         ${Seg ? h`<${Seg} id="cs-tab" label="Content sections" size="sm" options=${TABS} value=${tab} onChange=${setTab} />`
           : h`<select id="cs-tab" className="k-select" aria-label="Content sections" value=${tab} onChange=${function (e) { setTab(e.target.value); }}>${TABS.map(function (t) { return h`<option key=${t.value} value=${t.value}>${t.label}</option>`; })}</select>`}
         ${!wide && tab === 'studio' ? h`<button type="button" id="cs-lib-toggle" className="cs-libbar" aria-expanded=${libOpen ? 'true' : 'false'} aria-controls="cs-lib-drop"
