@@ -26,7 +26,7 @@
     pacer: 'Keep spend on plan and move budget toward the channel returning the most. Choose among budget-shift drafts; explain pacing in plain words, quoting only the figures in the candidate\'s evidence.',
     guard: 'Protect customers from over-messaging before they unsubscribe. Choose among suppression and channel-pause drafts; be conservative, explain the trade-off in words (fewer unsubscribes against some revenue forgone) and quote only figures from the candidate\'s evidence.',
     analyst: 'Watch the numbers, flag surprises and warn when a goal is at risk. Write the insight titles and bodies yourself (rewrite rule insights by ref, add at most two new ones), and choose among extend-campaign drafts.',
-    copy: 'Write fresh challenger copy when a winner tires or a test has settled. You may rewrite a candidate\'s copy (variants[].candidate = its id) or write an original challenger for a live campaign channel; obey the brand book and channel limits exactly.',
+    copy: 'Write content as tagged blocks (headlines, bodies, buttons) and compose messages from approved ones; everything you write goes to review. You may rewrite the words of a candidate that writes blocks or a variant (variants[].candidate = its id) or write an original challenger for a live campaign channel; obey the brand book and channel limits exactly.',
     scout: 'Find pockets of customers who respond far better than average. Name and explain candidate segments (segments[].candidate = its id to rename), or propose at most one original rule over known attributes.',
     planner: 'Plan campaigns for upcoming retail moments. Choose among the engine\'s campaign drafts and write the plan narrative in "why": who it is for, what it says, when it runs and what it should earn.'
   };
@@ -34,7 +34,7 @@
   // How a segment condition's value is written as text. Used by the Scout task and by segmentFromText (tasks.js).
   FL.VALUE_FORMAT = 'value as text: a number, "lo..hi" for between, comma-separated values for category lists, "yes"/"no" for flags. Fractions are 0 to 1.';
   var TASK = {
-    copy: 'Also return "variants": rewritten or original challengers, and leave "segments" empty. For a rewrite set candidate to the draft id and keep campaignId and channel from it; for an original set candidate to "". Fill only the fields that channel uses (others ""). The channel limits and merge tokens are in the brand book.',
+    copy: 'Also return "variants": rewritten or original challengers, and leave "segments" empty. For a rewrite set candidate to the draft id and keep campaignId and channel from it; for an original set candidate to "". Fill only the fields that channel uses (others ""). The channel limits and merge tokens are in the brand book. When a candidate writes blocks (its changes say "New headline", "New body" or a new headline in a message), rewrite its words in fields.headline, fields.body and fields.cta (leave the others ""), and tag them: angle (trail-season, warmth, gifting, urgency, utility or neutral) and tone (practical, adventurous, warm or urgent) say what the words do; leave both "" to keep the draft\'s tags. Urgency needs a real deadline in the campaign.',
     scout: 'Also return "segments": renames of candidate segments (candidate = draft id, conditions []) or at most one original rule (candidate "", combine "all" or "any", conditions over segmentAttributes keys with their ops; ' + FL.VALUE_FORMAT + '), and leave "variants" empty. Names under 48 characters, in plain words.'
   };
   FL.taskText = function (agentId) {
@@ -43,9 +43,10 @@
 
   /* ---------------- tunables: what Haiku may adjust inside declared ranges ---------------- */
   function variantCreate(d) {
-    var a = (d.actions || []).filter(function (x) { return x && x.type === 'variant/create'; })[0];
+    var a = (d.actions || []).filter(function (x) { return x && (x.type === 'variant/create' || x.type === 'message/publish'); })[0];
     return a && a.payload ? a : null;
   }
+  function blockActions(d) { return (d.actions || []).filter(function (x) { return x && x.type === 'block/create' && x.payload && x.payload.block; }); }
   FL.tunables = function (agentId, draft) {
     var def = MC.runtime && MC.runtime.def(agentId);
     if (!def || !draft) return [];
@@ -56,6 +57,7 @@
     return [];
   };
   // Deterministic: called by the agent/aiRun reducer (live and replay) with the logged adjust map.
+  FL._rewriteBlocks = function (world, cand, x) { return rewriteBlocks(world, cand, x); };
   FL.applyAdjust = function (agentId, draft, adjust) {
     var tun = FL.tunables(agentId, draft), out = clone(draft);
     tun.forEach(function (t) {
@@ -92,7 +94,9 @@
   FL.schemaFor = function () {
     if (schemaCache) return schemaCache;
     var channels = (MC.CH && MC.CH.ALL) || [], attrs = ((MC.segments && MC.segments.ATTRS) || []).map(function (a) { return a.key; });
-    var variant = obj({ candidate: S, campaignId: S, channel: channels.length ? { type: 'string', enum: [''].concat(channels) } : S, fields: FIELDS, title: S, why: S });
+    var angles = (MC.content && MC.content.ANGLES) || [], tones = (MC.copy && MC.copy.TONES) || [];
+    var variant = obj({ candidate: S, campaignId: S, channel: channels.length ? { type: 'string', enum: [''].concat(channels) } : S, fields: FIELDS, title: S, why: S,
+      angle: angles.length ? { type: 'string', enum: [''].concat(angles) } : S, tone: tones.length ? { type: 'string', enum: [''].concat(tones) } : S });
     var segment = obj({ candidate: S, name: S, why: S, combine: { type: 'string', enum: ['all', 'any'] },
       conditions: { type: 'array', items: obj({ attr: attrs.length ? { type: 'string', enum: attrs } : S, cmp: S, value: S }) } });
     schemaCache = obj({ decisions: { type: 'array', items: DECISION }, insights: { type: 'array', items: INSIGHT }, summary: S,
@@ -177,6 +181,51 @@
   }
   FL._buildVariant = buildVariant;
 
+  /* Haiku rewrites and tags the blocks a candidate would write. The new words must still pass the brand checks in every
+     channel the message goes to (or, for library blocks, in an email made with approved neighbours); otherwise the rewrite
+     is dropped and the rule-written blocks stand. Tags are validated against the content model. */
+  var BLOCK_FIELD = { headline: 'headline', body: 'body', cta: 'cta' };
+  function scratchChecks(world, block) {
+    var K = MC.content, S = MC.select, slots = {};
+    ['headline', 'body', 'cta'].forEach(function (k) {
+      if (k === block.kind) return;
+      var b = K.blocks(world).filter(function (x) { return x.kind === k && x.review === 'approved' && !x.retired && !x.archived && !(x.tags && x.tags.product); })[0];
+      if (b) slots[k] = b.id;
+    });
+    slots[block.kind] = '$new';
+    if (!slots.headline || !slots.body || !slots.cta) return false;
+    return S.draftChecks(world, { slots: slots, blocks: { $new: block } }, ['email'], null).ok;
+  }
+  function rewriteBlocks(world, cand, x) {
+    var K = MC.content, S = MC.select, acts = clone(cand.actions || []), blocks = {}, changed = false, angle = str(x.angle, 20), tone = str(x.tone, 20);
+    if (!K || !S || !S.draftChecks) return null;
+    var tags = {};
+    if (angle && K.ANGLES.indexOf(angle) >= 0) tags.angle = angle;
+    if (tone && MC.copy.TONES.indexOf(tone) >= 0) tags.tone = tone;
+    acts.forEach(function (a) {
+      if (a.type !== 'block/create' || !a.payload || !a.payload.block) return;
+      var b = a.payload.block, f = BLOCK_FIELD[b.kind] && str(x.fields && x.fields[BLOCK_FIELD[b.kind]], b.kind === 'body' ? 600 : 120);
+      if (f && f !== b.value && !K.valueError(b.kind, f)) { b.value = f; changed = true; }
+      if (Object.keys(tags).length && (b.kind === 'headline' || b.kind === 'body')) { b.tags = Object.assign({}, b.tags, tags); changed = true; }
+      if (a.payload.tmpId) blocks[a.payload.tmpId] = b;
+    });
+    if (!changed) return null;
+    var mc = acts.filter(function (a) { return a.type === 'message/create'; })[0], pub = acts.filter(function (a) { return a.type === 'message/publish'; })[0];
+    if (mc && pub) {
+      var msg = mc.payload.message, tmp = {};
+      Object.keys(blocks).forEach(function (id) { tmp[id] = { kind: blocks[id].kind, value: blocks[id].value, tags: blocks[id].tags }; });
+      if (!S.draftChecks(world, { name: msg.name, slots: msg.slots, channelOverrides: msg.channelOverrides, tags: msg.tags, blocks: tmp }, pub.payload.channels, pub.payload.campaignId).ok) return null;
+      if (tags.angle && msg.tags) msg.tags.angle = tags.angle;
+    } else {
+      var all = acts.filter(function (a) { return a.type === 'block/create'; });
+      for (var i = 0; i < all.length; i++) if (!scratchChecks(world, all[i].payload.block)) return null;
+    }
+    var diff = clone(cand.diff || []), hs = acts.filter(function (a) { return a.type === 'block/create' && a.payload.block.kind === 'headline'; });
+    if (mc && hs.length) diff.forEach(function (row) { if (/headline$/.test(row.label || '')) row.after = hs[0].payload.block.value.replace(/\{[^}]*\}/g, '').replace(/\s+/g, ' ').trim().slice(0, 60); });
+    else { var bs = acts.filter(function (a) { return a.type === 'block/create'; }); diff.forEach(function (row, i) { if (bs[i] && /^New /.test(row.label || '')) row.after = String(bs[i].payload.block.value).replace(/\{[^}]*\}/g, '').replace(/\s+/g, ' ').trim().slice(0, 70); }); }
+    return { actions: acts, diff: diff };
+  }
+
   function copyExtras(world, job, data, ground) {
     var out = [], def = MC.runtime.def('copy'), a = world.agents.byId.copy;
     var share = (a && a.params && a.params.challengerShare) || (def && def.params.challengerShare && def.params.challengerShare['default']) || 0.1;
@@ -184,8 +233,16 @@
       if (!x) return;
       var m = /^c(\d+)$/.exec(x.candidate || ''), cand = m ? job.candidates[+m[1]] : null, act = cand ? variantCreate(cand) : null;
       var base, target, sh;
+      if (cand && blockActions(cand).length) {
+        var rw = rewriteBlocks(world, cand, x);
+        if (!rw) return;
+        var bt = fitTitle(cleanText(x.title, ground, FL.TITLE_MAX), cand) || cand.title;
+        out.push({ kind: cand.kind, replaces: x.candidate, target: cand.target, actions: rw.actions, title: bt, why: cleanText(x.why, ground, 600),
+          risk: cand.risk || 'medium', mustQueue: true, horizon: cand.horizon, diff: rw.diff });
+        return;
+      }
       if (cand) {
-        if (!act) return;
+        if (!act || act.type !== 'variant/create') return;
         base = act.payload.variant; target = cand.target; sh = act.payload.share;
       } else {
         var c = world.campaigns.byId[x.campaignId];

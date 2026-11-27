@@ -629,7 +629,7 @@
       if (pick) {
         data.overrides = Object.assign({}, data.overrides || {}, { offer: pick });
         res.data = data;
-        say('copy', 'did', 'Using ' + L.offerLabel(pick) + '. I’ll write the messages around it.');
+        say('copy', 'did', 'Using ' + L.offerLabel(pick) + '. I’ll assemble the messages around it.');
       } else say('lead', 'thought', 'Noted: ' + text.slice(0, 100) + '.');
       res.steps[ask.stepId] = { status: 'queued', note: '' };
       return res;
@@ -838,7 +838,7 @@
     goal: function () { return 'Reading the goal and lining up the team.'; },
     audience: function (m) { return 'Looking for ' + audienceWord({ template: (m.data || {}).template, audience: (m.data || {}).audience || {} }) + ' and checking who can actually be reached.'; },
     campaign: function () { return 'Drafting the campaign: journey, channels, dates and an opening budget split.'; },
-    copy: function (m) { return 'Writing messages for ' + listJoin(((m.data || {}).channels || ['email']).map(chLower)) + ' in the brand voice.'; },
+    copy: function (m) { return 'Putting a message together from the approved headlines, bodies and buttons that have worked best, then rendering it for ' + listJoin(((m.data || {}).channels || ['email']).map(chLower)) + '.'; },
     guard: function () { return 'Checking who has heard from us too often.'; },
     sendtime: function () { return 'Looking at when this audience opens its messages.'; },
     pacer: function () { return 'Working out where the next dollar earns the most.'; },
@@ -846,7 +846,7 @@
     monitor: function () { return 'Setting up the daily check-in.'; },
     extend: function () { return 'Changing the campaign dates.'; },
     widen: function () { return 'Looking for customers similar to the ones who already respond.'; },
-    rewrite: function () { return 'Rewriting the messages for the new offer.'; },
+    rewrite: function () { return 'Re-assembling the messages around the new offer from approved blocks.'; },
     offer: function () { return 'Checking the offer against the new limit.'; },
     channel: function () { return 'Taking the channel out of the campaign.'; },
     budget: function () { return 'Fitting the budget to the new limit.'; }

@@ -643,14 +643,121 @@
     });
     return { n: wrote.length, chans: chans.filter(function (ch) { return wrote.indexOf(ch) >= 0; }), actions: actions, rejected: rejected };
   }
+  // ---- Copy Drafter, content model: assemble messages from the best approved blocks and publish them to every channel ----
+  var ANGLE_FOR_TONE = { practical: 'utility', adventurous: 'trail-season', warm: 'warmth', urgent: 'urgency' };
+  function liftIn(rows, id, chans) {
+    for (var i = 0; i < rows.length; i++) {
+      if (rows[i].key !== id) continue;
+      var acc = 0, wsum = 0, lo = 0, hi = 0, any = false;
+      chans.forEach(function (ch) {
+        var cell = rows[i].byChannel[ch];
+        if (cell && cell.enough && cell.lift) { acc += cell.lift.value * cell.delivered; lo += cell.lift.lo * cell.delivered; hi += cell.lift.hi * cell.delivered; wsum += cell.delivered; any = true; }
+      });
+      return any ? { value: acc / wsum, lo: lo / wsum, hi: hi / wsum, n: wsum } : null;
+    }
+    return null;
+  }
+  function usableBlock(b) { return !!b && b.review === 'approved' && !b.retired && !b.archived; }
+  function assemble(world, t, m, c, opts) {
+    var K = MC.content, S = MC.select, avoid = opts.avoid || {}, chans = c.channels.filter(function (ch) { return !(c.channelPaused && c.channelPaused[ch]); });
+    var out = { messages: [], chans: chans, actions: [], notes: [], rejected: 0, headlineIds: [] };
+    if (!K || !S || !S.contentPerformance || !chans.length) return out;
+    var owned = chans.filter(function (ch) { return MC.CH.OWNED.indexOf(ch) >= 0; }), evChans = owned.length ? owned : chans;
+    var perf = S.contentPerformance(world, {by: 'block'}), blocks = K.blocks(world);
+    var hasDeadline = !!(c.offer && c.offer !== 'none') || (c.eventDay !== undefined && c.eventDay !== null);
+    var wantAngle = ANGLE_FOR_TONE[c.tone] || null, prod = c.productFocus || null;
+    var prodBlock = prod ? blocks.filter(function (b) { return b.kind === 'product' && usableBlock(b) && b.value && b.value.productId === prod; })[0] : null;
+    function compatible(b) { return !(b.tags && b.tags.product) || b.tags.product === prod; }
+    function fresh(b) { return !S.blockFatigue(world, b.id).tired; }
+    function score(b, angle) {
+      var l = liftIn(perf, b.id, evChans), s = l ? l.value : 0;
+      if (b.tags && b.tags.tone === c.tone) s += 0.15;
+      if (angle && b.tags && b.tags.angle === angle) s += 0.1;
+      if (prod && b.tags && b.tags.product === prod) s += 0.1;
+      return { s: s, l: l };
+    }
+    function ranked(kind, angle, filter) {
+      return blocks.filter(function (b) { return b.kind === kind && usableBlock(b) && compatible(b) && fresh(b) && (!filter || filter(b)); }).map(function (b) { return { b: b, sc: score(b, angle) }; })
+        .sort(function (a, b) { return (b.sc.s - a.sc.s) || (a.b.id < b.b.id ? -1 : 1); });
+    }
+    var heads = ranked('headline', wantAngle, function (b) {
+      var a = b.tags && b.tags.angle;
+      if (avoid[b.id]) return false;
+      if (a === 'urgency' && !hasDeadline) return false;
+      if (a === 'gifting' && !/gift|holiday/i.test(c.name)) return false;
+      return true;
+    });
+    if (!heads.length) return out;
+    var used = {};
+    function make(h, label) {
+      var angle = h.b.tags.angle, tone = h.b.tags.tone || c.tone;
+      var body = ranked('body', angle, function (b) { return b.tags && b.tags.angle === angle; })[0] || ranked('body', angle)[0];
+      var cta = ranked('cta', null)[0];
+      var offer = (c.offer && c.offer !== 'none') ? blocks.filter(function (b) { return b.kind === 'offer' && usableBlock(b) && b.value && b.value.type === c.offer; })[0] : null;
+      var image = ranked('image', angle, function (b) { return b.tags && b.tags.angle === angle; })[0] || ranked('image', angle)[0];
+      var claims = blocks.filter(function (b) { return b.kind === 'claim' && usableBlock(b) && compatible(b); }).sort(function (a, b) { return (K.usedCount(world, b.id) - K.usedCount(world, a.id)) || (a.id < b.id ? -1 : 1); }).slice(0, 1);
+      var sign = blocks.filter(function (b) { return b.kind === 'signoff' && usableBlock(b) && b.tags && b.tags.angle === (c.tone === 'warm' ? 'warmth' : 'none'); })[0];
+      if (!body || !cta) return null;
+      var slots = { headline: h.b.id, body: body.b.id, cta: cta.b.id, claims: claims.map(function (b) { return b.id; }) };
+      if (offer) slots.offer = offer.id;
+      if (image) slots.image = image.b.id;
+      if (prodBlock) slots.product = prodBlock.id;
+      if (sign) slots.signoff = sign.id;
+      return { name: clipN(c.name + ': ' + (K.ANGLE_LABEL[angle] || angle).toLowerCase() + ' (' + label + ')', 78), slots: slots, tags: { angle: angle, tone: tone }, head: h };
+    }
+    var firstAngle = null;
+    for (var i = 0; i < heads.length && out.messages.length < 2; i++) {
+      var h = heads[i], angle = h.b.tags.angle;
+      if (out.messages.length === 1 && (angle === firstAngle || used[h.b.id])) continue;
+      if (out.messages.length === 1 && h.sc.l && h.sc.l.hi < 0) continue;   // never test a headline the ledger says loses clearly
+      var draft = make(h, out.messages.length ? 'B' : 'A');
+      if (!draft) continue;
+      var chk = S.draftChecks(world, draft, chans, c.id);
+      if (!chk.ok) { out.rejected++; continue; }
+      if (!out.messages.length) firstAngle = angle;
+      used[h.b.id] = true;
+      var r1 = doAction(world, t, 'copy', { type: 'message/create', payload: { message: { name: draft.name, slots: draft.slots, tags: draft.tags } } });
+      if (!r1.ok) { out.rejected++; continue; }
+      var mid = r1.created[0];
+      var pub = { id: mid, campaignId: c.id, channels: chans };
+      if (out.messages.length) pub.share = 0.4;   // the second message is the test: it takes 40% beside the first
+      var r2 = doAction(world, t, 'copy', { type: 'message/publish', payload: pub });
+      if (!r2.ok) { out.rejected++; continue; }
+      out.messages.push({ id: mid, name: draft.name, headline: h, angle: angle, variants: (r2.created || []).slice() });
+      out.headlineIds.push(h.b.id);
+      out.actions.push({ type: 'message/create', id: mid });
+      (r2.created || []).forEach(function (vid) { out.actions.push({ type: 'message/publish', id: vid }); });
+    }
+    return out;
+  }
+  function clipN(s, n) { s = String(s || ''); return s.length > n ? s.slice(0, n - 1).replace(/\s+\S*$/, '') + '…' : s; }
+  function plainBlock(b) { return String(MC.content.textOf(b)).replace(/\{first_name\|([^}]+)\}/g, '$1').replace(/\s*\{[a-z_]+(\|[^}]*)?\}[,:]?\s*/g, ' ').replace(/\s+/g, ' ').trim(); }
+  function contentBeat(world, res, c, round) {
+    var K = MC.content, a = res.messages[0], h = a.headline, l = h.sc.l, n = res.messages.length;
+    var summary = n + (n === 1 ? ' message' : ' messages') + ' · ' + res.chans.length + (res.chans.length === 1 ? ' channel' : ' channels');
+    var text = (round ? 'Re-assembled ' : 'Assembled ') + n + (n === 1 ? ' message' : ' messages') + ' from approved blocks: ' + L().offerLabel(c.offer) + ', the usual button and claims, and the headline “' + clipN(plainBlock(h.b), 60) + '”' +
+      (l ? ', which has earned ' + pct(l.value, 0) + ' more of the response (' + pct(l.lo, 0) + ' to ' + pct(l.hi, 0) + ') than the rest of the library on these channels' : '') +
+      (n > 1 ? '. A second message tries a ' + (K.ANGLE_LABEL[res.messages[1].angle] || 'different').toLowerCase() + ' headline so the team can learn which works' : '') +
+      '. Each renders as a version for ' + listJoin(res.chans.map(chLower)) + ' and is in review; nothing goes live until someone approves it.';
+    return { summary: summary, text: text };
+  }
+
   EXEC.copy = function (world, t, m, st) {
     var c = campaignOf(world, m);
     if (!c) return { skip: true, note: 'No campaign to write for.', beats: [{ agentId: 'copy', kind: 'did', text: 'There’s no campaign to write for yet, so I’m standing down.' }] };
-    var res = writeVariants(world, t, m, c, { round: 0 });
-    if (!res.n) return { error: 'None of the drafts passed the brand checks.' };
-    var text = 'Wrote ' + res.n + ' variants across ' + listJoin(res.chans.map(chLower)) + ' around ' + L().offerLabel(c.offer) + ', checked against the brand book' +
-      (res.rejected ? ' (' + res.rejected + ' discarded for breaking it)' : '') + '. They’re in review; nothing goes live until someone approves them.';
-    return { beats: [{ agentId: 'copy', kind: 'did', text: text }], actions: res.actions, note: text };
+    var res = assemble(world, t, m, c, { avoid: {} });
+    if (res.messages.length) {
+      var b = contentBeat(world, res, c, false);
+      return { beats: [{ agentId: 'copy', kind: 'did', text: b.text }], actions: res.actions, note: b.summary, artifact: { kind: 'message', id: res.messages[0].id },
+        artifacts: res.messages.slice(1).map(function (x) { return { kind: 'message', id: x.id }; }),
+        data: { content: { messages: res.messages.map(function (x) { return x.id; }), channels: res.chans.slice(), summary: b.summary, headlineIds: res.headlineIds.slice() } } };
+    }
+    // the library had nothing approved that fits: write variants directly
+    var res0 = writeVariants(world, t, m, c, { round: 0 });
+    if (!res0.n) return { error: 'None of the drafts passed the brand checks.' };
+    var text = 'Wrote ' + res0.n + ' variants across ' + listJoin(res0.chans.map(chLower)) + ' around ' + L().offerLabel(c.offer) + ', checked against the brand book' +
+      (res0.rejected ? ' (' + res0.rejected + ' discarded for breaking it)' : '') + '. They’re in review; nothing goes live until someone approves them.';
+    return { beats: [{ agentId: 'copy', kind: 'did', text: text }], actions: res0.actions, note: text };
   };
 
   // ---- Fatigue Guard ----
@@ -784,7 +891,8 @@
     var ask = { kind: 'launch', agentId: 'lead', blocking: false, question: q,
       why: status + ' Nothing sends until it passes the launch checklist and you schedule it.', impact: { metric: metric, lo: fc.lo || 0, hi: fc.hi || 0 },
       options: ['Yes, schedule it', 'Not yet'], default: 'Yes, schedule it' };
-    return { beats: [{ agentId: 'lead', kind: 'did', text: 'The draft is ready and the team has checked it. ' + status }], asks: [ask], note: 'Handed over for sign-off.' };
+    var made = d.content && d.content.summary ? ' (' + d.content.summary + ')' : '';
+    return { beats: [{ agentId: 'lead', kind: 'did', text: 'The draft is ready' + made + ' and the team has checked it. ' + status }], asks: [ask], note: 'Handed over for sign-off.' };
   };
 
   // ---- Insight Analyst: start tracking ----
@@ -841,6 +949,16 @@
       if (r.ok) { retired++; actions.push({ type: 'variant/setStatus', id: v.id }); }
     });
     var c2 = world.campaigns.byId[c.id];
+    var prev = {}, pc = (m.data || {}).content;
+    ((pc && pc.headlineIds) || []).forEach(function (id) { prev[id] = true; });
+    var asm = assemble(world, t, m, c2, { avoid: prev });
+    if (!asm.messages.length) asm = assemble(world, t, m, c2, { avoid: {} });
+    if (asm.messages.length) {
+      var bb = contentBeat(world, asm, c2, true), at = bb.text + ' Replacing ' + retired + ' older ' + (retired === 1 ? 'variant' : 'variants') + '.';
+      return { beats: [{ agentId: 'copy', kind: 'did', text: at }], actions: actions.concat(asm.actions), note: bb.summary, artifact: { kind: 'message', id: asm.messages[0].id },
+        artifacts: asm.messages.slice(1).map(function (x) { return { kind: 'message', id: x.id }; }),
+        data: { content: { messages: asm.messages.map(function (x) { return x.id; }), channels: asm.chans.slice(), summary: bb.summary, headlineIds: asm.headlineIds.slice() } } };
+    }
     var res = writeVariants(world, t, m, c2, { round: 1 });
     if (!res.n) return { error: 'None of the new drafts passed the brand checks.' };
     var text = 'Rewrote the messages around ' + L().offerLabel(c2.offer) + ': ' + res.n + ' new variants, replacing ' + retired + '. They’re in review.';

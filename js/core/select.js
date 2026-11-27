@@ -1374,6 +1374,25 @@
     return scored.length ? scored[0].id : null;
   }
 
+  // draftChecks(w, {name?, slots, channelOverrides?, tags?, blocks?: {id: {kind, value, tags}}}, channels, campaignId?)
+  //   -> { ok, channel?, problem?, renders: {ch: render} }: renders a message (and blocks) that does not exist yet in each channel and
+  //   reports the first brand, length or token problem, so an agent never proposes words that would fail at publish. Not memoized (inputs are drafts).
+  SEL.draftChecks = function (w, draft, channels, campaignId) {
+    var K = MC.content, S = K.slice(w), blocks = assign({}, S.blocks.byId), msgs = assign({}, S.messages.byId), order = S.blocks.order.slice();
+    Object.keys(draft.blocks || {}).sort().forEach(function (id) { blocks[id] = assign({ id: id, ver: 1, locale: 'en-US', review: 'in_review', tags: {}, history: [] }, draft.blocks[id]); order.push(id); });
+    msgs.$draft = { id: '$draft', ver: 1, review: 'in_review', name: draft.name || 'Draft', slots: draft.slots, channelOverrides: draft.channelOverrides || {}, tags: draft.tags || {} };
+    var fw = assign({}, w, { content: assign({}, w.content, { blocks: { byId: blocks, order: order }, messages: { byId: msgs, order: S.messages.order.concat(['$draft']) } }) });
+    var out = { ok: true, renders: {} };
+    for (var i = 0; i < channels.length; i++) {
+      var r = K.render(fw, '$draft', channels[i], { campaignId: campaignId });
+      out.renders[channels[i]] = r;
+      if (r.error) return assign(out, { ok: false, channel: channels[i], problem: r.error });
+      var bad = K.failing(r)[0];
+      if (bad) return assign(out, { ok: false, channel: channels[i], problem: bad.label });
+    }
+    return out;
+  };
+
   // contentContrast(w, {by, a, b, channel, kind?}) -> how group a does against group b on one channel: { enough, reason, contrast:{value,lo,hi}, a, b, metric }
   SEL.contentContrast = function (w, o) {
     o = o || {};

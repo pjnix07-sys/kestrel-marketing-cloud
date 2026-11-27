@@ -1,6 +1,9 @@
-// Content model engine tests (Node, loads like tools/smoke.js). Usage: node tools/content-test.js
-// Covers docs/CONTENT.md "Model" and "Simulation truth": render per channel within limits, reuse counts, publish and
-// version flow, retire flow, simulator ledgers and determinism (including a replay of the action log).
+// Content tests (Node, loads like tools/smoke.js). Usage: node tools/content-test.js
+// Covers docs/CONTENT.md "Model" and "Simulation truth" (render per channel within limits, reuse counts, publish and
+// version flow, retire flow, simulator ledgers and determinism, including a replay of the action log), then
+// "Content intelligence" (selectors recover the seeded email signal and reuse fatigue, with intervals and honest
+// "not enough data") and "Agents" (Copy Drafter, Variant Optimizer, Fatigue Guard, Insight Analyst and the mission's
+// copy step each act on the sample world within about 400 ticks, through proposals, deterministically).
 'use strict';
 const fs = require('fs'), path = require('path'), vm = require('vm');
 const root = path.join(__dirname, '..');
@@ -218,6 +221,206 @@ function must(name, r) { check(name, r && r.ok, r && r.error); return r; }
   const stats = S.variantStats(r1.x, 'c-wll', 'email');
   check('variantStats still works for linked variants', !!stats && JSON.stringify(stats).length > 10);
 
+  await intelligence();
+  await agents();
+  await missionCopy();
+
   console.log('content-test: ' + (fails ? fails + ' FAILED, ' : 'all ') + passes + ' pass');
   if (fails) process.exitCode = 1;
 })().catch(e => { console.log('RUN FAIL', e.stack); process.exitCode = 1; });
+
+/* ================= content intelligence (selectors) ================= */
+const TICKS = 420;
+const inside = x => !!x && [x.value, x.lo, x.hi].every(Number.isFinite) && x.lo <= x.value + 1e-9 && x.value <= x.hi + 1e-9;
+async function intelligence() {
+  const MC = await boot(), S = MC.select, K = MC.content; let w = MC.store.getState();
+  check('selectors exist', ['contentPerformance', 'contentMatrix', 'blockFatigue', 'contentRecommendations', 'whereUsed'].every(n => typeof S[n] === 'function'));
+  w = adv(MC, TICKS);
+
+  // every figure carries an interval; thin data says so
+  const ang = S.contentPerformance(w, { by: 'angle' }), trail = ang.rows.find(r => r.key === 'trail-season'), urg = ang.rows.find(r => r.key === 'urgency');
+  check('contentPerformance by angle returns rows (array and .rows)', Array.isArray(ang) && ang.rows === ang && ang.length >= 4 && ang.by === 'angle', ang.length);
+  check('rates per delivery carry 95% intervals', ang.every(r => ['open', 'click', 'conv'].every(m => r.rates[m].lo <= r.rates[m].rate + 1e-12 && r.rates[m].rate <= r.rates[m].hi + 1e-12 && r.rates[m].hi <= 1)));
+  check('revenue per send carries an interval', ang.every(r => r.revPerSend.lo <= r.revPerSend.value + 1e-9 && r.revPerSend.value <= r.revPerSend.hi + 1e-9), JSON.stringify(ang[0].revPerSend));
+  let cells = 0, pointOnly = [];
+  ang.forEach(r => Object.keys(r.byChannel).forEach(ch => { const c = r.byChannel[ch]; cells++; if (c.enough ? !inside(c.lift) : (c.lift !== null || typeof c.reason !== 'string' || !c.reason)) pointOnly.push(r.key + ':' + ch); }));
+  check('lift is always interval-backed, otherwise enough:false with a reason', cells >= 8 && pointOnly.length === 0, pointOnly.join());
+  const tEmail = trail.byChannel.email, uEmail = urg.byChannel.email;
+  check('email: trail-season headlines beat the rest of the library, interval above zero', tEmail.enough && tEmail.lift.lo > 0 && tEmail.lift.value > 0.05, JSON.stringify(tEmail.lift));
+  check('email: urgency without a deadline trails, interval below zero', uEmail.enough && uEmail.lift.hi < 0, JSON.stringify(uEmail.lift));
+  const con = S.contentContrast(w, { by: 'angle', a: 'trail-season', b: 'urgency', channel: 'email' });
+  check('email: trail-season vs urgency recovers the seeded gap with an interval clear of zero', con.enough && con.contrast.lo > 0 && con.contrast.value > 0.1 && con.contrast.hi < 3, JSON.stringify(con.contrast));
+  check('SMS and push are not enough yet, with a reason', ['sms', 'push'].every(ch => { const c = trail.byChannel[ch]; return c && !c.enough && c.lift === null && /delivered|so far|yet/.test(c.reason); }), JSON.stringify(['sms', 'push'].map(ch => trail.byChannel[ch] && trail.byChannel[ch].reason)));
+  const sc = S.contentContrast(w, { by: 'angle', a: 'trail-season', b: 'urgency', channel: 'sms' });
+  check('contrast on a thin channel says not enough', !sc.enough && sc.contrast === null && !!sc.reason, sc.reason);
+
+  // block level, windows, other dimensions
+  const blk = S.contentPerformance(w, { by: 'block', kind: 'headline', channel: 'email' });
+  check('by block lists headline blocks with their own lift', blk.length >= 8 && blk.every(r => r.kind === 'headline' && r.blockIds.length === 1 && r.channel === 'email') && blk.some(r => r.enough && inside(r.lift)));
+  const win = S.contentPerformance(w, { by: 'angle', days: 3 }), sumD = rs => rs.reduce((a, r) => a + r.delivered, 0);
+  check('days narrows the window', sumD(win) > 0 && sumD(win) < sumD(ang), sumD(win) + ' vs ' + sumD(ang));
+  check('by tone and by offerType work', S.contentPerformance(w, { by: 'tone' }).length >= 3 && S.contentPerformance(w, { by: 'offerType' }).some(r => r.key === 'pct15') && S.contentPerformance(w, { by: 'image' }).length >= 3);
+  check('trend is a daily series', trail.trend.length >= 5 && trail.trend.every(p => p.delivered > 0 && p.rate >= 0 && p.rate <= 1));
+  check('memoised like the other selectors', S.contentPerformance(w, { by: 'angle' }) === ang && S.contentMatrix(w, { dim: 'angle' }) === S.contentMatrix(w, { dim: 'angle' }) && S.contentPerformance(w, { by: 'tone' }) !== ang && S.blockFatigue(w, 'b-h-trail-frost') === S.blockFatigue(w, 'b-h-trail-frost') && S.contentRecommendations(w) === S.contentRecommendations(w));
+  const w1 = adv(MC, 1);
+  check('a new tick recomputes', S.contentPerformance(w1, { by: 'angle' }) !== ang);
+
+  // the matrix
+  const M = S.contentMatrix(w, { dim: 'angle' });
+  check('matrix is attribute by channel', M.dim === 'angle' && M.channels.join() === MC.CH.OWNED.join() && M.rows.length >= 4 && M.rows.every(r => M.channels.every(ch => r.cells[ch])));
+  const mt = M.rows.find(r => r.key === 'trail-season');
+  check('matrix cells: email has a lift with interval, SMS and push say not enough', mt.cells.email.enough && inside(mt.cells.email.lift) && !mt.cells.sms.enough && mt.cells.sms.lift === null && !!mt.cells.sms.reason && !mt.cells.push.enough && !!mt.cells.push.reason);
+
+  // reuse fatigue
+  const f = S.blockFatigue(w, 'b-h-trail-frost');
+  check('fatigue curve by exposure', f.found && f.curve.length === 6 && f.curve[0].delivered > 500 && f.curve[0].rate.rate > f.curve[2].rate.rate, JSON.stringify(f.curve.map(c => [c.delivered, +c.rate.rate.toFixed(3)])));
+  check('fatigue: response drops when the same people see it again, with an interval', f.enough && f.drop.value < -0.1 && f.drop.hi < 0 && f.drop.lo < f.drop.value && f.tired, JSON.stringify(f.drop));
+  check('fatigue: who has seen it how often', f.exposures && f.exposures.people > 100 && f.exposures.distribution.length === 5 && f.exposures.repeatShare > 0.3 && f.exposures.repeatShare <= 1, JSON.stringify(f.exposures));
+  check('fatigue: tired since is a day or null', f.tiredSince === null || (Number.isFinite(f.tiredSince.day) && f.tiredSince.tick === f.tiredSince.day * 24));
+  const fresh = S.blockFatigue(w, 'b-bd-trail-1'), ghost = S.blockFatigue(w, 'b-nope');
+  check('fatigue: a block that is not tired says so honestly', !fresh.tired && (fresh.enough ? fresh.drop.hi >= 0 || fresh.drop.value > -0.1 : !!fresh.reason), JSON.stringify(fresh.drop) + fresh.reason);
+  check('fatigue: unknown block', ghost.found === false && !ghost.tired && !!ghost.reason);
+  const tiredIds = K.blocks(w).filter(b => S.blockFatigue(w, b.id).tired).map(b => b.id);
+  check('several blocks are tired by now, and the seeded signal is not everywhere', tiredIds.length >= 3 && tiredIds.length < K.blocks(w).length / 2, tiredIds.join());
+
+  // recommendations
+  const R = S.contentRecommendations(w), kinds = new Set(R.map(r => r.kind));
+  check('recommendations: winners, tired blocks and missing data', R.length >= 4 && ['angle-winner', 'retire-block', 'needs-data'].every(k => kinds.has(k)), [...kinds].join());
+  check('recommendations reference real blocks', R.every(r => r.blockIds.every(id => K.block(w, id)) && (!r.replacementId || K.block(w, r.replacementId))), JSON.stringify(R.map(r => r.blockIds)));
+  const ret = R.filter(r => r.kind === 'retire-block');
+  check('retire recommendations name a usable replacement of the same kind and angle', ret.length >= 2 && ret.every(r => { const b = K.block(w, r.blockIds[0]), rp = r.replacementId && K.block(w, r.replacementId); return K.usedCount(w, b.id) === r.placements && (!rp || (rp.kind === b.kind && rp.review === 'approved' && !rp.retired && !rp.archived && (b.kind !== 'headline' || rp.tags.angle === b.tags.angle) && rp.id !== b.id)); }));
+  check('retire recommendations carry the fatigue interval', ret.every(r => r.fatigue.drop.hi < 0 && inside(r.fatigue.drop)));
+  const win0 = R.find(r => r.kind === 'angle-winner' && r.channel === 'email');
+  check('angle winner on email: interval clear of zero, evidence from the ledger', win0 && inside(win0.contrast) && win0.contrast.lo > 0 && win0.best.angle !== win0.worst.angle && /by \d+% on email opens \(\d+% to \d+%\)/.test(win0.summary), win0 && win0.summary);
+  check('winner points at approved headline blocks of the winning angle', win0.blockIds.every(id => { const b = K.block(w, id); return b.kind === 'headline' && b.review === 'approved' && b.tags.angle === win0.best.angle; }));
+  check('SMS and push are called out as needing data', ['sms', 'push'].every(ch => R.some(r => r.kind === 'needs-data' && r.channel === ch && r.summary.length > 10)));
+  check('write-blocks recommendation names the kind and angle', R.filter(r => r.kind === 'write-blocks').every(r => ['headline', 'body', 'cta'].includes(r.blockKind) && K.ANGLES.includes(r.angle)));
+
+  // dry-run render of words that do not exist yet
+  const good = S.draftChecks(w, { slots: { headline: '$h', body: 'b-bd-warm-1', cta: 'b-cta-look' }, blocks: { $h: { kind: 'headline', value: 'Warm layers for the first frost', tags: { angle: 'warmth' } } } }, ['email', 'sms', 'push'], 'c-wll');
+  const bad = S.draftChecks(w, { slots: { headline: '$h', body: 'b-bd-warm-1', cta: 'b-cta-look' }, blocks: { $h: { kind: 'headline', value: 'BUY NOW AND SAVE HUGE ON EVERYTHING TODAY ONLY', tags: {} } } }, ['email'], 'c-wll');
+  check('draftChecks accepts clean words and reports a failing channel', good.ok && !bad.ok && !!bad.problem, JSON.stringify([good.ok, bad.problem]));
+  check('draftChecks never touches the world', !K.block(w, '$h') && K.messages(w).every(m => m.id !== '$draft'));
+}
+
+/* ================= agents ================= */
+function props(w, f) { return w.proposals.order.map(id => w.proposals.byId[id]).filter(f); }
+function runNow(MC, id) { const w = MC.store.getState(); MC.runtime.runAgent(w, id, w.meta.tick, 'runNow'); return MC.store.getState(); }
+function approve(MC, id) { return MC.catalog.dispatchUser(MC.store.getState(), { type: 'proposal/approve', payload: { id } }); }
+async function agentsRun() {
+  const MC = await boot(); let w = adv(MC, TICKS);
+  const out = { MC, w };
+  return out;
+}
+async function agents() {
+  const { MC, w: w0 } = await agentsRun(), K = MC.content, S = MC.select; let w = w0;
+  const audit = w.audit.entries;
+  check('no agent run errored', audit.every(e => !e.error), audit.filter(e => e.error).map(e => e.agentId + e.error).join());
+
+  /* Fatigue Guard: retire a tired block everywhere it runs, one proposal */
+  const retire = props(w, p => p.kind === 'retire-block');
+  check('Guard proposes retiring a tired block', retire.length >= 1 && retire.every(p => p.agentId === 'guard' && p.target.kind === 'block' && K.block(w, p.target.id)), retire.length);
+  check('retire proposal is one action list: retire plus a swap for every placement', retire.every(p => p.actions[0].type === 'block/retire' && p.actions[0].payload.id === p.target.id && p.actions.slice(1).every(a => /^message\/set(Slot|Override)$/.test(a.type)) && p.actions.length > 1));
+  const pend = retire.find(p => p.status === 'pending') || retire[0];
+  const placements = K.messagesUsing(w, pend.target.id).reduce((n, m) => n + K.placements(m, pend.target.id).length, 0);
+  check('it lists every placement (swapActions)', pend.actions.length - 1 === placements && pend.diff.length === placements, pend.actions.length + ' ' + placements + ' ' + pend.diff.length);
+  check('it always asks (never auto-applies words)', retire.every(p => p.mustQueue && p.status !== 'auto' && p.risk === 'medium'));
+  check('it quotes the interval and the evidence', /fall \d+% \(\d+% to \d+%\)/.test(pend.rationale) && pend.evidence.length >= 3 && pend.impact && pend.impact.delta > 0 && pend.impact.lo <= pend.impact.delta && pend.impact.delta <= pend.impact.hi, pend.rationale);
+  check('retire proposals pass the guardrails', retire.every(p => p.guardrails.every(g => g.pass || !g.blocking)), JSON.stringify(retire[0].guardrails.filter(g => !g.pass)));
+
+  /* Insight Analyst */
+  const ci = (w.insights || []).filter(i => i.kind === 'content' && i.agentId === 'analyst');
+  check('Analyst writes content insights', ci.length >= 1, ci.length);
+  check('insight reads "<angle> headlines beat <angle> by N% on <channel> <metric> (lo to hi)"', ci.every(i => /^[A-Z][\w-]* headlines beat [\w-]+ by \d+% on (email|push|SMS) (opens|clicks) \(\d+% to \d+%\)/.test(i.title)), ci.map(i => i.title).join(' | '));
+  check('insight says which channels do not have enough data yet', ci.every(i => /(SMS|push|email)( and (SMS|push|email))? (doesn.t|don.t) have enough data yet/.test(i.body)), ci[0] && ci[0].body);
+  const byKey = {}; ci.forEach(i => { (byKey[i.key] = byKey[i.key] || []).push(i.tick); });
+  check('no repeats inside a week', Object.values(byKey).every(ts => ts.every((x, i) => i === 0 || ts[i - 1] - x >= 168)), JSON.stringify(byKey));
+  check('insight figures are ordered: lower bound, estimate, upper bound', ci.every(i => { const m = /by (\d+)% on \w+ \w+ \((\d+)% to (\d+)%\)/.exec(i.title); return m && +m[2] <= +m[1] && +m[1] <= +m[3] && +m[2] > 0; }), ci.map(i => i.title).join(' | '));
+
+  /* Variant Optimizer: block-level tests, judged from the ledger */
+  const tests = props(w, p => p.kind === 'block-test'), verd = props(w, p => p.kind === 'block-verdict');
+  check('Optimizer proposes block-level tests across channels', tests.length >= 1 && tests.every(p => p.agentId === 'optimizer' && p.mustQueue && p.actions.length === 2 && p.actions[0].type === 'message/create' && p.actions[1].type === 'message/publish' && p.actions[1].payload.channels.length >= 2 && w.campaigns.byId[p.target.id]), tests.length);
+  const t0 = tests.find(p => p.status === 'pending') || tests[0], cs = t0.actions[0].payload.message;
+  const base = K.messagesUsing(w, cs.slots.body).find(m => m.slots.cta === cs.slots.cta && m.slots.headline !== cs.slots.headline);
+  check('a test changes only the headline: same body, button and offer as a live message', !!base && cs.slots.offer === base.slots.offer && cs.slots.headline !== base.slots.headline && K.block(w, cs.slots.headline).review === 'approved' && !K.block(w, cs.slots.headline).retired);
+  check('the test quotes lift with its interval', /by \d+% \(\d+% to \d+%\)/.test(t0.rationale), t0.rationale);
+  check('Optimizer judges headline blocks from the ledger and queues the verdict', verd.length >= 1 && verd.every(p => p.agentId === 'optimizer' && p.mustQueue && p.actions.every(a => a.type === 'campaign/setAlloc') && /beats .* by \d+% \((\d+)% to \d+%\)/.test(p.rationale) && +/\((\d+)% to/.exec(p.rationale)[1] > 0), verd[0] && verd[0].rationale);
+  const pp = s => parseFloat(s) / 100;
+  check('a verdict moves traffic from the losing headline to the winning one within the per-run limit', verd.every(p => p.diff.length >= 2 && p.diff.every(d => Math.abs(pp(d.after) - pp(d.before)) <= 0.2 + 1e-9) && p.diff.some(d => pp(d.after) < pp(d.before)) && p.diff.some(d => pp(d.after) > pp(d.before)) && p.actions.every(a => Math.abs(Object.values(a.payload.alloc).reduce((x, y) => x + y, 0) - 1) < 1e-6)), JSON.stringify(verd[0] && verd[0].diff));
+  check('variant-level proposals are untouched (traffic shifts still happen)', props(w, p => p.kind === 'traffic-shift').length >= 3);
+
+  /* Copy Drafter: tagged blocks, messages composed from approved ones, everything in review */
+  const cv = props(w, p => p.agentId === 'copy' && p.kind === 'new-variant'), nb = props(w, p => p.agentId === 'copy' && p.kind === 'new-blocks');
+  check('Copy writes a challenger message when a leader tires', cv.length >= 1 && cv.every(p => p.mustQueue && p.actions.map(a => a.type).join() === 'block/create,block/create,message/create,message/publish'), cv.length);
+  check('its blocks are tagged and valid', cv.concat(nb).every(p => p.actions.filter(a => a.type === 'block/create').every(a => !K.valueError(a.payload.block.kind, a.payload.block.value) && !MC.content.tagsError(a.payload.block.tags) && a.payload.block.tags.angle && a.payload.block.tags.tone)));
+  check('the message is composed from approved blocks plus its own new ones', cv.every(p => { const s = p.actions[2].payload.message.slots; return s.headline === '$h0' && s.body === '$b0' && K.block(w, s.cta).review === 'approved' && (!s.offer || K.block(w, s.offer).review === 'approved') && (s.claims || []).every(id => K.block(w, id).review === 'approved'); }));
+  check('it writes toward the angle the ledger says is winning', cv.some(p => /beat .* by \d+% on email opens/.test(p.rationale)), cv[0] && cv[0].rationale);
+  check('Copy also writes blocks for the library when a winning angle is short or a tired block has no replacement', nb.length >= 1 && nb.every(p => p.mustQueue && p.target.kind === 'library' && p.actions.every(a => a.type === 'block/create') && p.impact === null), nb.length);
+  check('new words never auto-apply', props(w, p => p.agentId === 'copy').every(p => p.status !== 'auto'));
+
+  /* run them again to get fresh pending proposals, then approve and look at what lands */
+  w = runNow(MC, 'copy'); w = runNow(MC, 'guard'); w = runNow(MC, 'optimizer');
+  const newest = (agent, kind) => props(w, p => p.agentId === agent && p.kind === kind && p.status === 'pending')[0];
+  const gRet = newest('guard', 'retire-block'), oTest = newest('optimizer', 'block-test'), cMsg = newest('copy', 'new-variant'), cLib = newest('copy', 'new-blocks');
+  check('fresh pending proposals from each content behaviour', !!gRet && !!oTest && !!(cMsg || cLib), [gRet, oTest, cMsg, cLib].map(p => p && p.id).join());
+
+  // Guard: approve -> retired everywhere, edited messages back in review
+  const bid = gRet.target.id, usedBefore = K.messagesUsing(w, bid).map(m => m.id);
+  let r = approve(MC, gRet.id); w = MC.store.getState();
+  check('approving the retire proposal works', r.ok, r.error);
+  check('the block is retired and used nowhere', K.block(w, bid).retired && K.usedCount(w, bid) === 0 && S.whereUsed(w, bid).count === 0);
+  check('every message that carried it changed and returned to review; live variants show a newer version', usedBefore.every(id => K.message(w, id).review === 'in_review') && K.staleVariants(w).some(s => usedBefore.indexOf(s.messageId) >= 0));
+  check('the retired block no longer shows up as a retire recommendation', !S.contentRecommendations(w).some(x => x.kind === 'retire-block' && x.blockIds[0] === bid));
+
+  // Optimizer: approve the test -> a message and one variant per channel, all in review, none taking traffic yet
+  const tc = oTest.target.id, allocBefore = JSON.stringify(w.campaigns.byId[tc].alloc), nMsg = K.messages(w).length, nVar = Object.keys(w.variants.byId).length;
+  r = approve(MC, oTest.id); w = MC.store.getState();
+  const chs = oTest.actions[1].payload.channels, newMsg = w.proposals.byId[oTest.id].created.find(id => K.message(w, id));
+  check('approving the block test works', r.ok, r.error);
+  check('it adds one message in review', K.messages(w).length === nMsg + 1 && K.message(w, newMsg).review === 'in_review' && K.message(w, newMsg).author === 'agent:optimizer');
+  const nvs = Object.values(w.variants.byId).filter(v => v.messageId === newMsg);
+  check('and one variant per channel, in review, waiting for approval before any traffic', nvs.length === chs.length && Object.keys(w.variants.byId).length === nVar + chs.length && nvs.every(v => v.review === 'in_review' && v.pendingShare > 0 && chs.indexOf(v.channel) >= 0) && JSON.stringify(w.campaigns.byId[tc].alloc) === allocBefore, nvs.length + ' ' + chs.length);
+
+  // Copy: approve -> blocks and message enter review, tagged; nothing is live
+  const cp = cMsg || cLib, nBlocks = K.blocks(w).length;
+  r = approve(MC, cp.id); w = MC.store.getState();
+  check('approving Copy Drafter\'s proposal works', r.ok, r.error);
+  const made = w.proposals.byId[cp.id].created.map(id => K.block(w, id) || K.message(w, id)).filter(Boolean);
+  const madeBlocks = made.filter(x => x.kind), madeMsgs = made.filter(x => x.slots);
+  check('new blocks are in review, tagged, authored by the agent', madeBlocks.length === cp.actions.filter(a => a.type === 'block/create').length && madeBlocks.every(b => b.review === 'in_review' && b.author === 'agent:copy' && b.tags.angle && b.tags.tone && b.history.length === 1) && K.blocks(w).length === nBlocks + madeBlocks.length);
+  if (cMsg) {
+    check('the message is in review and uses the new headline', madeMsgs.length === 1 && madeMsgs[0].review === 'in_review' && madeBlocks.some(b => b.id === madeMsgs[0].slots.headline));
+    const cvs = Object.values(w.variants.byId).filter(v => v.messageId === madeMsgs[0].id);
+    check('its variants wait in review with no traffic', cvs.length >= 1 && cvs.every(v => v.review === 'in_review' && !((w.campaigns.byId[v.campaignId].alloc[v.channel] || {})[v.id] > 0)));
+    check('it cannot be published by a person until its new blocks are approved', !act(MC, 'message/publish', { id: madeMsgs[0].id, campaignId: cMsg.target.id, channels: [cvs[0].channel] }).ok);
+  }
+
+  /* determinism: a second run gives identical proposals, insights and selector output */
+  const sig = (MCx, wx) => MCx.util.digest({
+    p: props(wx, p => /^(retire-block|block-test|block-verdict|new-blocks|new-variant)$/.test(p.kind)).map(p => [p.id, p.kind, p.status, p.title, p.actions, p.impact]),
+    i: (wx.insights || []).filter(i => i.kind === 'content').map(i => [i.id, i.title, i.body]),
+    r: MCx.select.contentRecommendations(wx).map(x => [x.id, x.summary]), m: MCx.select.contentMatrix(wx, { dim: 'angle' }).rows.map(x => [x.key, x.delivered]) });
+  const A = await agentsRun(), B = await agentsRun();
+  check('agent behaviours and selectors are deterministic across runs', sig(A.MC, A.w) === sig(B.MC, B.w), sig(A.MC, A.w) + ' ' + sig(B.MC, B.w));
+  check('and the content proposals are non-trivial', props(A.w, p => /^(retire-block|block-test|new-blocks)$/.test(p.kind)).length >= 6);
+}
+
+/* ================= missions: the copy step assembles messages from approved blocks ================= */
+async function missionCopy() {
+  const MC = await boot(), K = MC.content; let w = MC.store.getState();
+  const r = MC.missions.createSync('Win back 400 lapsed hikers before Dec 15 without discounting more than 15%');
+  w = adv(MC, 50);
+  const m = MC.missions.get(w, r.id), c = w.campaigns.byId[m.data.campaignId], cd = m.data.content;
+  check('mission copy step assembles messages', !!cd && cd.messages.length >= 1 && cd.messages.every(id => K.message(w, id)), JSON.stringify(cd));
+  check('the hand-off reads "N messages · M channels"', /^\d+ messages? · \d+ channels?$/.test(cd.summary) && cd.summary.indexOf(cd.messages.length + (cd.messages.length === 1 ? ' message' : ' messages')) === 0 && cd.channels.length === c.channels.length && m.log.some(b => b.kind === 'did' && b.text.indexOf(cd.summary) >= 0), cd.summary);
+  const msgs = cd.messages.map(id => K.message(w, id));
+  check('messages are built from approved library blocks and wait in review', msgs.every(x => x.review === 'in_review' && x.author === 'agent:copy' && K.blockIdsOf(x).every(id => K.block(w, id).review === 'approved' && !K.block(w, id).retired)));
+  const vs = MC.catalog.variantsOf(w, c.id);
+  check('published to every channel: one variant per message and channel, all in review', vs.length === msgs.length * c.channels.length && vs.every(v => v.review === 'in_review' && cd.messages.indexOf(v.messageId) >= 0 && c.channels.indexOf(v.channel) >= 0));
+  check('each channel version passes the brand checks', msgs.every(x => c.channels.every(ch => !K.failing(K.render(w, x.id, ch, { campaignId: c.id })).length && !K.render(w, x.id, ch, { campaignId: c.id }).error)));
+  check('the best-evidenced headline leads, urgency is only used when there is a deadline', K.block(w, msgs[0].slots.headline).tags.angle !== 'urgency' || (c.offer && c.offer !== 'none'));
+  check('message artifacts are attached to the mission', m.artifacts.filter(a => a.kind === 'message').length === msgs.length);
+  const hand = m.plan.find(s => s.kind === 'copy');
+  check('the copy step carries the summary as its note', hand.status === 'done' && hand.note === cd.summary && hand.artifact && hand.artifact.kind === 'message');
+  check('allocations add up per channel', c.channels.every(ch => Math.abs(Object.values(c.alloc[ch] || {}).reduce((a, b) => a + b, 0) - 1) < 1e-6), JSON.stringify(c.alloc));
+}

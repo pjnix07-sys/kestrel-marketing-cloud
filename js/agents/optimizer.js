@@ -153,14 +153,15 @@
     var sum = 0, big = vs[0].id;
     vs.forEach(function (v) { sum += next[v.id]; if (next[v.id] > next[big]) big = v.id; });
     next[big] = Math.round((next[big] + (1 - sum)) * 1e4) / 1e4;
-    // value of the move: observed per-send rate of the two variants (the same measure the variant-level read uses)
-    var clicksGoal = !!CLICK_GOALS[u.goal], c = world.campaigns.byId[u.cid];
-    var val = clicksGoal ? (u.valuePerClick || 2) : (u.aov || fallbackPrice(world, c)), rate = function (v) { var s = clicksGoal ? v.clicks : v.conv; return v.sends > 0 ? s / v.sends : 0; };
-    var projSends = (u.recentSends / 3) * Math.min(3, Math.max(0, (u.endTick - t) / 24));
-    var delta = moved * projSends * val * (rate(gets) - rate(lose.a.v)), se = 1.28 * moved * projSends * val * Math.sqrt(Math.max(rate(gets), 1e-4) / Math.max(1, gets.sends) + Math.max(rate(lose.a.v), 1e-4) / Math.max(1, lose.a.v.sends));
-    if (!(delta > 0)) { rows.push({ campaign: u.name, channel: chName(ch), 'block read': 'Headline loses clearly, but the traffic move wouldn’t raise expected revenue yet', result: 'Held' }); return; }
+    // value of the move: the loser's revenue per send on this channel, lifted by how much better the winning headline does
+    // (the ledger's rate ratio and its interval); assumes revenue follows the measured response in proportion
+    var sends = 0, rev = 0;
+    vs.forEach(function (v) { sends += v.sends; rev += v.revenue; });
+    var rps = sends > 0 ? rev / sends : 0, projSends = (u.recentSends / 3) * Math.min(3, Math.max(0, (u.endTick - t) / 24)), f = moved * projSends * rps;
+    var delta = f * lose.d.value, lo = f * lose.d.lo, hi = f * lose.d.hi;
+    if (!(delta > 0)) { rows.push({ campaign: u.name, channel: chName(ch), 'block read': 'Headline loses clearly, but this channel hasn\u2019t earned anything yet to move', result: 'Held' }); return; }
     (verdicts[u.cid] = verdicts[u.cid] || { name: u.name, cid: u.cid, units: [] }).units.push({ ch: ch, m: m, best: best, lose: lose, moved: moved, next: next, vs: vs,
-      impact: { delta: delta, lo: delta - se, hi: delta + se } });
+      impact: { delta: delta, lo: lo, hi: hi } });
   }
 
   function judgeProposals(world, verdicts, proposals, rows) {
@@ -179,7 +180,7 @@
       });
       var first = V.units[0];
       proposals.push({
-        kind: 'block-verdict', risk: 'low', horizon: 72,
+        kind: 'block-verdict', risk: 'low', mustQueue: true, horizon: 72,   // a read across campaigns: a person decides before it overrides the variant-level split
         target: { kind: 'campaign', id: cid },
         title: 'Move traffic off a losing headline on ' + joinList(chs) + ' in ' + V.name,
         rationale: lines.join('; ') + '. The comparison is per delivery across every send of these headlines, with a 95% interval; ' +
@@ -224,7 +225,7 @@
       if (!base) { row.result = 'No message runs on two channels'; rows.push(row); return; }
       var msg = K.message(world, base.id), chs = owned.filter(function (ch) { return base.chs[ch]; });
       var curId = msg.slots.headline, cur = K.block(world, curId);
-      if (!cur || msg.review !== 'approved' && false) return;
+      if (!cur) return;
       var blockRows = {}, angleRows = {};
       chs.forEach(function (ch) { blockRows[ch] = S.contentPerformance(world, { by: 'block', kind: 'headline', channel: ch }); angleRows[ch] = S.contentPerformance(world, { by: 'angle', channel: ch }); });
       // headlines already running in this campaign are not new tests
@@ -251,8 +252,7 @@
         var cb = cands[i].b, slots = assign({}, msg.slots, { headline: cb.id }), co = {};
         Object.keys(msg.channelOverrides || {}).sort().forEach(function (ch) { var o = assign({}, msg.channelOverrides[ch]); delete o.headline; if (Object.keys(o).length) co[ch] = o; });
         var draft = { name: clip(c.name + ': ' + ((K.ANGLE_LABEL[cb.tags.angle] || 'new') + ' headline test'), 78), slots: slots, channelOverrides: co, tags: assign({}, msg.tags, { angle: cb.tags.angle || 'neutral' }) };
-        var bad = renderBad(world, draft, chs, cid);
-        if (!bad) { pick = cands[i]; name = draft; }
+        if (S.draftChecks(world, draft, chs, cid).ok) { pick = cands[i]; name = draft; }
       }
       if (!pick) { row.result = 'No tested headline reads well in every channel'; rows.push(row); return; }
       // value: what the headline's relative lift is worth on the share of sends it will get
@@ -290,20 +290,6 @@
       });
     });
   }
-  // Renders a message that does not exist yet in each channel; returns the first problem or null.
-  function renderBad(world, draft, chs, cid) {
-    var K = MC.content, S = K.slice(world), by = assign({}, S.messages.byId);
-    by.$test = assign({ id: '$test', ver: 1, review: 'in_review' }, draft);
-    var fw = assign({}, world, { content: assign({}, world.content, { messages: { byId: by, order: S.messages.order.concat(['$test']) } }) });
-    for (var i = 0; i < chs.length; i++) {
-      var r = K.render(fw, '$test', chs[i], { campaignId: cid });
-      if (r.error) return r.error;
-      var f = K.failing(r)[0];
-      if (f) return f.label;
-    }
-    return null;
-  }
-
   /* ---------------- decide ---------------- */
   function decide(obs, ctx) {
     var prm = ctx.params, rng = ctx.rng, t = ctx.tick, world = ctx.world;
@@ -378,7 +364,9 @@
           impact: impactOf(nextP),
           actions: [{ type: 'variant/setStatus', payload: { id: pv.id, status: 'paused' } }],
           diff: vs.map(function (v) { return { label: 'Variant ' + v.name + (v.id === pv.id ? ' (paused)' : '') + ' share', before: pct(v.share), after: pct(nextP[v.id]) }; })
-        });
+        };
+        if (Math.abs(pauseDraft.impact.delta) < MIN_IMPACT) { row.result = 'Dropped: below the materiality threshold (' + MIN_IMPACT + ')'; return; }
+        proposals.push(pauseDraft);
         row.result = 'Pause variant ' + pv.name;
         return;   // the pause already moves traffic on this channel
       }
