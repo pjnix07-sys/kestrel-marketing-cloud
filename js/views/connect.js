@@ -99,7 +99,7 @@
 
     function markVisited() { setVisited(function (v) { return v || true; }); }
     var KEY_URL = A.KEY_URL || 'https://platform.claude.com/settings/keys';
-    var msgText = localMsg ? localMsg.text : ((g.state === 'invalid' || g.state === 'blocked') ? g.message : '');
+    var msgText = localMsg ? localMsg.text : ((g.state === 'invalid' || g.state === 'blocked') ? g.message : (g.lastError ? 'Claude rejected the last request: ' + g.lastError : ''));
     var msgTone = localMsg ? localMsg.tone : 'crit';
     var hasDisabledAi = typeof A.connect !== 'function';
     var pasteIsMain = visited === 'back' && !manual;
