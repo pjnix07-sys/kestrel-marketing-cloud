@@ -13,7 +13,7 @@
 
   var DASH = '–', DOT = '·';
   var EMPTY = [];
-  var ROW_H = 76, BLOCK_H = 46, LABEL_W = 176, LABEL_W_NARROW = 112, MIN_COL = 128;
+  var ROW_H = 78, BLOCK_H = 54, CAP_H = 20, MIN_COL = 156;
 
   function html() { return MC.html.apply(null, arguments); }
   function R() { return window.React; }
@@ -28,6 +28,13 @@
   function agentName(id) { return L().agentName ? L().agentName(id) : (MC.ui && MC.ui.agentName ? MC.ui.agentName(id) : id); }
   function Mark(p) { var C = MC.ui && MC.ui.AgentMark; return C ? html`<${C} id=${p.id} size=${p.size || 14} badge=${p.badge} />` : null; }
   function dayShort(d) { try { return L().dayShort(d); } catch (e) { return 'day ' + d; } }
+  function ago(tick, now) {
+    var T = MC.time, d, dd;
+    if (!T || !T.dayOf || !fin(tick) || !fin(now)) return '';
+    dd = T.dayOf(now) - T.dayOf(tick);
+    if (dd >= 7) return dd < 14 ? '1 week ago' : Math.floor(dd / 7) + ' weeks ago';
+    return T.relative ? T.relative(tick, now) : '';
+  }
   function getWorld() { return MC.store && MC.store.getState ? MC.store.getState() : null; }
 
   /* ======================= selectors over the live world ======================= */
@@ -105,6 +112,7 @@
     if (c && (s.kind === 'pacer' || s.kind === 'budget')) return { short: money(c.budget.total) + ' split', full: money(c.budget.total) + ' split across ' + c.channels.length + ' channels' };
     if (s.kind === 'sendtime') return { short: 'Send windows', full: s.note || 'Send windows set' };
     if (s.kind === 'guard') return { short: 'Rested list', full: s.note || 'Over-messaged people rested' };
+    if (s.kind === 'goal') return { short: 'Goal and limits', full: s.note || 'Goal confirmed' };
     if (s.kind === 'handoff') return { short: 'For sign-off', full: s.note || 'Ready for your sign-off' };
     return { short: trunc(s.note || s.title, 18), full: s.note || s.title };
   }
@@ -215,19 +223,44 @@
         aria-label=${agentName(s.agentId) + ': ' + s.title + ', ' + label}
         style=${{ left: pos.x + 'px', top: pos.y + 'px', width: pos.w + 'px', height: BLOCK_H + 'px' }}>
       <span className="mr-blk-t">${s.title}</span>
+      <span className="mr-sr">${label}</span>
       ${st === 'working' ? html`<i className="mr-blk-fill" style=${{ width: (frac * 100).toFixed(0) + '%' }}></i>` : null}
     </div>`;
+  }
+
+  function stepLine(m, aid) {
+    var mine = (m.plan || EMPTY).filter(function (s) { return s.agentId === aid; });
+    var cur = mine.filter(function (s) { return s.status === 'working'; })[0], bl = mine.filter(function (s) { return s.status === 'blocked'; })[0];
+    var q = mine.filter(function (s) { return s.status === 'queued'; })[0];
+    var allDone = mine.every(function (s) { return s.status === 'done' || s.status === 'skipped'; });
+    var last = mine.filter(function (s) { return s.status === 'done'; }).pop();
+    if (cur) return { state: 'work', word: 'Working', title: cur.title };
+    if (bl) return { state: 'wait', word: 'Waiting on you', title: bl.title };
+    if (allDone) return { state: 'ok', word: 'Done', title: m.phase === 'monitoring' && aid === 'analyst' ? 'Tracking results daily' : last ? last.title : 'Nothing left to do' };
+    return { state: 'idle', word: 'Up next', title: q ? q.title : 'Idle' };
+  }
+  function AgentRows(p) {
+    var m = p.m;
+    return html`<ul className="mr-rows" aria-label="Agents and their current step">${p.lay.rows.map(function (aid) {
+      var ln = stepLine(m, aid), mine = (m.plan || EMPTY).filter(function (s) { return s.agentId === aid; });
+      var done = mine.filter(function (s) { return s.status === 'done'; }).length;
+      return html`<li key=${aid} className=${cx('mr-row', 'is-' + ln.state)}>
+        <span className="mr-row-h"><span className="mr-led" aria-hidden="true"></span><span className="mr-nm"><${Mark} id=${aid} size=${14} />${agentName(aid)}</span>
+          <span className="mr-row-w">${ln.word}</span></span>
+        <span className="mr-row-t">${ln.title}</span>
+        <span className="mr-row-n">${done} of ${mine.length} ${mine.length === 1 ? 'step' : 'steps'} done</span>
+      </li>`;
+    })}</ul>`;
   }
 
   function Board(p) {
     var React = R(), m = p.m, w = p.world, lay = p.lay, ref = React.useRef(null);
     var avail = MC.hooks.useWidth(ref);
-    var narrow = avail > 0 && avail < 640, lw = narrow ? LABEL_W_NARROW : LABEL_W;
-    var stageAvail = Math.max(0, avail - lw);
-    var colW = Math.max(MIN_COL, lay.ncols ? stageAvail / lay.ncols : MIN_COL);
-    var gap = clamp(colW * 0.3, 34, 62), blockW = colW - gap, stageW = colW * lay.ncols;
+    var narrow = avail > 0 && avail < 600;
+    var colW = Math.max(MIN_COL, lay.ncols ? avail / lay.ncols : MIN_COL);
+    var gap = clamp(colW * 0.12, 18, 30), blockW = colW - gap, stageW = colW * lay.ncols;
     var H = lay.rows.length * ROW_H, tick = w.meta.tick;
-    function pos(s) { var c = lay.cells[s.id]; return { x: c.col * colW, y: c.row * ROW_H + (ROW_H - BLOCK_H) / 2 - 6, w: blockW }; }
+    function pos(s) { var c = lay.cells[s.id]; return { x: c.col * colW, y: c.row * ROW_H + CAP_H, w: blockW }; }
     var wires = [], chips = [], seenChip = {};
     (m.plan || EMPTY).forEach(function (s) {
       (s.needs || EMPTY).forEach(function (nid) {
@@ -239,57 +272,52 @@
         if (Math.abs(y2 - y1) < 2 * r) d = 'M' + x1 + ' ' + y1 + 'H' + x2;
         else d = 'M' + x1 + ' ' + y1 + 'H' + (xm - r) + 'Q' + xm + ' ' + y1 + ' ' + xm + ' ' + (y1 + sg * r) + 'V' + (y2 - sg * r) + 'Q' + xm + ' ' + y2 + ' ' + (xm + r) + ' ' + y2 + 'H' + x2;
         var active = src.status === 'done' && s.status !== 'done' && s.status !== 'skipped';
-        wires.push({ k: nid + '>' + s.id, d: d, active: active, blocked: s.status === 'blocked' });
-        if (active && !seenChip[nid]) { seenChip[nid] = 1; chips.push({ k: nid, x: a.x, y: a.y + BLOCK_H + 2, p: payloadOf(w, m, src), from: src.agentId, to: s.agentId }); }
+        var passed = src.status === 'done' && !active;
+        wires.push({ k: nid + '>' + s.id, d: d, active: active, passed: passed });
+        if (src.status === 'done' && !seenChip[nid]) { seenChip[nid] = 1; chips.push({ k: nid, x: a.x + a.w, y: lay.cells[nid].row * ROW_H + 2, active: active, p: payloadOf(w, m, src), from: src.agentId, to: s.agentId }); }
+        else if (active && seenChip[nid]) chips.forEach(function (c) { if (c.k === nid) c.active = true; });
       });
     });
     return html`<div className="mr-scroll" data-tour="lanes" ref=${ref} role="region" aria-label="Agent team board" tabIndex="0">
-      <div className="mr-lanes" style=${{ width: (lw + stageW) + 'px', minWidth: '100%' }}>
-        <svg className="mr-wires" aria-hidden="true" width=${stageW} height=${H} style=${{ left: lw + 'px' }}>
-          ${wires.map(function (x) { return html`<path key=${x.k} d=${x.d} className=${cx(x.active && 'is-active')} />`; })}
-        </svg>
+      ${narrow ? html`<${AgentRows} m=${m} lay=${lay} />` : html`<div className="mr-lanes" style=${{ width: stageW + 'px', minWidth: '100%' }}>
         ${lay.rows.map(function (aid, ri) {
-          var mine = (m.plan || EMPTY).filter(function (s) { return s.agentId === aid; });
-          var cur = mine.filter(function (s) { return s.status === 'working'; })[0], bl = mine.filter(function (s) { return s.status === 'blocked'; })[0];
-          var allDone = mine.every(function (s) { return s.status === 'done' || s.status === 'skipped'; });
-          var state = cur ? 'work' : bl ? 'wait' : allDone ? 'ok' : 'idle';
-          var line = cur ? cur.title : bl ? 'Waiting on you' : allDone ? (m.phase === 'monitoring' && aid === 'analyst' ? 'Tracking daily' : 'Done') : (function () { var q = mine.filter(function (s) { return s.status === 'queued'; })[0]; return q ? 'Next: ' + lcFirst(q.title) : 'Idle'; })();
-          return html`<div key=${aid} className=${cx('mr-lane', 'is-' + state)} style=${{ height: ROW_H + 'px' }}>
-            <div className="mr-who" style=${{ width: lw + 'px' }}>
-              <span className="mr-led" aria-hidden="true"></span>
-              <span className="mr-who-tx"><span className="mr-nm"><${Mark} id=${aid} size=${14} />${agentName(aid)}</span>
-                ${narrow ? null : html`<span className="mr-st">${line}</span>`}</span>
-            </div>
+          var ln = stepLine(m, aid);
+          return html`<div key=${aid} className=${cx('mr-lane', 'is-' + ln.state)} style=${{ height: ROW_H + 'px' }}>
+            <span className="mr-cap"><span className="mr-led" aria-hidden="true"></span><span className="mr-nm"><${Mark} id=${aid} size=${14} />${agentName(aid)}</span></span>
           </div>`;
         })}
-        <div className="mr-stage" role="list" aria-label="Steps" style=${{ left: lw + 'px', width: stageW + 'px', height: H + 'px' }}>
+        <svg className="mr-wires" aria-hidden="true" width=${stageW} height=${H}>
+          ${wires.map(function (x) { return html`<path key=${x.k} d=${x.d} className=${cx(x.active && 'is-active', x.passed && 'is-passed')} />`; })}
+        </svg>
+        <div className="mr-stage" role="list" aria-label="Steps" style=${{ left: 0, width: stageW + 'px', height: H + 'px' }}>
           ${(m.plan || EMPTY).map(function (s) { return lay.cells[s.id] ? html`<${Block} key=${s.id} step=${s} pos=${pos(s)} tick=${tick} flash=${p.flash[s.id]} />` : null; })}
           ${chips.map(function (c) {
-            return html`<span key=${'c' + c.k} className="mr-baton" style=${{ left: (c.x + 4) + 'px', top: c.y + 'px', maxWidth: Math.max(blockW + gap - 8, 120) + 'px' }}
-              title=${agentName(c.from) + ' hands ' + c.p.full + ' to ' + agentName(c.to)}>${c.p.short}</span>`;
+            return html`<span key=${'c' + c.k} className=${cx('mr-baton', c.active && 'is-active')} style=${{ left: (c.x + 3) + 'px', top: c.y + 'px', maxWidth: Math.max(colW + gap, 150) + 'px' }}
+              title=${agentName(c.from) + ' handed ' + c.p.full + ' to ' + agentName(c.to)}>${c.p.short}</span>`;
           })}
         </div>
-      </div>
+      </div>`}
     </div>`;
   }
 
   function AskCard(p) {
     var ask = p.ask, m = p.m, im = ask.impact || {}, metric = im.metric || '';
     var hasImpact = fin(im.lo) && fin(im.hi) && (im.lo || im.hi);
+    var held = (m.plan || EMPTY).filter(function (s) { return s.status === 'blocked'; }).length;
     var more = p.count > 1 ? ' (' + (p.count - 1) + ' more after this)' : '';
-    return html`<section className="mr-ask" data-tour="ask" aria-labelledby="mr-ask-q" aria-describedby="mr-ask-why">
-      <p className="mr-ask-who"><${Mark} id=${ask.agentId} size=${13} /> ${agentName(ask.agentId)} needs a decision${more}. ${ask.blocking !== false ? 'The rest of the team keeps going where it can.' : 'Nothing is held up.'}</p>
-      <h2 id="mr-ask-q">${ask.question}</h2>
-      <div className="mr-ask-grid">
-        ${hasImpact ? html`<div><span className="k">If you agree</span><b>${num(im.lo)} to ${num(im.hi)}</b><small>${metric || 'expected change'}</small></div>` : null}
-        <div><span className="k">Suggested</span><b>${ask.default}</b><small>Nothing happens until you choose</small></div>
-        ${ask.blocking !== false ? html`<div><span className="k">Held up</span><b>${(function () { var st = (m.plan || EMPTY).filter(function (s) { return s.status === 'blocked'; }); return st.length ? st.length + (st.length === 1 ? ' step' : ' steps') : 'Nothing yet'; })()}</b><small>until you answer</small></div>` : null}
+    return html`<section className="mr-ask" data-tour="ask" aria-labelledby="mr-ask-q">
+      <div className="mr-ask-main">
+        <p className="mr-ask-who"><${Mark} id=${ask.agentId} size=${13} /> ${agentName(ask.agentId)} needs a decision${more}${ask.blocking !== false && held ? ' · ' + held + (held === 1 ? ' step is' : ' steps are') + ' waiting' : ''}</p>
+        <h2 id="mr-ask-q">${ask.question}</h2>
+        <details className="mr-ask-why"><summary>Why ${agentName(ask.agentId)} is asking</summary><p>${ask.why}</p></details>
       </div>
-      <p id="mr-ask-why" className="mr-ask-why">${ask.why}</p>
-      <div className="mr-ask-act">
-        ${ask.options.map(function (o) {
-          return html`<button key=${o} type="button" className=${cx('mr-ask-btn', o === ask.default && 'go')} disabled=${p.busy} onClick=${function () { p.onAnswer(ask, o); }}>${o}</button>`;
-        })}
+      <div className="mr-ask-side">
+        ${hasImpact ? html`<p className="mr-ask-imp"><span className="k">If you agree</span><b>${num(im.lo)} to ${num(im.hi)}</b> <small>${metric || 'expected change'}</small></p>` : null}
+        <div className="mr-ask-act">
+          ${ask.options.map(function (o) {
+            return html`<button key=${o} type="button" className=${cx('mr-ask-btn', o === ask.default && 'go')} disabled=${p.busy} onClick=${function () { p.onAnswer(ask, o); }}>${o}</button>`;
+          })}
+        </div>
       </div>
       ${p.error ? html`<p className="mr-ask-err" role="alert">${p.error}</p>` : null}
     </section>`;
@@ -380,7 +408,7 @@
       <ol>${log.map(function (b, i) {
         var newest = i === log.length - 1;
         return html`<li key=${b.tick + ':' + b.agentId + ':' + b.text.slice(0, 24)} className=${cx(newest && 'is-new', 'k-' + b.kind)}>
-          <b><${Mark} id=${b.agentId} size=${13} />${agentName(b.agentId)}<span>${DOT} ${T && T.relative ? T.relative(b.tick, tick) : ''}</span></b>
+          <b><${Mark} id=${b.agentId} size=${13} />${agentName(b.agentId)}<span>${DOT} ${ago(b.tick, tick)}</span></b>
           <span className="mr-narr-t">${b.text}</span></li>`;
       })}</ol>
       <div className="mr-sr" role="status" aria-live="polite">${last ? agentName(last.agentId) + ': ' + last.text : ''}</div>
@@ -547,17 +575,17 @@
             <${Meta} world=${w} m=${m} progress=${pr} />
           </header>
           <p className="mr-status">${sentence.map(function (x, i) { return typeof x === 'string' ? x : html`<${Live} key=${i} value=${x.b} text=${x.b} />`; })}</p>
-          <div className=${cx('mr-board', ask && ask.blocking !== false && 'is-held')}>
-            ${ask ? html`<${AskCard} ask=${ask} m=${m} count=${asks.length} busy=${busy} error=${error} onAnswer=${answer} />` : null}
-            <div className="mr-board-lanes" inert=${ask && ask.blocking !== false ? '' : undefined}>
+          ${ask ? html`<${AskCard} ask=${ask} m=${m} count=${asks.length} busy=${busy} error=${error} onAnswer=${answer} />` : null}
+          <div className="mr-board">
+            <div className="mr-board-lanes">
               <${Board} m=${m} world=${w} lay=${lay} flash=${flash} />
             </div>
             <p className="mr-board-foot">${m.status === 'paused' ? 'Paused. Tell Lead when to pick it back up.' : m.status === 'done' ? 'This mission has finished.' : m.status === 'stopped' ? 'This mission was stopped.' : ask ? 'Waiting on your decision. Steps that don’t depend on it keep going.' : anyWork ? 'The team is working. This board updates as they finish.' : m.phase === 'monitoring' ? 'The plan is in place. Insight Analyst checks results every morning.' : 'Next steps start as soon as their inputs are ready.'}</p>
           </div>
           <div className="mr-bay">
+            <${Artifacts} world=${w} m=${m} camp=${camp} seg=${seg} flash=${flash} />
             <${Narration} m=${m} tick=${tick} />
             <${Counters} tot=${tot} camp=${camp} />
-            <${Artifacts} world=${w} m=${m} camp=${camp} seg=${seg} flash=${flash} />
           </div>
         </div>
         <${LeadColumn} ...${leadProps} />
