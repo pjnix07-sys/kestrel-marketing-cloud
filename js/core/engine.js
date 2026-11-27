@@ -59,6 +59,7 @@
     if (h === 0) MC.sim.dayRoll(world, d);
     MC.sim.step(world, t);
     if (MC.runtime && typeof MC.runtime.runDue === 'function') MC.runtime.runDue(world, t);
+    if (MC.missions && typeof MC.missions.advance === 'function') MC.missions.advance(world, t);
     return world;
   };
 

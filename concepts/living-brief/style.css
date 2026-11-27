@@ -154,7 +154,7 @@ ins.tc.pulse{animation:tcpulse 1.6s ease-in-out infinite}
 .jline .jl.dn{top:84px}
 .jline .jl.end{text-align:right}
 .jline .nowm{position:absolute;top:50px;width:2px;height:34px;background:var(--fern);margin-left:-1px;opacity:0;transition:opacity .5s}
-.jline .nowm::after{content:"now";position:absolute;top:-17px;left:50%;transform:translateX(-50%);font:700 11.5px/1 var(--sans);color:var(--fern);padding:0 3px;background:var(--paper)}
+.jline .nowm::after{content:"now";position:absolute;bottom:-17px;left:50%;transform:translateX(-50%);font:700 11.5px/1 var(--sans);color:var(--fern);padding:0 3px;background:var(--paper)}
 .jline.run .nowm{opacity:1}
 
 /* budget */

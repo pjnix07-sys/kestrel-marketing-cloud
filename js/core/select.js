@@ -1058,4 +1058,119 @@
       });
     });
   };
+
+  /* ---------------- missions (docs/AGENTIC.md) ----------------
+     missions(w)                  -> row[]: one per mission, newest first (see missionRow)
+     mission(w, id)               -> detail: row + plan[], asks{open,answered}, beats[], artifacts[], steers[]
+     missionAsks(w)               -> [{missionId, missionTitle, ask, agentName, blocking}] open asks across missions
+     missionAgents(w)             -> [{agentId, name, status, current[], voice, voiceTick, missions}] one per agent
+     All derived from world.missions (progress numbers come from the engine's daily check-ins). */
+  var M_AGENTS = ['lead', 'scout', 'planner', 'copy', 'guard', 'sendtime', 'pacer', 'optimizer', 'analyst'];
+  function mAgentName(id) { return MC.lead && MC.lead.agentName ? MC.lead.agentName(id) : agentName(id); }
+  function mList(w) { var s = w.missions; return s ? s.order.map(function (id) { return s.byId[id]; }).filter(Boolean) : EMPTY; }
+  function stepText(st) { return st.title; }
+  function missionRow(w, m) {
+    var o = m.objective, L = MC.lead, pr = m.progress || { value: 0, target: o.target, forecast: 0, lo: 0, hi: 0 };
+    var open = (m.asks || []).filter(function (a) { return a.status === 'open'; });
+    var blocking = open.filter(function (a) { return a.blocking !== false; });
+    var done = 0; m.plan.forEach(function (st) { if (st.status === 'done' || st.status === 'skipped') done++; });
+    var working = m.plan.filter(function (st) { return st.status === 'working'; });
+    var by = {};
+    m.plan.forEach(function (st) {
+      var cur = by[st.agentId];
+      var rank = { working: 3, blocked: 2, queued: 1, done: 0, skipped: 0 }[st.status];
+      if (!cur || rank > cur.rank) by[st.agentId] = { rank: rank, status: st.status === 'working' ? 'working' : (st.status === 'blocked' ? 'waiting' : (st.status === 'queued' ? 'queued' : 'done')), task: st.title, stepId: st.id };
+    });
+    var agents = sortedKeys(by).map(function (id) { return { agentId: id, name: mAgentName(id), status: by[id].status, task: by[id].task, stepId: by[id].stepId }; });
+    var order = { working: 0, waiting: 1, queued: 2, done: 3 };
+    agents.sort(function (a, b) { return (order[a.status] - order[b.status]) || (M_AGENTS.indexOf(a.agentId) - M_AGENTS.indexOf(b.agentId)); });
+    var lastBeat = m.log.length ? m.log[m.log.length - 1] : null;
+    var nowStep = working[0] || m.plan.filter(function (st) { return st.status === 'blocked'; })[0] || null;
+    var now = nowStep ? { agentId: nowStep.agentId, name: mAgentName(nowStep.agentId), text: nowStep.status === 'working' ? nowStep.title : 'Waiting on your answer: ' + nowStep.title }
+      : (lastBeat ? { agentId: lastBeat.agentId, name: mAgentName(lastBeat.agentId), text: lastBeat.text } : null);
+    var cons = (o.constraints || []).map(function (c) { return { kind: c.kind, value: c.value, label: L ? L.constraintLabel(c) : c.kind }; });
+    var band = (m.data && m.data.band) || 'early';
+    return {
+      id: m.id, title: m.title, goalText: m.goalText, status: m.status, phase: m.phase, brain: m.brain, createdTick: m.createdTick,
+      objective: { metric: o.metric, target: o.target, by: o.by, deadlineText: o.deadlineText, direction: o.direction || 'atLeast', constraints: cons, text: L ? L.objectiveText(o) : '' },
+      progress: { value: pr.value, target: pr.target, forecast: pr.forecast, lo: pr.lo, hi: pr.hi, pct: pr.target > 0 ? pr.value / pr.target : 0, forecastPct: pr.target > 0 ? pr.forecast / pr.target : 0, band: band },
+      steps: { done: done, total: m.plan.length }, agents: agents, now: now,
+      nextAsk: blocking[0] || open[0] || null, openAsks: open.length, blockingAsks: blocking.length, artifacts: (m.artifacts || []).length, replans: m.replans || 0,
+      lastBeat: lastBeat ? { tick: lastBeat.tick, agentId: lastBeat.agentId, kind: lastBeat.kind, text: lastBeat.text } : null
+    };
+  }
+  SEL.missions = function (w) {
+    return memo('missions', [w, w.missions, w.meta.tick], '', function () {
+      return mList(w).slice().sort(function (a, b) { return (b.createdTick - a.createdTick) || (a.id < b.id ? -1 : 1); }).map(function (m) { return missionRow(w, m); });
+    });
+  };
+  function artifactRow(w, a) {
+    var out = { kind: a.kind, id: a.id, name: a.id, status: null, exists: false };
+    if (a.kind === 'campaign' && w.campaigns.byId[a.id]) { var c = w.campaigns.byId[a.id]; out.name = c.name; out.status = c.status; out.exists = true; }
+    else if (a.kind === 'segment' && w.segments.byId[a.id]) { var s = w.segments.byId[a.id]; out.name = s.name; out.status = null; out.exists = true; out.count = s.count; }
+    else if (a.kind === 'variant' && w.variants.byId[a.id]) { var v = w.variants.byId[a.id]; out.name = v.channel + ' ' + v.name; out.status = v.status; out.exists = true; }
+    return out;
+  }
+  SEL.mission = function (w, id) {
+    var m = w.missions && w.missions.byId[id];
+    if (!m) return null;
+    return memo('mission', [w, w.missions, w.meta.tick, w.campaigns, w.segments], id, function () {
+      var row = missionRow(w, m);
+      var plan = m.plan.map(function (st) {
+        var ask = st.status === 'blocked' ? (m.asks || []).filter(function (a) { return a.stepId === st.id && a.status === 'open'; })[0] : null;
+        return { id: st.id, kind: st.kind, agentId: st.agentId, agentName: mAgentName(st.agentId), title: st.title, needs: st.needs.slice(), status: st.status, note: st.note || '',
+          startedTick: st.startedTick, doneTick: st.doneTick, artifact: st.artifact || null, askId: ask ? ask.id : null };
+      });
+      var art = (m.artifacts || []).map(function (a) { return artifactRow(w, a); });
+      var open = (m.asks || []).filter(function (a) { return a.status === 'open'; });
+      var answered = (m.asks || []).filter(function (a) { return a.status === 'answered'; });
+      var beats = m.log.map(function (b) { return { tick: b.tick, agentId: b.agentId, agentName: mAgentName(b.agentId), kind: b.kind, text: b.text, ref: b.ref || null }; });
+      return assign({}, row, { plan: plan, asks: { open: open, answered: answered }, beats: beats, artifacts: art, steers: (m.steers || []).slice(), data: m.data || {} });
+    });
+  };
+  SEL.missionAsks = function (w) {
+    return memo('missionAsks', [w, w.missions], '', function () {
+      var out = [];
+      mList(w).forEach(function (m) {
+        (m.asks || []).forEach(function (a) {
+          if (a.status === 'open') out.push({ missionId: m.id, missionTitle: m.title, ask: a, agentName: mAgentName(a.agentId), blocking: a.blocking !== false, tick: a.createdTick });
+        });
+      });
+      out.sort(function (x, y) { return ((y.blocking ? 1 : 0) - (x.blocking ? 1 : 0)) || (x.tick - y.tick) || (x.missionId < y.missionId ? -1 : 1); });
+      return out;
+    });
+  };
+  SEL.missionAgents = function (w) {
+    return memo('missionAgents', [w, w.missions], '', function () {
+      var by = {};
+      M_AGENTS.forEach(function (id) { by[id] = { agentId: id, name: mAgentName(id), status: 'idle', current: [], voice: '', voiceTick: null, missions: 0, _seen: {} }; });
+      mList(w).forEach(function (m) {
+        if (m.status === 'stopped' || m.status === 'done') {
+          m.log.forEach(function (b) { var a = by[b.agentId]; if (a && (a.voiceTick === null || b.tick >= a.voiceTick) && (b.kind === 'did' || b.kind === 'result' || b.kind === 'thought')) { a.voice = b.text; a.voiceTick = b.tick; } });
+          return;
+        }
+        m.plan.forEach(function (st) {
+          var a = by[st.agentId];
+          if (!a) return;
+          if (!a._seen[m.id]) { a._seen[m.id] = true; a.missions++; }
+          if (st.status === 'working') { a.current.push({ missionId: m.id, missionTitle: m.title, stepId: st.id, title: st.title, status: 'working' }); }
+          else if (st.status === 'blocked') { a.current.push({ missionId: m.id, missionTitle: m.title, stepId: st.id, title: st.title, status: 'waiting' }); }
+        });
+        m.log.forEach(function (b) {
+          var a = by[b.agentId];
+          if (a && (a.voiceTick === null || b.tick >= a.voiceTick) && (b.kind === 'did' || b.kind === 'result' || b.kind === 'thought' || b.kind === 'replan')) { a.voice = b.text; a.voiceTick = b.tick; }
+        });
+        if (m.phase === 'monitoring' && m.status === 'running') {
+          var an = by.analyst;
+          if (!an._seen[m.id]) { an._seen[m.id] = true; an.missions++; }
+        }
+      });
+      return M_AGENTS.map(function (id) {
+        var a = by[id];
+        a.status = a.current.some(function (c) { return c.status === 'working'; }) ? 'working' : (a.current.length ? 'waiting' : 'idle');
+        delete a._seen;
+        return a;
+      });
+    });
+  };
 })();

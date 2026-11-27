@@ -631,6 +631,16 @@
       res.steps[ask.stepId] = { status: 'queued', note: '' };
       return res;
     }
+    if (ask.kind === 'extend') {
+      if (no) {
+        res.steps[ask.stepId] = { status: 'skipped', note: 'Left as is.' };
+        say('lead', 'replan', 'Okay, the campaign keeps its current end date. I’ll watch the pace and come back to you if it can’t get there.');
+      } else {
+        res.steps[ask.stepId] = { status: 'queued', note: '' };
+        say('planner', 'did', 'Extending the campaign now.');
+      }
+      return res;
+    }
     if (ask.kind === 'launch') {
       if (no) say('lead', 'did', 'No problem. The draft stays ready in Campaigns whenever you want it.');
       else say('lead', 'did', 'Great. The draft is in Campaigns. Before it can be scheduled it needs the launch checklist: test send, links, legal, consent and creative.');
@@ -749,7 +759,7 @@
       res.beats.push({ agentId: 'lead', kind: 'replan', text: head + ' The campaign ends ' + dayShort(T().dayOf(c.endTick - 1)) + ', before your deadline, so I’m extending it to ' + dayShort(by) + '.' });
       return res;
     }
-    if (c && st.replans <= 1) {
+    if (c && st.replans <= 1 && !st.linked) {
       add('widen', 'Widen the audience with similar customers', []);
       res.beats.push({ agentId: 'lead', kind: 'replan', text: head + ' I’m asking Segment Scout to find similar customers we aren’t reaching yet and add them to the campaign.' });
       return res;

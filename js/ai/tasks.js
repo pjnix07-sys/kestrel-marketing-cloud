@@ -206,4 +206,62 @@
       return t ? { text: t, source: 'ai' } : null;
     }, { userText: str(question, 400) }).then(function (v) { return v || fb; });
   };
+
+  /* ---------------- planFromGoal (missions) ---------------- */
+  // planFromGoal(goalText, world) -> Promise<{objective, plan, asks, data, source:'ai'|'rules'}>. Always resolves.
+  // Haiku reads the sentence and proposes the objective and an ordered plan; both are validated against the mission schema
+  // (metric, target, deadline, constraint kinds, step kinds), forced through the same guardrails as the rules planner
+  // (audience before campaign, a monitoring step, limits the marketer wrote are never dropped) and otherwise replaced by the rules plan.
+  TK.planFromGoal = function (goalText, w) {
+    w = w || world();
+    var Ld = MC.lead, text = str(goalText, 400);
+    var rules = Ld.plan(w, text);
+    var fb = { objective: rules.objective, plan: rules.plan, asks: rules.asks, data: rules.data, source: 'rules' };
+    if (!on() || !text || !FL() || !w) return Promise.resolve(fb);
+    var segIds = Object.keys(w.segments.byId).sort(), kinds = Ld.KINDS;
+    var schema = obj({
+      template: { type: 'string', enum: Ld.TEMPLATES }, metric: { type: 'string', enum: Ld.METRICS }, target: N, byInDays: N, audience: S, segmentId: S,
+      constraints: { type: 'array', items: obj({ kind: { type: 'string', enum: Ld.CONSTRAINT_KINDS }, value: S }) },
+      steps: { type: 'array', items: obj({ kind: { type: 'string', enum: kinds }, title: S, after: { type: 'array', items: N } }) }
+    });
+    var instructions = 'Plan a marketing mission from the marketer\'s sentence. Pick the template (winback, launch, event, grow, protect), the metric (reactivations, revenue, orders, signups, unsubs), ' +
+      'the numeric target and how many days from today the deadline is (byInDays). "audience" is a short plain label for who it is for; "segmentId" is one of the saved segment ids in the snapshot or "". ' +
+      'Copy every limit the marketer states into "constraints": maxDiscountPct (number), maxSpend (dollars), maxSendsPerWeek (number), excludeChannel (email, sms, push, social or web); values as strings. Never invent limits. ' +
+      'Then list 5 to 12 steps in order. Step kinds and owners: goal (Lead, always first), audience (Segment Scout), campaign (Campaign Planner), copy (Copy Drafter), guard (Fatigue Guard), sendtime (Send-Time Tuner), pacer (Budget Pacer), handoff (Lead), monitor (Insight Analyst, always last). ' +
+      '"after" lists the 1-based numbers of steps that must finish first. Audience comes before campaign; copy, sendtime and pacer come after campaign. A protect-the-list mission has no campaign or copy step.\n\nSentence: ' + text;
+    return ask(instructions, { segmentIds: segIds }, schema, function (d, ground) {
+      if (!d || Ld.TEMPLATES.indexOf(d.template) < 0 || Ld.METRICS.indexOf(d.metric) < 0) return null;
+      if (!(isNum(d.target) && d.target > 0) || !(isNum(d.byInDays) && d.byInDays >= 1 && d.byInDays <= 120)) return null;
+      if (!Array.isArray(d.steps) || d.steps.length < 3 || d.steps.length > Ld.MAX_STEPS) return null;
+      var today = MC.time.dayOf(w.meta.tick), parsed = Ld.parse(text, w), cons = parsed.constraints.slice();
+      var extra = (d.constraints || []).map(function (c) {
+        if (Ld.CONSTRAINT_KINDS.indexOf(c.kind) < 0) return null;
+        if (c.kind === 'excludeChannel') return MC.CH.ALL.indexOf(c.value) >= 0 ? { kind: c.kind, value: c.value } : null;
+        var v = parseFloat(String(c.value).replace(/[$,%]/g, ''));
+        return isNum(v) && v >= 0 && (c.kind !== 'maxDiscountPct' || v <= 100) ? { kind: c.kind, value: v } : null;
+      }).filter(Boolean);
+      cons = Ld.mergeConstraints(extra, cons);       // limits the marketer actually wrote win over a paraphrase
+      var by = parsed.byGiven ? parsed.by : today + Math.round(d.byInDays);
+      var objective = { metric: d.metric, target: parsed.targetGiven && parsed.target && !parsed.growthPct && parsed.metric === d.metric ? parsed.target : Math.round(d.target),
+        by: by, deadlineText: parsed.byGiven ? parsed.deadlineText : 'by ' + Ld.dayShort(by), constraints: cons, direction: d.metric === 'unsubs' ? 'atMost' : 'atLeast' };
+      var steps = [];
+      for (var i = 0; i < d.steps.length; i++) {
+        var x = d.steps[i];
+        if (Ld.KINDS.indexOf(x.kind) < 0) return null;
+        var needs = (x.after || []).map(function (n) { return Math.round(n); }).filter(function (n) { return n >= 1 && n <= i; }).map(function (n) { return 's' + n; });
+        if (!needs.length && i > 0) needs = ['s' + i];
+        var title = clean(x.title, ground, 120) || Ld.KIND_TITLE[x.kind];
+        steps.push(Ld.step('s' + (i + 1), x.kind, title, needs));
+      }
+      var np = Ld.normalizePlan(steps);
+      if (!np.ok) return null;
+      var bad = Ld.checkPlan(np.plan, d.template);
+      if (bad) return null;
+      var aud = Object.assign({}, rules.data.audience);
+      if (segIds.indexOf(d.segmentId) >= 0) { aud.segmentId = d.segmentId; if (!aud.label) aud.label = str(d.audience, 40).toLowerCase(); }
+      else if (!aud.label && d.audience) aud.label = str(d.audience, 40).toLowerCase();
+      var data = Object.assign({}, rules.data, { template: d.template, audience: aud, parsedBy: 'claude', missing: [] });
+      return { objective: objective, plan: np.plan, asks: [], data: data, source: 'ai' };
+    }, { userText: text }).then(function (r) { return r || fb; });
+  };
 })();

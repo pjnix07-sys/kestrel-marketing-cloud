@@ -491,7 +491,7 @@ async function play() {
     pn.done('I proposed 15% off instead of free shipping. It was accepted, and the email now says so.', 'proposed');
     narrate('Accepted. The offer is now 15% off.');
   } else {
-    offerIns.remove(); offerDel.classList.remove('tc'); offerDel.replaceWith(document.createTextNode(offerDel.textContent));
+    card._a = q('msgO'); offerIns.remove(); offerDel.classList.remove('tc'); offerDel.replaceWith(document.createTextNode(offerDel.textContent));
     pn.done('I proposed 15% off. It was rejected, so the offer stays free shipping: expect 18 to 27 orders.', 'proposed');
     narrate('Rejected. The offer stays free shipping.');
   }

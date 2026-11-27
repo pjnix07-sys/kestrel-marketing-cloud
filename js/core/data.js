@@ -547,6 +547,7 @@
       metrics: { days: [], hours: {} },
       agents: { byId: {}, order: [] },
       proposals: { byId: {}, order: [], open: [] },
+      missions: { byId: {}, order: [] },
       feed: [], insights: [],
       audit: { entries: [], head: '00000000' },
       guardrails: {
@@ -556,6 +557,132 @@
       },
       log: []
     };
+  }
+
+
+  /* ---------------- seeded missions (docs/AGENTIC.md "Seeded state") ----------------
+     Two missions already running at boot, linked to existing campaigns and segments as artifacts. Numbers in the
+     narration are read from the world; the first mission waits on one ask (so catch-up leaves it mid-execution), the
+     second is monitoring with a re-plan in its history. */
+  D.MISSIONS_SEED = [
+    { id: 'm-lhw', goalText: 'Win back 400 lapsed hikers before Dec 15 without discounting more than 15%', campaignId: 'c-lhw', segmentId: 's-lapsed' },
+    { id: 'm-bfe', goalText: 'Hit $48k on Black Friday Early Access', campaignId: 'c-bfe', segmentId: 's-loyal' }
+  ];
+  function reachOf(world, sid, ch) {
+    var bits = MC.segments.members(world, sid), P = world.profiles, bit = MC.CH.BIT[ch], n = 0, r = 0;
+    for (var i = 0; i < P.n; i++) { if (!bits[i]) continue; n++; if ((P.consent[i] & bit) !== 0 && (P.unsub[i] & bit) === 0) r++; }
+    return { n: n, reach: r };
+  }
+  function chWord(ch) { return ch === 'sms' ? 'SMS' : (MC.CH.LABEL[ch] || ch).toLowerCase(); }
+  function joinWords(a) { return a.length <= 1 ? a.join('') : a.slice(0, -1).join(', ') + ' and ' + a[a.length - 1]; }
+  function lc1(s) { return /^[A-Z][a-z]/.test(s) ? s.charAt(0).toLowerCase() + s.slice(1) : s; }
+  function makeMissions(world) {
+    if (!(MC.lead && MC.missions)) return;
+    var L = MC.lead, byId = {}, order = [], fm = MC.fmt;
+    function base(spec, created) {
+      var pl = L.plan(world, spec.goalText);
+      return { pl: pl, m: { id: spec.id, title: pl.title, goalText: spec.goalText, objective: pl.objective, status: 'running', phase: 'executing', createdTick: created,
+        brain: 'rules', plan: pl.plan, asks: [], artifacts: [], log: [], progress: { value: 0, target: pl.objective.target, forecast: 0, lo: 0, hi: 0 },
+        data: pl.data, replans: 0, lastReplanDay: null, lastCheckDay: null, lastBeatDay: null, resumeDay: null, steers: [] } };
+    }
+    function beat(m, tick, agentId, kind, text, ref) { var b = { tick: tick, agentId: agentId, kind: kind, text: text }; if (ref) b.ref = ref; m.log.push(b); }
+    function stepDone(m, id, tick, patch) { m.plan = m.plan.map(function (s) { return s.id === id ? Object.assign({}, s, { status: 'done', startedTick: tick - 6, doneTick: tick }, patch || {}) : s; }); }
+
+    /* ---- 1. win back lapsed hikers: mid-execution, one ask waiting ---- */
+    (function () {
+      var spec = D.MISSIONS_SEED[0], c = world.campaigns.byId[spec.campaignId], sg = world.segments.byId[spec.segmentId];
+      if (!c || !sg) return;
+      var t0 = c.createdTick, b = base(spec, t0), m = b.m, rc = reachOf(world, spec.segmentId, 'email');
+      var lastDay = Math.floor((c.endTick - 1) / 24), by = m.objective.by, extra = Math.max(1, by - lastDay);
+      var perDay = c.goal.target / Math.max(1, Math.round((c.endTick - c.startTick) / 24));
+      var offerPct = { pct15: 15, pct25: 25 }[c.offer] || 0;
+      m.plan = [
+        L.step('s1', 'goal', 'Confirm the goal and set the plan', []),
+        L.step('s2', 'audience', 'Find and size the lapsed hikers', ['s1']),
+        L.step('s3', 'campaign', 'Run wave 1: ' + c.name, ['s2']),
+        L.step('s4', 'extend', 'Run the win-back through ' + L.dayShort(by), ['s3']),
+        L.step('s5', 'sendtime', 'Re-check send times as results come in', ['s4']),
+        L.step('s6', 'pacer', 'Re-split the budget toward what is working', ['s4']),
+        L.step('s7', 'monitor', 'Start tracking progress every day', ['s5', 's6'])
+      ];
+      m.data = Object.assign({}, m.data, { audience: { segmentId: spec.segmentId, resolvedId: spec.segmentId, label: 'lapsed hikers', hints: ['lapsed hikers'], size: rc.n, reach: rc.reach, primary: 'email' },
+        linked: true, campaignId: c.id, channels: c.channels.slice(), missing: [] });
+      beat(m, t0, 'lead', 'thought', L.voice.opening(m));
+      beat(m, t0 + 1, 'lead', 'thought', 'Wave 1 is already running, so I’m building on it rather than starting a second campaign.');
+      stepDone(m, 's1', t0 + 2);
+      beat(m, t0 + 6, 'scout', 'did', 'Found ' + fm.num(rc.n) + ' lapsed hikers (no order in 120+ days); ' + fm.num(rc.reach) + ' (' + fm.pct(rc.n ? rc.reach / rc.n : 0, 0) + ') can be reached by email.');
+      stepDone(m, 's2', t0 + 6, { artifact: { kind: 'segment', id: spec.segmentId }, note: 'Found ' + fm.num(rc.n) + ' lapsed hikers.' });
+      beat(m, t0 + 7, 'scout', 'handoff', 'Passing the audience to Campaign Planner.');
+      beat(m, t0 + 12, 'planner', 'did', 'Wave 1 is “' + c.name + '”: ' + joinWords(c.channels.map(chWord)) + (offerPct ? ', ' + offerPct + '% off' : '') + ', ' + fm.money(c.budget.total) + ', running through ' + L.dayShort(lastDay) + '.');
+      stepDone(m, 's3', t0 + 12, { artifact: { kind: 'campaign', id: c.id }, note: 'Wave 1 is live.' });
+      m.artifacts = [{ kind: 'segment', id: spec.segmentId }, { kind: 'campaign', id: c.id }];
+      var ask = { id: 'a1', stepId: 's4', agentId: 'planner', kind: 'extend', blocking: true,
+        question: 'Wave 1 stops on ' + L.dayShort(lastDay) + ', well before ' + L.dayShort(by) + '. Extend it so the ' + (offerPct || 15) + '% offer keeps running for ' + extra + ' more days?',
+        why: 'On its own, wave 1 can’t reach 400 win-backs before it ends; it was planned for ' + fm.num(c.goal.target) + '. ' + (offerPct ? 'The offer stays at ' + offerPct + '%, inside your 15% limit.' : 'No deeper discount is involved.'),
+        impact: { metric: 'win-backs', lo: Math.round(extra * perDay * 0.7), hi: Math.round(extra * perDay * 1.3) },
+        options: ['Extend to ' + L.dayShort(by), 'Leave the end date'], default: 'Extend to ' + L.dayShort(by), status: 'open', answer: null, by: null, createdTick: t0 + 13, answeredTick: null };
+      m.asks = [ask];
+      m.plan = m.plan.map(function (s) { return s.id === 's4' ? Object.assign({}, s, { status: 'blocked', note: 'Waiting for your answer.' }) : s; });
+      beat(m, t0 + 13, 'planner', 'ask', ask.question, 'a1');
+      m.status = 'waiting';
+      m.progress = { value: 0, target: m.objective.target, forecast: 0, lo: 0, hi: 0 };
+      byId[m.id] = m; order.push(m.id);
+    })();
+
+    /* ---- 2. Black Friday Early Access: monitoring, one re-plan in its history ---- */
+    (function () {
+      var spec = D.MISSIONS_SEED[1], c = world.campaigns.byId[spec.campaignId], sg = world.segments.byId[spec.segmentId];
+      if (!c || !sg) return;
+      var t0 = c.createdTick, b = base(spec, t0), m = b.m, rc = reachOf(world, spec.segmentId, 'email');
+      var vs = MC.catalog.variantsOf(world, c.id), chs = c.channels.slice();
+      var hours = MC.CH.OWNED.filter(function (ch) { return chs.indexOf(ch) >= 0; }).map(function (ch) { return chWord(ch) + ' at ' + fm.hour(c.sendHour[ch]); });
+      var big = chs.slice().sort(function (a, z) { return (c.budget.byChannel[z] || 0) - (c.budget.byChannel[a] || 0) || (a < z ? -1 : 1); })[0];
+      m.data = Object.assign({}, m.data, { audience: { segmentId: spec.segmentId, resolvedId: spec.segmentId, label: sg.name, hints: [], size: rc.n, reach: rc.reach, primary: 'email' },
+        linked: true, campaignId: c.id, channels: chs, missing: [] });
+      m.plan = m.plan.map(function (s) { return s; });
+      beat(m, t0, 'lead', 'thought', L.voice.opening(m));
+      beat(m, t0 + 1, 'lead', 'thought', L.voice.planned(m));
+      stepDone(m, 's1', t0 + 3);
+      beat(m, t0 + 6, 'scout', 'did', 'Found ' + fm.num(rc.n) + ' ' + lc1(sg.name) + '; ' + fm.num(rc.reach) + ' (' + fm.pct(rc.n ? rc.reach / rc.n : 0, 0) + ') can be reached by email. They get first access.');
+      stepDone(m, 's2', t0 + 6, { artifact: { kind: 'segment', id: spec.segmentId }, note: 'Found ' + fm.num(rc.n) + ' members.' });
+      beat(m, t0 + 7, 'scout', 'handoff', 'Passing the audience to Campaign Planner.');
+      beat(m, t0 + 14, 'planner', 'did', '“' + c.name + '” covers ' + joinWords(chs.map(chWord)) + ' with ' + fm.money(c.budget.total) + ', starting ' + L.dayShort(Math.floor(c.startTick / 24)) + '.');
+      stepDone(m, 's3', t0 + 14, { artifact: { kind: 'campaign', id: c.id }, note: 'Drafted and scheduled.' });
+      beat(m, t0 + 20, 'copy', 'did', 'The campaign carries ' + vs.length + ' messages across ' + joinWords(chs.map(chWord)) + ', all checked against the brand book.');
+      stepDone(m, 's4', t0 + 20, { note: vs.length + ' messages.' });
+      stepDone(m, 's5', t0 + 21, { note: 'Standing frequency caps apply.' });
+      beat(m, t0 + 22, 'sendtime', 'did', 'Sends are set: ' + joinWords(hours) + '.');
+      stepDone(m, 's6', t0 + 22, { note: joinWords(hours) });
+      beat(m, t0 + 24, 'pacer', 'did', 'The ' + fm.money(c.budget.total) + ' is split across ' + joinWords(chs.map(chWord)) + '; ' + chWord(big) + ' takes the largest share at ' + fm.money(c.budget.byChannel[big] || 0) + '.');
+      stepDone(m, 's7', t0 + 24, { note: 'Split set.' });
+      beat(m, t0 + 25, 'lead', 'did', 'The draft is ready and the team has checked it.');
+      stepDone(m, 's8', t0 + 26, { note: 'Handed over for sign-off.' });
+      var launch = { id: 'a1', stepId: 's8', agentId: 'lead', kind: 'launch', blocking: false, question: '“' + c.name + '” is drafted. Ready to schedule it for ' + L.dayShort(Math.floor(c.startTick / 24)) + '?',
+        why: 'Nothing sends until it passes the launch checklist and you schedule it.', impact: { metric: 'revenue', lo: 0, hi: 0 }, options: ['Yes, schedule it', 'Not yet'], default: 'Yes, schedule it',
+        status: 'answered', answer: 'Yes, schedule it', by: 'manager', createdTick: t0 + 26, answeredTick: t0 + 30 };
+      m.asks = [launch];
+      beat(m, t0 + 26, 'lead', 'ask', launch.question, 'a1');
+      beat(m, t0 + 30, 'lead', 'did', 'You answered: Yes, schedule it.', 'a1');
+      beat(m, t0 + 31, 'lead', 'did', 'Great. It’s in Campaigns and scheduled for ' + L.dayShort(Math.floor(c.startTick / 24)) + '.');
+      stepDone(m, 's9', t0 + 36, { note: 'Tracking daily.' });
+      beat(m, t0 + 37, 'analyst', 'did', 'I’ll check in every morning at ' + fm.hour(9) + ' against ' + fm.money(m.objective.target) + ' in revenue ' + m.objective.deadlineText + '.');
+      // the re-plan in its history
+      var rt = t0 + 24 * 2 + 9;
+      beat(m, rt, 'lead', 'replan', 'Reviewed the plan against the ' + fm.money(m.objective.target) + ' goal. With only a few days of runway the margin is thin, so I asked Budget Pacer to tilt spend toward the channels that return the most per dollar and Variant Optimizer to watch the first results closely.');
+      m.plan = m.plan.concat([L.step('s10', 'pacer', 'Re-split the budget toward the higher-return channels', [])]);
+      m.plan = m.plan.map(function (s) { return s.id === 's10' ? Object.assign({}, s, { status: 'done', startedTick: rt, doneTick: rt + 8, note: 'Budget tilted toward ' + chWord(big) + ' and the other high-return channels.' }) : s; });
+      beat(m, rt + 8, 'pacer', 'did', 'Re-split the budget toward the channels returning the most per extra dollar; the ' + fm.money(c.budget.total) + ' total did not change.');
+      m.artifacts = [{ kind: 'segment', id: spec.segmentId }, { kind: 'campaign', id: c.id }];
+      m.phase = 'monitoring'; m.status = 'running'; m.replans = 1; m.lastReplanDay = Math.floor(rt / 24);
+      m.log.sort(function (x, y) { return x.tick - y.tick; });
+      m.progress = { value: 0, target: m.objective.target, forecast: 0, lo: 0, hi: 0 };
+      byId[m.id] = m; order.push(m.id);
+    })();
+    world.missions = { byId: byId, order: order };
+    order.forEach(function (id) {
+      var mm = byId[id], pr = MC.missions.progressOf(world, mm, world.meta.tick);
+      byId[id] = Object.assign({}, mm, { progress: { value: pr.value, target: pr.target, forecast: pr.forecast, lo: pr.lo, hi: pr.hi } });
+    });
   }
 
   function phaseProfiles(st) {
@@ -601,6 +728,7 @@
       campDay(today, cid);
     });
     makeAgents(w);
+    makeMissions(w);
     var rank = {};
     AGENT_FALLBACK.forEach(function (r, k) { rank[r[0]] = k; });
     w.agents.order.sort(function (a, b) { return ((rank[a] === undefined ? 99 : rank[a]) - (rank[b] === undefined ? 99 : rank[b])) || (a < b ? -1 : 1); });

@@ -276,6 +276,7 @@ bub('variant', 26.2, 3.4, 'Three-way test. The best subject takes the rest after
 at(28.6, () => $('#sjNote').classList.add('on'));
 go('variant', 29.4, 1.2, FR.E.x + 296, FR.E.y + 112);
 taskDone(29.0, 'variant');
+at(29.7, () => { cur.variant.fl = true; cur.variant.el.classList.add('flip'); });
 
 /* ---------------- Fatigue Guard ---------------- */
 join('fatigue', 22.0);
@@ -316,7 +317,7 @@ go('budget', 31.9, .35, bx + barW * (b1 + 25) / 100, byc);
 trace('budget', 32.3, 1.5, e => { setBudget([b1, lerp(b1 + 25, endb[1], e), lerp(b1 + 50, endb[2], e)]); return [bx + barW * bcur[1] / 100, byc]; }, [bx + barW * endb[1] / 100, byc], eio);
 click('budget', 30.1); click('budget', 32.3);
 at(34.0, () => { setBudget(endb); $('#bFoot').textContent = 'Even pace, about $126 a day for 19 days'; });
-go('budget', 34.2, .9, FR.B.x + 240, FR.B.y + 205);
+go('budget', 34.2, .9, FR.B.x + 200, FR.B.y + 226);
 handoff(34.5, 'budget', 'planner', '$2,400 split', 1.3);
 taskDone(34.8, 'budget');
 say(34.8, 'Budget Pacer split the $2,400: $1,150 email, $380 SMS, $620 social, $250 web.');
@@ -397,7 +398,7 @@ at(DEC + .35, () => {
   $('#leader').classList.add('on');
   live.textContent = 'Decision needed: offer 15% off to 414 lapsed hikers? Expected 37 to 54 orders, $5.1k to $7.4k. Auto-approves in 8 seconds.';
 });
-go('copy', DEC + .3, 1.0, FR.E.x + 60, FR.E.y + 250);
+go('copy', DEC + .3, 1.0, FR.E.x + 100, FR.E.y + 362);
 bub('copy', DEC + 1.4, 6.4, '15% is the limit you set. This is the one number I won\'t move without you.');
 tw(DEC + .4, DEC_AUTO - DEC - .4, (e, p) => { if (decided || !decEl) return; $('#timerFill').style.transform = `scaleX(${1 - e})`; $('#decTimer').textContent = 'Auto-approves in ' + Math.max(0, Math.ceil((1 - e) * (DEC_AUTO - DEC - .4))) + 's'; }, lin);
 function decide(v, auto) {
@@ -406,7 +407,7 @@ function decide(v, auto) {
   userMsg(auto ? `No change: ${v}% it is.` : v === 15 ? 'Approve 15%.' : 'Use 10% instead.');
   $('#chipPct').textContent = v + '%';
   $('.sel span').textContent = '';
-  $('#n2').lastElementChild.textContent = v + '% off layers'; $('#n4').lastElementChild.textContent = 'Last call, ' + v + '% off';
+  $('#n2').lastElementChild.textContent = v + '% off layers'; $('#n4').lastElementChild.textContent = 'Last call, ' + v + '%';
   world.classList.remove('deciding'); F('fE').classList.remove('hl'); $('#chipSel').classList.remove('on'); $('#leader').classList.remove('on');
   live.textContent = `Offer set to ${v}% off.`;
   if (now < DEC_AUTO) now = DEC_AUTO;
@@ -423,7 +424,7 @@ arrow(47.2, .8, 'a34', 'l34');
 arrow(48.4, .8, 'a35', 'l35');
 arrow(49.6, .7, 'a46');
 arrow(50.6, .7, 'a56');
-go('planner', 51.4, .8, J.x + 580, J.y + 255);
+go('planner', 51.4, .8, J.x + 520, J.y + 252);
 bub('planner', 51.5, 2.6, 'Six steps, two paths, one exit when they order.');
 taskDone(51.5, 'planner');
 
@@ -432,7 +433,7 @@ go('fatigue', 44.2, 1.2, J.x + 80, J.y + 190, { dir: -1 });
 at(45.6, () => { $('#noteF').classList.add('in'); });
 click('fatigue', 45.5);
 bub('fatigue', 45.8, 2.6, 'Capped at 2 messages a week, whatever else is running.');
-go('fatigue', 48.6, 1.0, J.x + 124, J.y + 270);
+go('fatigue', 48.6, 1.0, J.x + 70, J.y + 256);
 
 /* Send-Time Tuner */
 join('tuner', 46.0);
@@ -462,12 +463,12 @@ go('analyst', 49.8, .9, cP[0] + 30, cP[1] + 60);
 bub('analyst', 50.8, 3.4, 'At 15% I expect 37 to 54 orders by Dec 15, $5.1k to $7.4k.');
 trace('analyst', 50.9, 2.3, e => { const d = e * 19; return [cP[0] + X(d) + 4, cP[1] + Y(54 * F_(d)) + 4]; }, [cP[0] + CW + 4, cP[1] + Y(54) + 4]);
 tw(50.9, 2.3, e => { $('#bandRect').setAttribute('width', e * CW); $('#fcLabel').textContent = e > .6 ? 'forecast 37 to 54' : ''; }, lin);
-go('analyst', 53.3, .8, FR.L.x + 215, FR.L.y + 140);
+go('analyst', 53.3, .8, cP[0] + 120, cP[1] + 56);
 taskDone(53.6, 'analyst');
 
 /* ---------------- launch ---------------- */
 const STATUS = $('#status');
-at(LAUNCH, () => { launched = true; STATUS.classList.add('run'); $('#statusT').textContent = 'Running'; live.textContent = 'Campaign is live. 414 people reached, orders arriving.'; });
+at(LAUNCH, () => { launched = true; STATUS.classList.add('run'); $('#statusT').textContent = 'Running, demo speed'; live.textContent = 'Campaign is live. 414 people reached, orders arriving.'; });
 leadMsg(LAUNCH + .4, 'Running. 414 people are in the journey and none see more than 15% off. I expect 37 to 54 orders by Dec 15, and I\'ll only interrupt you if that moves.');
 tw(LAUNCH, 1.6, e => { $('#lReach').textContent = fmt(414 * e); }, eout);
 tw(LAUNCH + .2, 4, e => { $('#feed').dataset.on = 1; }, lin);
