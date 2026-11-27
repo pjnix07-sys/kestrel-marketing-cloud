@@ -70,10 +70,11 @@
   function openAsks(m) { return (m.asks || EMPTY).filter(function (a) { return a.status === 'open'; }); }
   function progressOf(w, m) {
     var r = metricsOf(w, m);
-    if (r && fin(r.forecast) && fin(r.value)) {
+    var fv = r ? (r.forecast && typeof r.forecast === 'object' ? r.forecast.value : r.forecast) : null;
+    if (r && fin(fv) && fin(r.value)) {
       var base = null;
       try { base = MC.missions.progressOf(w, m, w.meta.tick); } catch (e) { base = null; }
-      return Object.assign({}, base || {}, { value: r.value, target: fin(r.target) ? r.target : m.objective.target, forecast: r.forecast, lo: fin(r.lo) ? r.lo : r.forecast, hi: fin(r.hi) ? r.hi : r.forecast, band: r.band || (base && base.band) || 'early' });
+      return Object.assign({}, base || {}, { value: r.value, target: fin(r.target) ? r.target : m.objective.target, forecast: fv, lo: fin(r.lo) ? r.lo : fv, hi: fin(r.hi) ? r.hi : fv, band: r.band || (base && base.band) || 'early' });
     }
     try { var p = MC.missions.progressOf(w, m, w.meta.tick); if (p) return p; } catch (e) { /* use stored */ }
     return m.progress || { value: 0, target: m.objective.target };

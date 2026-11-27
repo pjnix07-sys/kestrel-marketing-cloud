@@ -12,7 +12,7 @@
   A.ANGLES = ['trail-season', 'warmth', 'gifting', 'utility', 'urgency'];
   A.ANGLE_LABEL = { 'trail-season': 'Trail season', warmth: 'Warmth and comfort', gifting: 'Gifting', utility: 'Practical', urgency: 'Urgency with a deadline' };
   A.OWNED = ['email', 'sms', 'push'];
-  var NA = 5, NC = 3, Z95 = 1.96, TASTE_K = 1.4, TASTE_MIN = -1, TASTE_MAX = 3.5;
+  var NA = 5, NC = 3, Z95 = 1.96, TASTE_K = 1.2, TASTE_MIN = -1, TASTE_MAX = 3.5;
   // Offsets so the people who actually receive each angle in the seeded campaigns average taste 1 (calibrated against the sample world's sends).
   var TASTE_OFFSET = [0.25, -0.42, 0, -0.31, -0.04];   // taste = 1 + K z (z standardised): mean about 1, and some people actively dislike an angle
   var HALF_LIFE = { headline: 2, body: 3, offer: 6, cta: 5, image: 3, product: 8, claim: 10, signoff: 20 };
