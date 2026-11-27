@@ -275,15 +275,32 @@
   };
 
   /* ---------------- connect / verify / disconnect ---------------- */
+  // Verify with a free model lookup (GET /v1/models/<model>): confirms the credential and model access without a
+  // generation (a tiny generation can be rejected with a 400 by models that think by default).
   function verifyAuth(a) {
-    var body = { model: MODEL, max_tokens: 16, output_config: { effort: 'low' }, messages: [{ role: 'user', content: 'Reply with OK.' }] };
-    return request(a, body, { timeoutMs: 15000 }).then(function (r) {
-      if (r.ok) { addUsage(r.json && r.json.usage); usage.calls++; return { ok: true, state: 'on' }; }
-      var af = authFailure(r.status, r.error, a.kind);
-      if (af) return { ok: false, state: af.state, error: af.text };
-      if (r.status === 429) return { ok: false, state: 'off', error: 'Anthropic is busy right now. Try again in a minute.' };
-      if (!r.status) return { ok: false, state: 'off', error: 'Couldn’t reach Anthropic. Check your connection and try again.' };
-      return { ok: false, state: 'off', error: 'Anthropic answered with an error (' + r.status + '). Try again in a minute.' };
+    return new Promise(function (resolve) {
+      var done = false, ctl = null, timer = null;
+      function finish(r) { if (done) return; done = true; if (timer) clearTimeout(timer); resolve(r); }
+      if (typeof fetch !== 'function') { finish({ ok: false, state: 'off', error: 'This browser can’t reach Anthropic.' }); return; }
+      try { ctl = typeof AbortController === 'function' ? new AbortController() : null; } catch (e) { ctl = null; }
+      timer = setTimeout(function () { try { if (ctl) ctl.abort(); } catch (e) { /* ignore */ } finish({ ok: false, state: 'off', error: 'Anthropic didn’t answer in time. Try again in a minute.' }); }, 15000);
+      var headers = { 'anthropic-version': VERSION, 'anthropic-dangerous-direct-browser-access': 'true' };
+      if (a.kind === 'bearer') headers.authorization = 'Bearer ' + a.token; else headers['x-api-key'] = a.key;
+      var init = { method: 'GET', headers: headers };
+      if (ctl) init.signal = ctl.signal;
+      fetch('https://api.anthropic.com/v1/models/' + MODEL, init).then(function (res) {
+        return res.text().then(function (txt) {
+          var json = null; try { json = txt ? JSON.parse(txt) : null; } catch (e) { json = null; }
+          var msg = json && json.error && json.error.message ? String(json.error.message) : '';
+          if (res.status >= 200 && res.status < 300) { usage.calls++; finish({ ok: true, state: 'on' }); return; }
+          var af = authFailure(res.status, msg, a.kind);
+          if (af) { finish({ ok: false, state: af.state, error: af.text }); return; }
+          if (res.status === 403) { finish({ ok: false, state: 'invalid', error: 'This credential isn’t allowed to use the Claude API' + (msg ? ': ' + msg : '.') }); return; }
+          if (res.status === 404) { finish({ ok: false, state: 'invalid', error: 'It works, but this account can’t use ' + AI.MODEL_LABEL + ' yet' + (msg ? ' (' + msg + ')' : '.') }); return; }
+          if (res.status === 429) { finish({ ok: false, state: 'off', error: 'Anthropic is busy right now. Try again in a minute.' }); return; }
+          finish({ ok: false, state: 'off', error: 'Anthropic said: ' + (msg || ('error ' + res.status)) });
+        });
+      }, function (e) { finish({ ok: false, state: 'off', error: (e && e.name === 'AbortError') ? 'Anthropic didn’t answer in time. Try again in a minute.' : 'Couldn’t reach Anthropic. Check your connection and try again.' }); });
     });
   }
   // A failed new credential never disturbs a working connection.
@@ -292,7 +309,7 @@
     return r;
   }
 
-  // verifyKey(key) -> Promise<{ok, state, error?}>: one tiny Haiku call (max_tokens 16). Does not store the key.
+  // verifyKey(key) -> Promise<{ok, state, error?}>: a free model lookup. Does not store the key.
   AI.verifyKey = function (k) {
     k = typeof k === 'string' ? k.trim() : '';
     if (!AI.isKeyLike(k)) return Promise.resolve({ ok: false, state: 'invalid', error: 'That doesn’t look like an Anthropic key (they start with sk-ant-).' });

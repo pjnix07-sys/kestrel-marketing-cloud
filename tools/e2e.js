@@ -440,7 +440,7 @@ async function secArtifacts() {
 
 /* ---- stubbed Anthropic (shared by the connect group) ---- */
 function makeStub(state) {
-  const cors = { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': 'POST, OPTIONS', 'access-control-expose-headers': '*' };
+  const cors = { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': 'GET, POST, OPTIONS', 'access-control-expose-headers': '*' };
   const msg = (obj, stop) => ({ id: 'msg_e2e', type: 'message', role: 'assistant', model: 'claude-haiku-5-5', stop_reason: stop || 'end_turn',
     content: [{ type: 'thinking', thinking: '' }, { type: 'text', text: typeof obj === 'string' ? obj : JSON.stringify(obj) }],
     usage: { input_tokens: 900, output_tokens: 300, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 } });
@@ -453,6 +453,8 @@ function makeStub(state) {
     let body = {}; try { body = JSON.parse(req.postData() || '{}'); } catch (e) { /* ignore */ }
     state.keys.push(req.headers()['x-api-key']);
     if (state.mode === '401') return send(401, { type: 'error', error: { type: 'authentication_error', message: 'invalid x-api-key' } });
+    // Key verification is a model lookup (GET /v1/models/<id>).
+    if (req.method() === 'GET' && /\/v1\/models\//.test(req.url())) return send(200, { type: 'model', id: 'claude-haiku-5-5', display_name: 'Claude Haiku 5.5' });
     if (body.max_tokens === 16) return send(200, msg('OK'));
     const sys = body.system || [];
     const user = body.messages && body.messages[0] ? body.messages[0].content : '';

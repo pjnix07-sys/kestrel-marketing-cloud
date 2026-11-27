@@ -25,7 +25,7 @@ let pass = 0, fail = 0;
 const check = (name, ok, detail) => { ok ? pass++ : fail++; console.log((ok ? 'PASS ' : 'FAIL ') + name + (ok ? '' : '  ' + (detail || ''))); };
 const TOKEN = 'sk-ant-oat01-' + 'Z'.repeat(40);
 const b64u = o => Buffer.from(JSON.stringify(o)).toString('base64url');
-const cors = { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': 'POST, OPTIONS' };
+const cors = { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': 'GET, POST, OPTIONS' };
 const FED = { idpName: 'Acme SSO', issuer: 'https://login.acme.test', clientId: 'client-1', scopes: 'openid', redirectUri: BASE, relayUrl: 'https://relay.acme.test/exchange',
   federationRuleId: 'fdrl_abc', organizationId: '11111111-1111-1111-1111-111111111111', workspaceId: 'wrkspc_xyz' };
 

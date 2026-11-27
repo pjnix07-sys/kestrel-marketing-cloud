@@ -35,8 +35,10 @@ const haiku = { type: 'message', stop_reason: 'end_turn', content: [{ type: 'tex
 const TOKEN = 'sk-ant-oat01-' + 'A'.repeat(40), TOKEN2 = 'sk-ant-oat01-' + 'B'.repeat(40), KEY = 'sk-ant-api03-' + 'k'.repeat(30);
 function anthropicRoute(b, accept) {      // accept(headers) -> bool
   b.routes.push((url, init) => {
-    if (url !== 'https://api.anthropic.com/v1/messages') return undefined;
-    return accept(init.headers) ? res(200, haiku) : res(401, { error: { message: 'Authentication failed' } });
+    const isMsg = url === 'https://api.anthropic.com/v1/messages', isModel = url === 'https://api.anthropic.com/v1/models/claude-haiku-5-5';
+    if (!isMsg && !isModel) return undefined;   // key/token verification is a model lookup (GET /v1/models/<id>)
+    if (!accept(init.headers)) return res(401, { error: { message: 'Authentication failed' } });
+    return isModel ? res(200, { type: 'model', id: 'claude-haiku-5-5' }) : res(200, haiku);
   });
 }
 const b64u = o => Buffer.from(typeof o === 'string' ? o : JSON.stringify(o)).toString('base64url');
