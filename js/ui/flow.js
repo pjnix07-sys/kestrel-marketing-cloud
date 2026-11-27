@@ -182,7 +182,7 @@
             var lx = (sx + tx) / 2, ly = (sy + ty) / 2, lw = tw(text, 11) + 10;
             labelEls.push(html`<g key=${'l-' + key}>
               <rect x=${lx - lw / 2} y=${ly - 9} width=${lw} height="18" rx="9" strokeWidth="1" style=${{ fill: 'var(--surface)', stroke: 'var(--line)' }} />
-              <text x=${lx} y=${ly} textAnchor="middle" dominantBaseline="central" style=${{ fill: 'var(--ink-2)', fontSize: 11, fontVariantNumeric: 'tabular-nums' }}>${text}</text>
+              <text x=${lx} y=${ly} textAnchor="middle" dominantBaseline="central" style=${{ fill: 'var(--ink-2)', fontSize: 11 }}>${text}</text>
             </g>`);
           }
         });
@@ -216,7 +216,7 @@
             style=${{ fill: isSel ? 'var(--accent-soft)' : 'var(--surface)', stroke: isSel ? 'var(--accent)' : (tag ? 'var(--agent)' : 'var(--line-strong)') }} />
           <text x=${b.x + 12} y=${b.y + 15} style=${{ fill: 'var(--ink-3)', fontSize: 11, fontWeight: 500 }}>${trunc(stepKicker(s), maxChars + 2)}</text>
           <text x=${b.x + 12} y=${b.y + 32} style=${{ fill: 'var(--ink)', fontSize: 12, fontWeight: 600 }}>${trunc(stepTitle(s), maxChars)}</text>
-          ${!compact && statText ? html`<text x=${b.x + 12} y=${b.y + 50} style=${{ fill: 'var(--ink-2)', fontSize: 11, fontVariantNumeric: 'tabular-nums' }}>${trunc(statText, maxChars + 2)}</text>` : null}
+          ${!compact && statText ? html`<text x=${b.x + 12} y=${b.y + 50} style=${{ fill: 'var(--ink-2)', fontSize: 11 }}>${trunc(statText, maxChars + 2)}</text>` : null}
           <title>${label}</title>
         </g>`);
       });
@@ -310,7 +310,7 @@
       if (monday) {
         grid.push(html`<g key=${'w' + d}>
           <line x1=${x} x2=${x} y1=${headH - 14} y2=${Ht - footH} strokeWidth="1" style=${{ stroke: 'var(--chart-grid)' }} />
-          <text x=${x + 3} y=${headH - 4} style=${{ fill: 'var(--ink-3)', fontSize: 10, fontVariantNumeric: 'tabular-nums' }}>${c.d}</text>
+          <text x=${x + 3} y=${headH - 4} style=${{ fill: 'var(--ink-3)', fontSize: 10 }}>${c.d}</text>
         </g>`);
       }
     }
@@ -379,7 +379,7 @@
           ${mEls}
           ${nowX != null ? html`<g pointerEvents="none">
               <line x1=${nowX} x2=${nowX} y1=${headH - 6} y2=${footY + 4} strokeWidth="2" style=${{ stroke: 'var(--accent)' }} />
-              <text x=${nowX + (nowX > x1 - 120 ? -4 : 4)} y=${footY + 16} textAnchor=${nowX > x1 - 120 ? 'end' : 'start'} style=${{ fill: 'var(--accent)', fontSize: 11, fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>${'Now · ' + stampLabel(perDay === 24 ? p.now : p.now * 24)}</text>
+              <text x=${nowX + (nowX > x1 - 120 ? -4 : 4)} y=${footY + 16} textAnchor=${nowX > x1 - 120 ? 'end' : 'start'} style=${{ fill: 'var(--accent)', fontSize: 11, fontWeight: 600 }}>${'Now · ' + stampLabel(perDay === 24 ? p.now : p.now * 24)}</text>
             </g>` : null}
         </svg>`}
       </div>

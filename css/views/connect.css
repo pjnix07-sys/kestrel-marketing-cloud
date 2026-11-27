@@ -1,11 +1,14 @@
 /* Marketing Cloud - Connect Claude panel and top-bar control. Tokens only; no blur, stripes or gradients. */
-.cx-panel { display: grid; gap: var(--space-4); min-width: 0; color: var(--ink); }
+.cx-panel {
+  --surface-2: var(--paper, #E7EBE3); --ink-2: var(--muted, #53645A); --ink-3: var(--muted, #53645A);
+  --accent: var(--moss, #1F5C46); --good: var(--moss, #1F5C46); --focus: var(--ink, #112019);
+  display: grid; gap: var(--space-4); min-width: 0; color: var(--ink); }
 .cx-panel > * { min-width: 0; }
 .cx-live { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 .cx-off, .cx-on { display: grid; gap: var(--space-4); }
 .cx-line { margin: 0; font-size: 14px; line-height: 1.5; color: var(--ink-2); }
 .cx-state { margin: 0; display: flex; align-items: center; gap: 8px; font-size: 15px; font-weight: 600; }
-.cx-usage { margin: 0; font-size: 13px; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.cx-usage { margin: 0; font-size: 13px; color: var(--ink-3); }
 .cx-steps { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-4); }
 .cx-step { display: grid; gap: 6px; }
 .cx-step .k-btn { width: 100%; justify-content: center; text-decoration: none; }
@@ -13,7 +16,7 @@
 .cx-form { display: grid; gap: 8px; margin-top: 6px; }
 .cx-label { font-size: 13px; font-weight: 600; color: var(--ink-2); }
 .cx-link, .cx-top { font: inherit; background: none; border: 0; cursor: pointer; }
-.cx-link { justify-self: start; padding: 4px 0; min-height: 32px; font-size: 13px; font-weight: 600; color: var(--accent); }
+.cx-link { color: var(--ink); text-decoration: underline; text-decoration-color: var(--line); text-underline-offset: 3px; justify-self: start; padding: 4px 0; min-height: 32px; font-size: 13px; font-weight: 600; color: var(--accent); }
 .cx-link:hover { text-decoration: underline; }
 .cx-msg { margin: 0; font-size: 13px; line-height: 1.45; overflow-wrap: anywhere; }
 .cx-msg.is-crit { color: var(--crit); }
@@ -32,3 +35,30 @@
 .cx-top:focus-visible, .cx-link:focus-visible, .cx-step a:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 .cx-top.is-on { color: var(--ink); }
 @media (max-width: 639.98px) { .cx-top { padding: 0 6px; min-width: 36px; justify-content: center; } .cx-top:not(.is-on) .cx-top-label { font-size: 13px; } }
+
+/* mission-control language: hairlines, flat, moss for connected, signal for needs-you */
+.cx-panel .cx-state { font-size: 17px; font-weight: 700; letter-spacing: -0.01em; }
+.cx-step { padding-top: var(--space-3, 12px); border-top: 1px solid var(--line, #B4C0B5); }
+.cx-step:first-child { border-top: 0; padding-top: 0; }
+.cx-dot { border-radius: 50%; }
+.cx-dot.is-on { background: var(--moss, #1F5C46); }
+.cx-dot.is-wait { background: var(--signal, #FF5A1F); }
+.cx-step .k-btn-primary { background: var(--moss, #1F5C46); border-color: var(--moss, #1F5C46); color: #fff; border-radius: 2px; }
+.cx-policy { border-top-color: var(--line, #B4C0B5); }
+.cx-top:hover { background: transparent; text-decoration: underline; text-underline-offset: 3px; }
+
+/* connection choices: native radios in hairline rows */
+.cx-choices { margin: 0; padding: 0; border: 0; min-width: 0; display: grid; gap: 0; }
+.cx-choices .cx-label { padding: 0 0 6px; }
+.cx-choice { display: grid; grid-template-columns: 20px 1fr; column-gap: 8px; align-items: start; padding: 10px 0; border-top: 1px solid var(--line, #B4C0B5); cursor: pointer; min-height: 44px; }
+.cx-choice input { grid-row: 1 / span 2; margin: 2px 0 0; width: 16px; height: 16px; accent-color: var(--moss, #1F5C46); }
+.cx-choice:focus-within { outline: 2px solid var(--focus, #112019); outline-offset: 2px; }
+.cx-choice-t { font-size: 14px; font-weight: 600; }
+.cx-choice-d { grid-column: 2; font-size: 13px; color: var(--ink-3); }
+.cx-choice.is-sel .cx-choice-t { color: var(--moss, #1F5C46); }
+.cx-opt { font-weight: 400; color: var(--ink-3); }
+.cx-form code { font-size: 12.5px; overflow-wrap: anywhere; }
+.cx-form input[type="datetime-local"] { min-height: 40px; }
+.cx-renew { display: grid; gap: var(--space-3, 12px); padding: var(--space-3, 12px) 0; border-top: 1px solid var(--line, #B4C0B5); border-bottom: 1px solid var(--line, #B4C0B5); }
+.cx-renew .k-btn { width: 100%; justify-content: center; }
+.cx-form .k-btn-primary, .cx-step .k-btn-primary, .cx-renew .k-btn-primary { background: var(--moss, #1F5C46); border-color: var(--moss, #1F5C46); color: #fff; border-radius: 2px; }

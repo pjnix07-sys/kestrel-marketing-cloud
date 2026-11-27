@@ -14,6 +14,22 @@
   var EMPTY_OBJ = {};
 
   function h() { return MC.html.apply(null, arguments); }
+
+  /* Quiet "Made by <mission goal> · <agent>" back-link for objects a mission produced (mission.artifacts). */
+  function MadeBy(p) {
+    var ms = MC.hooks && MC.hooks.useSelect ? MC.hooks.useSelect(function (w) { return w ? w.missions || null : null; }) : null;
+    if (!ms || !ms.order || !p.id) return null;
+    var hit = null, ag = null;
+    ms.order.forEach(function (mid) {
+      var m = ms.byId[mid];
+      if (!m || hit) return;
+      (m.artifacts || []).forEach(function (a) { if (a.kind === p.kind && a.id === p.id) hit = m; });
+    });
+    if (!hit) return null;
+    (hit.plan || []).forEach(function (s) { if (s.artifact && s.artifact.kind === p.kind && s.artifact.id === p.id) ag = s.agentId; });
+    var nm = ag && MC.lead && MC.lead.agentName ? MC.lead.agentName(ag) : null;
+    return h`<p className="mc-madeby">Made by <a href=${'#missions/' + encodeURIComponent(hit.id)}>${hit.title || hit.goalText}</a>${nm ? ' \u00b7 ' + nm : ''}</p>`;
+  }
   function R() { return window.React; }
   function fin(x) { return typeof x === 'number' && isFinite(x); }
   function cx() {
@@ -850,6 +866,7 @@
       <div className="cm-detail-titlerow">
         <div className="cm-detail-titles">
           <h1 id="page-title" tabIndex="-1" className="cm-h1">${c.name}</h1>
+          <${MadeBy} kind="campaign" id=${c.id} />
           <p className="cm-detail-meta">
             <${Status} status=${c.status} />
             <span className="num">${dateRange(c.startTick, c.endTick)}</span>
@@ -936,7 +953,7 @@
     var propSel = React.useCallback(function (w) { return call('proposalsFor', w, c.id) || EMPTY; }, [c.id]);
     var props = useSel(propSel) || EMPTY;
     var pending = props.filter(function (x) { return x.status === 'pending'; });
-    var applied = props.filter(function (x) { return x.status === 'applied' || x.status === 'auto' || x.status === 'undone'; }).slice(0, 8);
+    var applied = props.filter(function (x) { return x.status === 'applied' || x.status === 'auto' || x.status === 'undone'; });
     var LC = chart('LineChart');
     var PC = MC.ui && MC.ui.ProposalCard;
     var Panel = ui('Panel');
@@ -968,6 +985,7 @@
       </div>` : null;
 
     var segs = useSel(React.useCallback(function (w) { return w.segments; }, []));
+    var shs = React.useState(false), showAll = shs[0], setShowAll = shs[1];
     var seg = segs && segs.byId ? segs.byId[c.segmentId] : null;
     var briefText = typeof c.brief === 'string' ? c.brief : (c.brief && c.brief.notes) || '';
     var planPanel = h`<${Panel} id="cmp-plan-summary" title="Plan" sub=${c.status === 'draft' ? 'Draft. Agents never change drafts; schedule it when preflight checks pass.' : 'Scheduled. It goes live on ' + dayLabel(dayOf(c.startTick)) + '.'}>
@@ -1014,13 +1032,13 @@
           </section>` : null}
         <section className="cm-side-sec" aria-labelledby="cmp-changes-title">
           <h2 className="cm-h3" id="cmp-changes-title">Agent changes</h2>
-          ${applied.length ? h`<ol className="cm-timeline">${applied.map(function (pr) {
+          ${applied.length ? h`<ol className="cm-timeline">${(showAll ? applied : applied.slice(0, 3)).map(function (pr) {
             return h`<li key=${pr.id}>
               <${AgentNote} text=${agentName(pr.agentId) + MID + rel(pr.appliedTick, tick)} />
               <p className=${cx('cm-tl-title', pr.status === 'undone' && 'is-undone')}>${pr.title}</p>
               ${pr.status === 'undone' ? h`<span className="cm-muted cm-small">Undone</span>` : null}
             </li>`;
-          })}</ol>` : h`<p className="cm-muted cm-small">${c.status === 'draft' ? 'Agents never change drafts. They start once the campaign is live.' : 'No agent changes yet.'}</p>`}
+          })}</ol>${applied.length > 3 ? h`<${Link} id="cmp-changes-toggle" onClick=${function () { setShowAll(!showAll); }}>${showAll ? 'Show fewer' : 'Show all ' + applied.length}<//>` : null}` : h`<p className="cm-muted cm-small">${c.status === 'draft' ? 'Agents never change drafts. They start once the campaign is live.' : 'No agent changes yet.'}</p>`}
         </section>
         ${hasSel('campaignLift') ? h`<${LiftCard} campaign=${c} />` : h`<section className="cm-side-sec" aria-labelledby="cmp-lift-title">
           <h2 className="cm-h3" id="cmp-lift-title">Lift vs control</h2>
@@ -1981,7 +1999,7 @@
     return h`<div className="cm-index">
       <header className="cm-head">
         <div className="cm-head-titles">
-          <h1 id="page-title" tabIndex="-1" className="cm-h1">Campaigns</h1>
+          <h1 id="page-title" tabIndex="-1" className="cm-h1">Campaigns <span className="mc-art-tag">made and maintained by your agents</span></h1>
           <p className="cm-sub">${sub}</p>
         </div>
         <${Btn} kind="primary" id="cmp-plan" icon="plus" onClick=${function () { setFocus({ mode: 'planner', id: null }); }}>Plan a campaign<//>

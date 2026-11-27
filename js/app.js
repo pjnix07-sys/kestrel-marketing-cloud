@@ -1,7 +1,8 @@
-/* Marketing Cloud - application shell: sidebar + phone top bar, quiet agent pulse,
-   approvals count, theme, approvals drawer, batched autopilot toasts, bare-hash router,
-   error boundaries, boot. Sample tenant: Fernway Outfitters (fictional). Per §11 the shell shows
-   no clock or pace controls; the only time control is the overflow menu's "Jump ahead". */
+/* Marketing Cloud - application shell (docs/DESIGN-DIRECTION.md "Navigation"): one top bar (mark, mission switcher,
+   New goal, Asks, Team, Artifacts, Connect Claude, overflow), the Asks drawer (mission asks first, then proposals),
+   a New goal drawer, theme, batched autopilot toasts, bare-hash router (#missions, #missions/<id>, #team and the
+   artifact routes), error boundaries, boot. Sample tenant: Fernway Outfitters (fictional). No clock, pace or
+   playback controls anywhere: the product is live software reacting to real state. */
 (function () {
   'use strict';
   var MC = window.MC = window.MC || {};
@@ -61,8 +62,9 @@
   function agentName(id) { return MC.ui && MC.ui.agentName ? MC.ui.agentName(id) : id; }
 
   /* ---------------- on-demand views: a view's script and stylesheet load the first time its route opens ---------------- */
+  var VQ = '?v=' + encodeURIComponent(MC.BUILD || '0');
   var LAZY = {
-    campaigns: { js: 'campaigns', css: 'campaigns' }, content: { js: 'content', css: 'content' },
+    missions: { js: 'mission', css: 'mission' }, campaigns: { js: 'campaigns', css: 'campaigns' }, content: { js: 'content', css: 'content' },
     audiences: { js: 'audiences', css: 'audiences' }, analytics: { js: 'analytics', css: 'analytics' },
     agents: { js: 'console', css: 'console' }, connect: { js: 'connect' }, tour: { js: 'tour' }
   };
@@ -87,14 +89,14 @@
     st = lazyState[key] = { error: false };
     var parts = [new Promise(function (resolve, reject) {
       var sc = document.createElement('script');
-      sc.src = 'js/views/' + def.js + '.js';
+      sc.src = 'js/views/' + def.js + '.js' + VQ;
       sc.onload = function () { resolve(); };
       sc.onerror = function () { sc.remove(); reject(new Error('Could not load ' + key)); };
       document.body.appendChild(sc);
     })];
     if (def.css && !document.querySelector('link[data-lazy="' + key + '"]')) {
       parts.push(new Promise(function (resolve) {
-        addTag('link', { rel: 'stylesheet', href: 'css/views/' + def.css + '.css', onload: resolve, onerror: resolve }).setAttribute('data-lazy', key);
+        addTag('link', { rel: 'stylesheet', href: 'css/views/' + def.css + '.css' + VQ, onload: resolve, onerror: resolve }).setAttribute('data-lazy', key);
       }));
     }
     st.promise = Promise.all(parts).then(function () { lazyNotify(); }, function (e) { st.error = true; lazyNotify(); throw e; });
@@ -113,13 +115,13 @@
   }
   // After boot, fetch the other views' files into the HTTP cache when the browser is idle (no parsing, no execution).
   function prefetchViews() {
-    var keys = ['campaigns', 'content', 'audiences', 'analytics', 'agents'], i = 0;
+    var keys = ['missions', 'campaigns', 'content', 'audiences', 'analytics', 'agents'], i = 0;
     function one() {
       if (i >= keys.length) return;
       var def = LAZY[keys[i++]];
       try {
-        addTag('link', { rel: 'prefetch', as: 'script', href: 'js/views/' + def.js + '.js' });
-        addTag('link', { rel: 'prefetch', as: 'style', href: 'css/views/' + def.css + '.css' });
+        addTag('link', { rel: 'prefetch', as: 'script', href: 'js/views/' + def.js + '.js' + VQ });
+        addTag('link', { rel: 'prefetch', as: 'style', href: 'css/views/' + def.css + '.css' + VQ });
       } catch (e) { /* prefetch is an optimisation only */ }
       idle(one);
     }
@@ -136,16 +138,15 @@
     document.addEventListener('pointerdown', function () { d.setAttribute('data-input', 'pointer'); }, true);
   })();
 
-  var NAV = [
-    { route: 'home', label: 'Command Center', icon: 'home' },
+  // Artifacts: what missions make. Quiet secondary menu, never the front door.
+  var ARTIFACTS = [
     { route: 'campaigns', label: 'Campaigns', icon: 'campaigns' },
-    { route: 'content', label: 'Content Studio', icon: 'content' },
     { route: 'audiences', label: 'Audiences', icon: 'audiences' },
-    { route: 'analytics', label: 'Analytics', icon: 'analytics' },
-    { route: 'agents', label: 'Agents', icon: 'agents' }
+    { route: 'content', label: 'Content', icon: 'content' },
+    { route: 'analytics', label: 'Results', icon: 'analytics' }
   ];
-  var TITLES = {};
-  NAV.forEach(function (n) { TITLES[n.route] = n.label; });
+  var TITLES = { missions: 'Missions', home: 'Missions', agents: 'Team', campaigns: 'Campaigns', content: 'Content', audiences: 'Audiences', analytics: 'Results' };
+  var ART_ROUTES = ARTIFACTS.map(function (a) { return a.route; });
   var THEMES = [
     { value: 'system', label: 'System', icon: 'monitor', ariaLabel: 'System theme' },
     { value: 'light', label: 'Light', icon: 'sun', ariaLabel: 'Light theme' },
@@ -161,7 +162,22 @@
   function selDrawer(s) { return s.drawer; }
   function selTheme(s) { return s.theme; }
   function selSample(s) { return s.sampleDismissed; }
-  function selCampFocus(s) { return s.focus && s.focus.campaigns; }
+  function selMissions(w) { return w ? w.missions : null; }
+  function selMissionFocus(s) { return s.missionFocus || null; }
+  function selAskCount(w) {
+    if (!w) return 0;
+    var n = w.proposals && w.proposals.open ? w.proposals.open.length : 0, ms = w.missions;
+    if (ms && ms.order) ms.order.forEach(function (id) {
+      var m = ms.byId[id];
+      if (m && m.status !== 'done' && m.status !== 'stopped') (m.asks || []).forEach(function (a) { if (a.status === 'open') n++; });
+    });
+    return n;
+  }
+  function isLive(m) { return !!m && m.status !== 'done' && m.status !== 'stopped'; }
+  function liveMissions(slice) {
+    return slice && slice.order ? slice.order.map(function (id) { return slice.byId[id]; }).filter(isLive) : [];
+  }
+  function missionGoal(m) { return m ? (m.goalText || m.title || 'Untitled goal') : ''; }
 
   function report(e) { if (window.console && console.error) console.error(e); }
 
@@ -221,52 +237,6 @@
   MC.ui = MC.ui || {};
   MC.ui.PersonaSwitch = PersonaSwitch; MC.ui.DecisionNote = DecisionNote; MC.ui.DecisionMeta = DecisionMeta;
 
-  /* ---------------- jump ahead (the one time control, §11.1) ---------------- */
-  function canJump() { return !!(MC.engine && typeof MC.engine.step === 'function'); }
-  function jumpAhead(hours) {
-    try { if (canJump()) MC.engine.step(hours); } catch (e) { report(e); }
-  }
-
-  /* ---------------- agent pulse: one quiet dot that animates only when an agent acts ---------------- */
-  var AGENT_KINDS = { 'agent-applied': 1, 'agent-proposed': 1 };
-  function selAgentTop(w) {
-    var f = w && w.feed ? w.feed : null;
-    if (!f) return null;
-    for (var i = 0; i < f.length && i < 60; i++) if (AGENT_KINDS[f[i].kind]) return f[i].id;
-    return null;
-  }
-  function openActivity() {
-    setUi({ drawer: null });
-    go('home');
-    // After the route change settles, bring the "What changed" feed into view.
-    window.setTimeout(function () {
-      var el = document.getElementById('home-changes');
-      if (!el) return;
-      try { el.scrollIntoView({ block: 'start', behavior: 'smooth' }); } catch (e) { el.scrollIntoView(); }
-      var list = document.getElementById('home-feed-list');
-      if (list && list.focus) { try { list.focus({ preventScroll: true }); } catch (e) { list.focus(); } }
-    }, 120);
-  }
-  function AgentDot(p) {
-    var top = useSel(selAgentTop);
-    var last = useRef(undefined);
-    var st = useState(false), active = st[0], setActive = st[1];
-    useEffect(function () {
-      var before = last.current;
-      last.current = top;
-      if (before === undefined || top === before || !top) return undefined;
-      setActive(true);
-      var timer = window.setTimeout(function () { setActive(false); }, 2400);
-      return function () { window.clearTimeout(timer); };
-    }, [top]);
-    var label = active ? 'An agent just acted. Open recent activity.' : 'Agent activity. Open recent activity.';
-    return html`<button type="button" id=${p.id || 'app-pulse'} className=${cx('app-pulse', active && 'is-active')}
-        aria-label=${label} title="Agent activity" onClick=${openActivity}>
-      <span className="app-pulse-dot" aria-hidden="true"></span>
-      ${p.withLabel ? html`<span className="app-pulse-label">Agent activity</span>` : null}
-    </button>`;
-  }
-
   function ThemeControl(p) {
     var theme = useUi(selTheme) || 'system';
     var Seg = ui('Segmented');
@@ -276,30 +246,84 @@
       onChange=${function (v) { setUi({ theme: v }); }} />`;
   }
 
-  /* ---------------- brand + navigation ---------------- */
+  /* ---------------- router: #missions, #missions/<id>, #team and the artifact routes ----------------
+     The store owns the route state and the plain hashes. This layer adds the mission hashes without touching it:
+     programmatic navigation sets state and uses pushState (no hashchange round trip), and back/forward or a typed
+     hash is reconciled by applyHash(). 'home' is a legacy alias of 'missions'. */
+  var storeGo = MC.nav.go;
+  if (MC.nav.ROUTES && MC.nav.ROUTES.indexOf('missions') < 0) MC.nav.ROUTES.push('missions');
+  function navTo(route, focusPatch, hash) {
+    MC.uiStore.set(function (s) {
+      var out = { route: route };
+      if (focusPatch && typeof focusPatch === 'object') {
+        var f = Object.assign({}, s.focus);
+        f[route] = Object.assign({}, s.focus[route], focusPatch);
+        out.focus = f;
+      }
+      return out;
+    });
+    try { if (window.location.hash !== '#' + hash) window.history.pushState(null, '', '#' + hash); } catch (e) { /* no history */ }
+  }
+  MC.nav.go = function (route, focus) {
+    if (route === 'home' || route === 'missions') {
+      var id = typeof focus === 'string' ? focus : (focus && typeof focus === 'object' && focus.id) || null;
+      setUi({ missionFocus: id });
+      navTo('missions', null, id ? 'missions/' + encodeURIComponent(id) : 'missions');
+      return;
+    }
+    if (route === 'team' || route === 'agents') { navTo('agents', focus, 'team'); return; }
+    storeGo(route, focus);
+  };
+  function applyHash() {
+    var h = '';
+    try { h = String(window.location.hash || '').replace(/^#/, ''); } catch (e) { h = ''; }
+    var parts = h.split('/'), r = parts[0];
+    if (!r && MC.uiStore.getState().route === 'home') r = 'missions';
+    if (r === 'home') r = 'missions';
+    if (r === 'missions') {
+      var id = null;
+      try { id = parts[1] ? decodeURIComponent(parts[1]) : null; } catch (e) { id = null; }
+      MC.uiStore.set({ route: 'missions', missionFocus: id });
+      try { if (parts[0] !== 'missions') window.history.replaceState(null, '', '#missions' + (id ? '/' + encodeURIComponent(id) : '')); } catch (e) { /* ignore */ }
+    } else if (r === 'team') {
+      MC.uiStore.set({ route: 'agents', missionFocus: null });
+    }
+  }
+  applyHash();
+  window.addEventListener('hashchange', applyHash);   // registered after the store's own handler, so it has the last word
+
+  /* ---------------- brand + top bar ---------------- */
+  function openGoal() { setUi({ drawer: 'goal' }); }
   function Mark(p) {
-    return html`<a className="app-mark" href="#home" aria-label="Marketing Cloud, Command Center" onClick=${function (e) { e.preventDefault(); go('home'); }}>
-      <span className="app-mark-glyph" aria-hidden="true">
-        <svg viewBox="0 0 24 24" width="28" height="28" fill="none"><path d=${(MC.icons && MC.icons.mark) || 'M4 20L7 6l5 7 5-9 3 16'} stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" /><circle className="app-mark-node" cx="17" cy="4" r="2.6" /></svg>
-      </span>
+    return html`<a className="app-mark" href="#missions" aria-label="Marketing Cloud, Missions" onClick=${function (e) { e.preventDefault(); go('missions'); }}>
+      <svg className="app-mark-glyph" viewBox="0 0 64 64" width="26" height="26" fill="none" aria-hidden="true">
+        <g stroke="currentColor" strokeWidth="5" strokeLinecap="round">
+          <path d="M6 12c22 0 26 20 42 20" /><path d="M6 25c18 0 24 7 42 7" /><path d="M6 39c18 0 24-7 42-7" /><path d="M6 52c22 0 26-20 42-20" />
+        </g>
+        <circle className="app-mark-node" cx="52" cy="32" r="7" />
+      </svg>
       ${p.compact ? null : html`<span className="app-mark-word">Marketing Cloud</span>`}
     </a>`;
   }
 
-  function NavList(p) {
-    var route = useUi(selRoute);
-    return html`<nav className="app-nav" aria-label="Main">
+  function dotState(m) {
+    if (m.status === 'waiting') return 'is-wait';
+    if (m.status === 'paused') return 'is-hold';
+    return 'is-work';
+  }
+  function MissionTabs() {
+    var slice = useSel(selMissions), focus = useUi(selMissionFocus);
+    var list = useMemo(function () { return liveMissions(slice); }, [slice]);
+    return html`<nav className="app-missions" id="app-mission-tabs" aria-label="Missions">
       <ul>
-        ${NAV.map(function (n) {
-          var on = n.route === route;
-          var built = n.route === 'home' || !!LAZY[n.route] || !!(MC.views && typeof MC.views[n.route] === 'function');
-          return html`<li key=${n.route}>
-            <a href=${'#' + n.route} id=${(p.idPrefix || 'app-nav') + '-' + n.route} className=${cx('app-nav-link', on && 'is-on')}
-                aria-current=${on ? 'page' : null} title=${n.label}
-                onClick=${function (e) { e.preventDefault(); go(n.route); if (p.onNavigate) p.onNavigate(n.route); }}>
-              <span className="app-nav-icon" aria-hidden="true"><${Icon} name=${n.icon} size=${18} /></span>
-              <span className="app-nav-label">${n.label}</span>
-              ${!built ? html`<span className="app-nav-soon">Soon</span>` : null}
+        ${list.map(function (m) {
+          var on = m.id === focus;
+          return html`<li key=${m.id}>
+            <a href=${'#missions/' + encodeURIComponent(m.id)} className=${cx('app-mtab', on && 'is-on')} aria-current=${on ? 'page' : null} title=${missionGoal(m)}
+                onClick=${function (e) { e.preventDefault(); go('missions', m.id); }}>
+              <span className=${cx('app-mdot', dotState(m))} aria-hidden="true"></span>
+              <span className="app-mtab-text">${missionGoal(m)}</span>
+              ${m.status === 'waiting' ? html`<span className="k-sr">, waiting on you</span>` : null}
             </a>
           </li>`;
         })}
@@ -307,92 +331,79 @@
     </nav>`;
   }
 
-  function Sidebar() {
-    return html`<aside className="app-sidebar" aria-label="Marketing Cloud">
-      <div className="app-sidebar-top"><${Mark} /></div>
-      <${NavList} />
-      <div className="app-sidebar-foot">
-        <div className="app-tenant">
-          <span className="app-tenant-name">Fernway Outfitters</span>
-          <span className="app-tenant-note">Sample data</span>
+  // Compact form of the switcher: the current goal as a button that opens the list.
+  function MissionMenu(p) {
+    var anchor = useRef(null);
+    var st = useState(false), open = st[0], setOpen = st[1];
+    var slice = useSel(selMissions), focus = useUi(selMissionFocus);
+    var list = useMemo(function () { return liveMissions(slice); }, [slice]);
+    var Pop = ui('Popover');
+    var cur = null;
+    list.forEach(function (m) { if (m.id === focus) cur = m; });
+    function close() { setOpen(false); }
+    return html`<div className="app-mmenu">
+      <button type="button" ref=${anchor} id="app-mission-menu" className=${cx('app-mmenu-btn', cur && 'is-on')} aria-haspopup="dialog" aria-expanded=${open ? 'true' : 'false'}
+          onClick=${function () { setOpen(!open); }}>
+        ${cur ? html`<span className=${cx('app-mdot', dotState(cur))} aria-hidden="true"></span>` : null}
+        <span className="app-mmenu-text">${cur ? missionGoal(cur) : 'Missions'}</span>
+        <${Icon} name="chevron-down" size=${16} />
+      </button>
+      ${Pop ? html`<${Pop} anchorRef=${anchor} open=${open} onClose=${close} label="Missions" placement="bottom-start" width=${380} id="app-mission-menu-pop">
+        <div className="app-menu">
+          <a href="#missions" className="app-menu-item" onClick=${function (e) { e.preventDefault(); close(); go('missions'); }}><span>All missions</span></a>
+          ${list.map(function (m) {
+            return html`<a key=${m.id} href=${'#missions/' + encodeURIComponent(m.id)} className=${cx('app-menu-item', 'app-menu-mission', cur && cur.id === m.id && 'is-on')}
+                onClick=${function (e) { e.preventDefault(); close(); go('missions', m.id); }}>
+              <span className=${cx('app-mdot', dotState(m))} aria-hidden="true"></span><span className="app-menu-goal">${missionGoal(m)}</span></a>`;
+          })}
+          <button type="button" className="app-menu-item app-menu-new" onClick=${function () { close(); openGoal(); }}><${Icon} name="plus" size=${16} /><span>New goal</span></button>
         </div>
-        <${PersonaSwitch} id="app-persona" />
-        <div className="app-theme"><${ThemeControl} id="app-theme" /></div>
-      </div>
-    </aside>`;
+      <//>` : null}
+    </div>`;
   }
 
-  /* ---------------- top bar ---------------- */
-  function Crumbs(p) {
-    var route = useUi(selRoute);
-    var cf = useUi(selCampFocus);
-    var campaigns = useSel(selCampaigns);
-    var title = TITLES[route] || TITLES.home;
-    var leaf = null;
-    if (route === 'campaigns' && cf) {
-      if (cf.mode === 'detail' && cf.id && campaigns && campaigns.byId && campaigns.byId[cf.id]) leaf = campaigns.byId[cf.id].name;
-      else if (cf.mode === 'planner') leaf = 'New campaign plan';
-    }
-    // On wider screens each view's own h1 names the page; the bar only carries breadcrumbs.
-    if (!leaf) return p.showTitle ? html`<div className="app-title">${title}</div>` : null;
-    return html`<nav className="app-crumbs" aria-label="Breadcrumb">
-      <ol>
-        <li><a href="#campaigns" onClick=${function (e) { e.preventDefault(); go('campaigns', { mode: 'board' }); }}>Campaigns</a></li>
-        <li aria-current="page"><span className="app-title app-title--leaf">${leaf}</span></li>
-      </ol>
-    </nav>`;
+  function NewGoalButton(p) {
+    return html`<button type="button" id="app-new-goal" className=${cx('app-newgoal', p.compact && 'is-compact')} onClick=${openGoal}>
+      <${Icon} name="plus" size=${16} /><span className="app-newgoal-label">New goal</span>
+    </button>`;
   }
 
-  // The approvals control is a single count (§11.3): "Approvals 3", quiet when nothing waits.
-  function ApprovalsButton(p) {
-    var open = useSel(selOpenCount) || 0;
-    var label = open ? 'Approvals, ' + open + ' waiting' : 'Approvals, nothing waiting';
-    return html`<button type="button" id="app-approvals-btn" className=${cx('app-approvals-btn', open > 0 && 'has-items')} aria-label=${label}
+  // Asks: one count of everything waiting on a person (open mission asks plus pending proposals).
+  function AsksButton(p) {
+    var open = useSel(selAskCount) || 0;
+    var label = open ? 'Asks, ' + open + ' waiting' : 'Asks, nothing waiting';
+    return html`<button type="button" id="app-asks-btn" className=${cx('app-asks-btn', open > 0 && 'has-items')} aria-label=${label}
         onClick=${function () { setUi({ drawer: 'approvals' }); }}>
-      ${p.compact ? null : html`<span className="app-approvals-label">Approvals</span>`}
+      <span className="app-asks-label">Asks</span>
       <span className="app-count num" aria-hidden="true">${open}</span>
     </button>`;
   }
 
-  function OverflowMenu() {
+  function TeamLink() {
+    var route = useUi(selRoute);
+    var on = route === 'agents';
+    return html`<a href="#team" id="app-team-link" className=${cx('app-tl', on && 'is-on')} aria-current=${on ? 'page' : null}
+        onClick=${function (e) { e.preventDefault(); go('agents'); }}>Team</a>`;
+  }
+
+  function ArtifactsMenu() {
     var anchor = useRef(null);
     var st = useState(false), open = st[0], setOpen = st[1];
-    var cf = useState(false), confirm = cf[0], setConfirm = cf[1];
-    var bs = useState(false), busy = bs[0], setBusy = bs[1];
-    var Pop = ui('Popover'), IC = ui('InlineConfirm');
-    var dismissed = useUi(selSample);
-    function close() { setOpen(false); setConfirm(false); }
-    function jump(hours) { close(); jumpAhead(hours); }
-    function restart() {
-      setBusy(true);
-      var done = function () { setBusy(false); close(); if (MC.uiStore.clearToasts) MC.uiStore.clearToasts(); };
-      try {
-        var r = MC.engine && typeof MC.engine.restart === 'function' ? MC.engine.restart(MC.SEED) : null;
-        if (r && typeof r.then === 'function') r.then(done, function (e) { report(e); done(); }); else done();
-      } catch (e) { report(e); done(); }
-    }
-    return html`<div className="app-overflow">
-      <button type="button" ref=${anchor} id="app-more" className="k-iconbtn" aria-label="More options" aria-haspopup="dialog"
-          aria-expanded=${open ? 'true' : 'false'} onClick=${function () { setOpen(!open); setConfirm(false); }}>
-        <${Icon} name="more" size=${18} />
-      </button>
-      ${Pop ? html`<${Pop} anchorRef=${anchor} open=${open} onClose=${close} label="More options" placement="bottom-end" width=${300} id="app-more-menu">
+    var route = useUi(selRoute);
+    var Pop = ui('Popover');
+    var on = ART_ROUTES.indexOf(route) >= 0;
+    function close() { setOpen(false); }
+    return html`<div className="app-artifacts">
+      <button type="button" ref=${anchor} id="app-artifacts-btn" className=${cx('app-tl', on && 'is-on')} aria-haspopup="dialog" aria-expanded=${open ? 'true' : 'false'}
+          onClick=${function () { setOpen(!open); }}><span>Artifacts</span><${Icon} name="chevron-down" size=${16} /></button>
+      ${Pop ? html`<${Pop} anchorRef=${anchor} open=${open} onClose=${close} label="Artifacts" placement="bottom-end" width=${240} id="app-artifacts-menu">
         <div className="app-menu">
-          <div className="app-menu-row app-menu-persona"><${PersonaSwitch} id="app-more-persona" /></div>
-          ${canJump() ? html`<div className="app-menu-row" role="group" aria-label="Jump ahead">
-            <span className="app-menu-row-label">Jump ahead</span>
-            <button type="button" className="app-menu-link" id="app-jump-day" onClick=${function () { jump(24); }}>a day</button>
-            <span className="app-menu-sep" aria-hidden="true">/</span>
-            <button type="button" className="app-menu-link" id="app-jump-week" onClick=${function () { jump(24 * 7); }}>a week</button>
-          </div>` : null}
-          ${confirm && IC ? html`<${IC} id="app-restart-confirm" tone="crit" busy=${busy}
-              message="Reset the sample data? This clears every change you and the agents have made."
-              confirmLabel="Reset" cancelLabel="Cancel" onConfirm=${restart} onCancel=${function () { setConfirm(false); }} />`
-            : html`<button type="button" className="app-menu-item" id="app-restart" disabled=${!(MC.engine && MC.engine.restart)}
-                onClick=${function () { setConfirm(true); }}><span>Reset sample data${ELL}</span></button>`}
-          ${dismissed ? html`<button type="button" className="app-menu-item" id="app-sample-note"
-              onClick=${function () { close(); setUi({ sampleDismissed: false }); }}><span>Show the sample-data note</span></button>` : null}
-          <button type="button" className="app-menu-item" id="app-take-tour" onClick=${function () { close(); startTour(); }}><span>Take the tour</span></button>
+          <p className="app-menu-note">What your missions make</p>
+          ${ARTIFACTS.map(function (a) {
+            return html`<a key=${a.route} href=${'#' + a.route} id=${'app-art-' + a.route} className=${cx('app-menu-item', route === a.route && 'is-on')}
+                aria-current=${route === a.route ? 'page' : null} onClick=${function (e) { e.preventDefault(); close(); go(a.route); }}>
+              <${Icon} name=${a.icon} size=${18} /><span>${a.label}</span></a>`;
+          })}
         </div>
       <//>` : null}
     </div>`;
@@ -406,24 +417,72 @@
         onClick=${function () { setUi({ drawer: 'connect' }); loadLazy('connect'); }}><span className="cx-top-label">Connect Claude</span></button>`;
   }
 
+  function ResetItem(p) {
+    var cf = useState(false), confirm = cf[0], setConfirm = cf[1];
+    var bs = useState(false), busy = bs[0], setBusy = bs[1];
+    var IC = ui('InlineConfirm');
+    function restart() {
+      setBusy(true);
+      var done = function () { setBusy(false); p.onDone(); if (MC.uiStore.clearToasts) MC.uiStore.clearToasts(); };
+      try {
+        var r = MC.engine && typeof MC.engine.restart === 'function' ? MC.engine.restart(MC.SEED) : null;
+        if (r && typeof r.then === 'function') r.then(done, function (e) { report(e); done(); }); else done();
+      } catch (e) { report(e); done(); }
+    }
+    if (confirm && IC) {
+      return html`<${IC} id="app-restart-confirm" tone="crit" busy=${busy}
+        message="Reset the sample data? This clears every change you and the agents have made."
+        confirmLabel="Reset" cancelLabel="Cancel" onConfirm=${restart} onCancel=${function () { setConfirm(false); }} />`;
+    }
+    return html`<button type="button" className="app-menu-item" id=${p.id || 'app-restart'} disabled=${!(MC.engine && MC.engine.restart)}
+        onClick=${function () { setConfirm(true); }}><span>Reset sample data${ELL}</span></button>`;
+  }
+
+  function OverflowMenu() {
+    var anchor = useRef(null);
+    var st = useState(false), open = st[0], setOpen = st[1];
+    var Pop = ui('Popover');
+    var dismissed = useUi(selSample);
+    function close() { setOpen(false); }
+    return html`<div className="app-overflow">
+      <button type="button" ref=${anchor} id="app-more" className="k-iconbtn" aria-label="More options" aria-haspopup="dialog"
+          aria-expanded=${open ? 'true' : 'false'} onClick=${function () { setOpen(!open); }}>
+        <${Icon} name="more" size=${18} />
+      </button>
+      ${Pop ? html`<${Pop} anchorRef=${anchor} open=${open} onClose=${close} label="More options" placement="bottom-end" width=${300} id="app-more-menu">
+        <div className="app-menu">
+          <div className="app-menu-row app-menu-theme"><span className="app-menu-row-label">Theme</span><${ThemeControl} id="app-more-theme" /></div>
+          <div className="app-menu-row app-menu-persona"><${PersonaSwitch} id="app-more-persona" /></div>
+          <button type="button" className="app-menu-item" id="app-take-tour" onClick=${function () { close(); startTour(); }}><span>Take the tour</span></button>
+          ${dismissed ? html`<button type="button" className="app-menu-item" id="app-sample-note"
+              onClick=${function () { close(); setUi({ sampleDismissed: false }); }}><span>Show the sample-data note</span></button>` : null}
+          <${ResetItem} onDone=${close} />
+        </div>
+      <//>` : null}
+    </div>`;
+  }
+
   function Topbar(p) {
-    if (p.phone) {
+    if (p.compact) {
       var IB = ui('IconButton');
-      return html`<header className="app-topbar app-topbar--phone">
+      return html`<header className="app-topbar app-topbar--compact">
         <${Mark} compact=${true} />
-        <div className="app-topbar-title"><${Crumbs} showTitle=${true} /></div>
-        <${AgentDot} />
-        <${ConnectButton} />
-        <${ApprovalsButton} compact=${true} />
+        <${MissionMenu} />
+        <${NewGoalButton} compact=${true} />
+        <${AsksButton} />
         ${IB ? html`<${IB} id="app-menu-btn" icon="menu" label="Menu" onClick=${function () { setUi({ drawer: 'menu' }); }} />` : null}
       </header>`;
     }
     return html`<header className="app-topbar">
-      <div className="app-topbar-title"><${Crumbs} /></div>
+      <${Mark} />
+      <span className="app-topbar-rule" aria-hidden="true"></span>
+      ${p.narrow ? html`<${MissionMenu} />` : html`<${MissionTabs} />`}
+      <${NewGoalButton} />
       <div className="app-topbar-tools">
-        <${AgentDot} />
+        <${AsksButton} />
+        <${TeamLink} />
+        <${ArtifactsMenu} />
         <${ConnectButton} />
-        <${ApprovalsButton} />
         <${OverflowMenu} />
       </div>
     </header>`;
@@ -543,7 +602,6 @@
         ${msg ? html`<p className=${'app-msg app-msg--' + msg.tone} role="status">${msg.text}</p>` : null}
         ${frozen.pending > 0 && NewPill ? html`<div className="app-newpill"><${NewPill} count=${frozen.pending} onClick=${frozen.reveal}
             label=${frozen.pending + (frozen.pending === 1 ? ' new proposal' : ' new proposals')} /></div>` : null}
-        ${tab === 'needs' && MC.tour && MC.tour.Inline ? html`<${MC.tour.Inline} />` : null}
         ${shown.length ? html`<ul className="app-prop-list" onMouseEnter=${function () { setHold(true); }} onMouseLeave=${function () { setHold(false); }}
             onFocus=${function () { setHold(true); }} onBlur=${function (ev) { if (!ev.currentTarget.contains(ev.relatedTarget)) setHold(false); }}>
           ${shown.map(function (x) {
@@ -560,14 +618,118 @@
     </div>`;
   }
 
-  /* ---------------- phone menu sheet ---------------- */
+  /* ---------------- asks drawer: mission asks first (answer in place), then agent proposals ---------------- */
+  function leadName(id) { return id === 'lead' ? 'Lead' : agentName(id); }
+  function nfmt(v) { return typeof v === 'number' && isFinite(v) ? Math.round(v).toLocaleString('en-US') : String(v); }
+  function AskCard(p) {
+    var m = p.m, a = p.a;
+    var ms = useState(null), msg = ms[0], setMsg = ms[1];
+    var who = useUi(selPersona);
+    var can = MC.catalog.can(who, 'approve');
+    function answer(o) {
+      var r = null;
+      try { r = MC.missions && MC.missions.answer ? MC.missions.answer(m.id, a.id, o) : null; } catch (e) { report(e); }
+      if (!r) setMsg("Couldn't send that answer.");
+      else if (r.ok === false) setMsg(r.error || "Couldn't send that answer.");
+    }
+    var imp = a.impact || {};
+    return html`<article className="app-ask" aria-label=${'Ask from ' + leadName(a.agentId)}>
+      <p className="app-ask-from">${leadName(a.agentId)}<span className="app-ask-sep"> ${DOT} </span>${missionGoal(m)}</p>
+      <h3 className="app-ask-q">${a.question}</h3>
+      ${a.why ? html`<p className="app-ask-why">${a.why}</p>` : null}
+      ${(imp.lo || imp.hi) ? html`<p className="app-ask-impact">Impact <b>${nfmt(imp.lo) + ' to ' + nfmt(imp.hi)}</b>${imp.metric ? ' ' + imp.metric : ''}</p>` : null}
+      <div className="app-ask-opts" role="group" aria-label="Your answer">
+        ${(a.options || []).map(function (o) {
+          var def = o === a.default;
+          return html`<button key=${o} type="button" className=${cx('app-ask-btn', def && 'is-default')} disabled=${!can} onClick=${function () { answer(o); }}>${o}${def ? html`<span className="app-ask-def"> (default)</span>` : null}</button>`;
+        })}
+      </div>
+      ${can ? null : html`<p className="app-ask-note">Your role can read this but not answer it.</p>`}
+      ${msg ? html`<p className="app-ask-note" role="alert">${msg}</p>` : null}
+      <button type="button" className="app-ask-open" onClick=${function () { setUi({ drawer: null }); go('missions', m.id); }}>Open mission</button>
+    </article>`;
+  }
+  function AsksPanel() {
+    var slice = useSel(selMissions);
+    var asks = useMemo(function () {
+      var out = [];
+      liveMissions(slice).forEach(function (m) { (m.asks || []).forEach(function (a) { if (a.status === 'open') out.push({ m: m, a: a }); }); });
+      return out;
+    }, [slice]);
+    return html`<div className="app-asks">
+      <section aria-labelledby="asks-h" className="app-asks-sec">
+        <h3 id="asks-h" className="app-asks-sub">From your missions</h3>
+        ${asks.length ? html`<ul className="app-ask-list">${asks.map(function (x) { return html`<li key=${x.m.id + ':' + x.a.id}><${AskCard} m=${x.m} a=${x.a} /></li>`; })}</ul>`
+          : html`<p className="app-asks-none">No mission is waiting on you.</p>`}
+      </section>
+      <section aria-labelledby="props-h" className="app-asks-sec">
+        <h3 id="props-h" className="app-asks-sub">Agent proposals</h3>
+        <${ApprovalsPanel} />
+      </section>
+    </div>`;
+  }
+
+  /* ---------------- new goal drawer ---------------- */
+  function NewGoalPanel() {
+    var ts = useState(''), text = ts[0], setText = ts[1];
+    var bs = useState(false), busy = bs[0], setBusy = bs[1];
+    var es = useState(''), err = es[0], setErr = es[1];
+    function submit(ev) {
+      if (ev) ev.preventDefault();
+      var g = text.trim();
+      if (g.length < 8) { setErr('Describe the outcome you want in a sentence.'); return; }
+      if (!MC.missions || typeof MC.missions.create !== 'function') { setErr('Missions are still loading. Try again in a moment.'); return; }
+      setBusy(true); setErr('');
+      var done = function (r) {
+        setBusy(false);
+        if (r && r.ok) { setText(''); setUi({ drawer: null }); go('missions', r.id || null); }
+        else setErr((r && r.error) || "Couldn't start that goal.");
+      };
+      try { var r = MC.missions.create(g); if (r && typeof r.then === 'function') r.then(done, function (e) { report(e); done(null); }); else done(r); }
+      catch (e) { report(e); done(null); }
+    }
+    return html`<form className="app-goal" onSubmit=${submit}>
+      <p className="app-goal-lead">Give the team an outcome, a deadline and any limits, in one sentence. The Lead plans it and the team starts.</p>
+      <label className="k-label" htmlFor="app-goal-text">Goal</label>
+      <textarea id="app-goal-text" className="k-input k-textarea app-goal-text" rows="4" maxLength="300" value=${text} aria-describedby=${err ? 'app-goal-err' : null}
+        placeholder="Win back 300 lapsed customers before Dec 20 without discounting more than 10%"
+        onChange=${function (e) { setText(e.target.value); }}
+        onKeyDown=${function (e) { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) submit(e); }}></textarea>
+      ${err ? html`<p id="app-goal-err" className="k-error" role="alert">${err}</p>` : null}
+      <div className="app-goal-actions">
+        <button type="submit" id="app-goal-go" className="k-btn k-btn--primary k-btn--md" disabled=${busy} aria-busy=${busy ? 'true' : 'false'}><span className="k-btn-label">${busy ? 'Planning' + ELL : 'Start the mission'}</span></button>
+        <span className="app-goal-hint">Ctrl or Cmd + Enter</span>
+      </div>
+    </form>`;
+  }
+
+  /* ---------------- compact menu sheet (phone and narrow tablet) ---------------- */
   function MenuContent() {
+    var slice = useSel(selMissions), focus = useUi(selMissionFocus), route = useUi(selRoute);
+    var list = useMemo(function () { return liveMissions(slice); }, [slice]);
+    var dismissed = useUi(selSample);
     function closeMenu() { setUi({ drawer: null }); }
     return html`<div className="app-menu-sheet">
-      <${NavList} idPrefix="app-menu-nav" onNavigate=${closeMenu} />
-      <section className="app-menu-section" aria-label="Agent activity">
-        <${AgentDot} id="app-menu-pulse" withLabel=${true} />
+      <section className="app-menu-section" aria-labelledby="app-menu-missions-h">
+        <h3 id="app-menu-missions-h" className="app-menu-heading">Missions</h3>
+        <ul className="app-menu-list">
+          ${list.map(function (m) {
+            return html`<li key=${m.id}><a href=${'#missions/' + encodeURIComponent(m.id)} className=${cx('app-menu-item', 'app-menu-mission', focus === m.id && route === 'missions' && 'is-on')}
+                onClick=${function (e) { e.preventDefault(); closeMenu(); go('missions', m.id); }}><span className=${cx('app-mdot', dotState(m))} aria-hidden="true"></span><span className="app-menu-goal">${missionGoal(m)}</span></a></li>`;
+          })}
+          <li><button type="button" className="app-menu-item app-menu-new" id="app-menu-new-goal" onClick=${openGoal}><${Icon} name="plus" size=${16} /><span>New goal</span></button></li>
+        </ul>
       </section>
+      <section className="app-menu-section" aria-label="Team and artifacts">
+        <ul className="app-menu-list">
+          <li><a href="#team" className=${cx('app-menu-item', route === 'agents' && 'is-on')} onClick=${function (e) { e.preventDefault(); closeMenu(); go('agents'); }}><${Icon} name="agents" size=${18} /><span>Team</span></a></li>
+          ${ARTIFACTS.map(function (a) {
+            return html`<li key=${a.route}><a href=${'#' + a.route} id=${'app-menu-nav-' + a.route} className=${cx('app-menu-item', route === a.route && 'is-on')}
+                onClick=${function (e) { e.preventDefault(); closeMenu(); go(a.route); }}><${Icon} name=${a.icon} size=${18} /><span>${a.label}</span></a></li>`;
+          })}
+        </ul>
+      </section>
+      <section className="app-menu-section" aria-label="Connect Claude"><${ConnectButton} /></section>
       <section className="app-menu-section" aria-labelledby="app-menu-theme-h">
         <h3 id="app-menu-theme-h" className="app-menu-heading">Appearance</h3>
         <${ThemeControl} id="app-menu-theme" block=${true} />
@@ -575,6 +737,8 @@
       <section className="app-menu-section" aria-label="Viewing as"><${PersonaSwitch} id="app-menu-persona" /></section>
       <section className="app-menu-section" aria-label="Guide">
         <button type="button" className="app-menu-item" id="app-menu-take-tour" onClick=${function () { closeMenu(); startTour(); }}><span>Take the tour</span></button>
+        ${dismissed ? html`<button type="button" className="app-menu-item" onClick=${function () { closeMenu(); setUi({ sampleDismissed: false }); }}><span>Show the sample-data note</span></button>` : null}
+        <${ResetItem} id="app-menu-restart" onDone=${closeMenu} />
       </section>
       <div className="app-tenant">
         <span className="app-tenant-name">Fernway Outfitters</span>
@@ -614,9 +778,7 @@
     var Empty = ui('EmptyState');
     var title = TITLES[p.route] || 'This area';
     var failed = p.failed;
-    var ready = NAV.filter(function (n) { return MC.views && typeof MC.views[n.route] === 'function'; }).map(function (n) { return n.label; });
-    var body = failed ? "Check your connection, then try again." : ready.length > 1 ? ready.slice(0, -1).join(', ') + ' and ' + ready[ready.length - 1] + ' are ready to explore while this one is finished.'
-      : ready.length ? ready[0] + ' is ready to explore while this one is finished.' : 'Check back after the next deployment.';
+    var body = failed ? "Check your connection, then try again." : 'Check back after the next deployment.';
     return html`<section className="app-unbuilt">
       <h1 id="page-title" tabIndex="-1" className="app-page-h1">${title}</h1>
       ${Empty ? html`<${Empty} icon="sparkle" title=${failed ? "This view didn't load." : 'This area is still being built.'} body=${body} />`
@@ -628,16 +790,10 @@
   // Placeholder blocks in the shape of the Command Center, shown while the world or a view's code is on its way.
   function Skeleton(p) {
     return html`<section className="app-skel" aria-busy="true">
-      <header className="app-skel-head">
-        <span className="sk sk-line sk-w40" aria-hidden="true"></span>
-        <h1 id="page-title" tabIndex="-1" className="app-page-h1">${p.title}</h1>
-      </header>
+      <h1 id="page-title" tabIndex="-1" className="app-skel-title">${p.title}</h1>
       <p className="app-skel-status" role="status">${p.status || ''}</p>
-      <div className="app-skel-figs" aria-hidden="true">
-        <span className="sk sk-tile"></span><span className="sk sk-tile"></span><span className="sk sk-tile"></span><span className="sk sk-tile"></span>
-      </div>
-      <div className="app-skel-grid" aria-hidden="true">
-        <span className="sk sk-panel"></span><span className="sk sk-panel"></span>
+      <div className="app-skel-lanes" aria-hidden="true">
+        <span className="sk sk-lane"></span><span className="sk sk-lane sk-w70"></span><span className="sk sk-lane sk-w50"></span><span className="sk sk-lane sk-w60"></span>
       </div>
     </section>`;
   }
@@ -645,8 +801,10 @@
   function ViewHost(p) {
     var rs = useState(0), reloads = rs[0], setReloads = rs[1];
     useLazyVersion();
-    var status = p.route === 'home' ? 'ready' : lazyStatus(p.route);
+    var status = lazyStatus(p.route);
     var View = MC.views && typeof MC.views[p.route] === 'function' ? MC.views[p.route] : null;
+    // If the missions view can't load, the legacy Command Center stands in rather than a dead end.
+    if (p.route === 'missions' && !View && status === 'error' && MC.views && typeof MC.views.home === 'function') { View = MC.views.home; status = 'ready'; }
     var was = useRef(status);
     useEffect(function () {
       if (status === 'loading') loadLazy(p.route);
@@ -685,7 +843,7 @@
       </section>`;
     }
     var label = idx >= 0 ? PHASES[idx].label : 'Loading Fernway Outfitters';
-    return html`<${Skeleton} title=${TITLES[p.route] || 'Command Center'} status=${label + ELL} />`;
+    return html`<${Skeleton} title=${TITLES[p.route] || 'Missions'} status=${label + ELL} />`;
   }
 
   var bootState = { phase: null, error: null, started: false };
@@ -836,7 +994,7 @@
   function tourEligible() {
     try { if (navigator.webdriver && !window.MC_TOUR_FORCE) return false; } catch (e) { /* ignore */ }
     var h = String(window.location.hash || '').replace(/^#/, '');
-    if (h && h !== 'home') return false;
+    if (h && h !== 'home' && h !== 'missions') return false;
     var f = MC.uiStore.getState().firstRun;
     return !f || (!f.done && !f.skipped);
   }
@@ -853,10 +1011,13 @@
   function App() {
     var boot = useBoot();
     var ready = useSel(selReady);
-    var route = useUi(selRoute) || 'home';
+    var rawRoute = useUi(selRoute) || 'missions';
+    var route = rawRoute === 'home' ? 'missions' : rawRoute;
     var drawer = useUi(selDrawer);
     var theme = useUi(selTheme);
-    var phone = useMedia('(max-width: 639.98px)');
+    var focus = useUi(selMissionFocus);
+    var slice = useSel(selMissions);
+    var compact = useMedia('(max-width: 959.98px)');
     var narrow = useMedia('(max-width: 1199.98px)');
     var Drawer = ui('Drawer'), Toasts = ui('ToastHost');
     var first = useRef(true);
@@ -869,8 +1030,12 @@
     }, [ready]);
 
     useEffect(function () { MC.uiStore.applyTheme(theme); }, [theme]);
+    var goalTitle = null;
+    if (route === 'missions' && focus && slice && slice.byId && slice.byId[focus]) goalTitle = missionGoal(slice.byId[focus]);
     useEffect(function () {
-      try { document.title = (TITLES[route] || 'Command Center') + ' · Marketing Cloud'; } catch (e) { /* no document */ }
+      try { document.title = (goalTitle || TITLES[route] || 'Missions') + ' \u00b7 Marketing Cloud'; } catch (e) { /* no document */ }
+    }, [route, goalTitle]);
+    useEffect(function () {
       if (first.current) { first.current = false; return undefined; }
       // A route change is a person's navigation: start at the top and move focus to the page heading.
       var raf = window.requestAnimationFrame(function () {
@@ -879,28 +1044,28 @@
         if (h && h.focus) { try { h.focus({ preventScroll: true }); } catch (e) { h.focus(); } }
       });
       return function () { window.cancelAnimationFrame(raf); };
-    }, [route]);
-    useEffect(function () { if (!phone && drawer === 'menu') setUi({ drawer: null }); }, [phone]);
+    }, [route, focus]);
+    useEffect(function () { if (!compact && drawer === 'menu') setUi({ drawer: null }); }, [compact]);
 
     function closeDrawer() { setUi({ drawer: null }); }
-    return html`<div className=${cx('app-shell', phone && 'is-phone')}>
+    return html`<div className=${cx('app-shell', compact && 'is-compact')}>
       <button type="button" className="app-skip" onClick=${focusMain}>Skip to content</button>
-      ${phone ? null : html`<${Sidebar} />`}
-      <div className="app-body">
-        <${Topbar} phone=${phone} narrow=${narrow} />
-        <main id="app-main" className="app-main" tabIndex="-1">
-          <${SampleStrip} />
-          ${ready ? html`<${ViewHost} route=${route} />` : html`<${BootCard} phase=${boot.phase} route=${route} error=${boot.error} onRetry=${startBoot} />`}
-          <${DevCheck} />
-        </main>
-      </div>
-      ${Drawer ? html`<${Drawer} id="approvals-drawer" open=${drawer === 'approvals'} onClose=${closeDrawer} title="Approvals" width=${440}>
-        <${ApprovalsPanel} />
+      <${Topbar} compact=${compact} narrow=${narrow} />
+      <main id="app-main" className=${cx('app-main', 'app-main--' + route)} tabIndex="-1">
+        <${SampleStrip} />
+        ${ready ? html`<${ViewHost} route=${route} />` : html`<${BootCard} phase=${boot.phase} route=${route} error=${boot.error} onRetry=${startBoot} />`}
+        <${DevCheck} />
+      </main>
+      ${Drawer ? html`<${Drawer} id="approvals-drawer" open=${drawer === 'approvals'} onClose=${closeDrawer} title="Asks" width=${480}>
+        <${AsksPanel} />
+      <//>` : null}
+      ${Drawer ? html`<${Drawer} id="goal-drawer" open=${drawer === 'goal'} onClose=${closeDrawer} title="New goal" width=${440} initialFocus="#app-goal-text">
+        <${NewGoalPanel} />
       <//>` : null}
       ${Drawer && MC.connect ? html`<${Drawer} id="connect-drawer" open=${drawer === 'connect'} onClose=${closeDrawer} title=${MC.connect.TITLE || 'Connect Claude'} initialFocus=${MC.connect.INITIAL_FOCUS} width=${400}>
         <${MC.connect.Panel} onClose=${closeDrawer} />
       <//>` : null}
-      ${Drawer ? html`<${Drawer} id="app-menu" side="left" open=${drawer === 'menu'} onClose=${closeDrawer} title="Menu" width=${320}>
+      ${Drawer ? html`<${Drawer} id="app-menu" side="bottom" open=${drawer === 'menu'} onClose=${closeDrawer} title="Menu">
         <${MenuContent} />
       <//>` : null}
       ${Toasts ? html`<${Toasts} />` : null}

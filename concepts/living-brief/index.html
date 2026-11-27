@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The living brief | Fernway Outfitters</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<a class="skip" href="#doc">Skip to the brief</a>
+
+<header class="mast">
+  <div class="brand">
+    <span class="wm">Fernway Outfitters</span>
+    <span class="status" id="status" data-s="draft"><i class="dot" aria-hidden="true"></i><span id="statusT">Draft brief</span></span>
+  </div>
+  <div class="team">
+    <div class="roster" id="roster" role="list" aria-label="The agent team"></div>
+    <svg class="arcs" id="arcs" aria-hidden="true"></svg>
+    <div class="baton" id="baton" aria-hidden="true"></div>
+    <p class="now" id="now"></p>
+  </div>
+  <div class="ctl" role="group" aria-label="Playback">
+    <button type="button" id="bPause" aria-pressed="false">Pause</button>
+    <button type="button" id="bSkip">Skip</button>
+    <button type="button" id="bReplay">Replay</button>
+  </div>
+</header>
+
+<div id="live" class="sr" role="status" aria-live="polite"></div>
+
+<main class="sheet">
+  <article id="doc" aria-label="Campaign brief"></article>
+  <aside id="margin" aria-label="Agent notes in the margin"></aside>
+</main>
+<div id="ticker" class="ticker" aria-hidden="true"></div>
+
+<template id="docT">
+  <p class="dateline"><span>Thursday, 26 November 2026</span><span>Written by Maya Okafor, Lifecycle Marketing, with eight agents</span></p>
+  <h1 id="goal"><span id="goalT"></span><span class="caret" id="caret" aria-hidden="true"></span></h1>
+  <p id="deck" class="deck"></p>
+
+  <section class="sec" id="sAud">
+    <h2>Audience</h2>
+    <div class="skel" aria-hidden="true"><i></i><i></i><i></i></div>
+    <p id="audP"></p>
+    <p id="audG"></p>
+    <figure id="figDots" class="fig">
+      <svg viewBox="0 0 736 86" role="img" aria-label="412 dots, one for each customer who has not ordered in 120 days. 38 are hollow: set aside."></svg>
+      <figcaption><b>Figure 1.</b> Each dot is one customer. Hollow dots are set aside for now.</figcaption>
+    </figure>
+  </section>
+
+  <section class="sec" id="sMsg">
+    <h2>Message</h2>
+    <div class="skel" aria-hidden="true"><i></i><i></i><i></i></div>
+    <p id="msgP"></p>
+    <p id="msgO"></p>
+    <figure id="figMail" class="fig mailfig">
+      <div class="mailwrap">
+        <div class="mail" id="mail" aria-label="Preview of the email">
+          <div class="mhead"><span class="mfrom">Fernway Outfitters</span><span class="msub" id="mSub">The ridge is still there, and so is your shell</span></div>
+          <svg class="mhero" viewBox="0 0 300 130" aria-hidden="true">
+            <rect width="300" height="130" fill="#DCE7E0"/>
+            <circle cx="226" cy="40" r="16" fill="#F1D9A0"/>
+            <path d="M0 96 L52 52 L84 78 L132 30 L190 88 L238 60 L300 98 V130 H0Z" fill="#8FB3A0"/>
+            <path d="M0 112 L40 84 L78 104 L136 62 L196 108 L252 82 L300 112 V130 H0Z" fill="#3D7656"/>
+            <path d="M0 126 L70 108 L150 120 L220 104 L300 122 V130 H0Z" fill="#1B3E2E"/>
+          </svg>
+          <div class="mbody">
+            <p class="mh">The ridge is still there, and so is your shell.</p>
+            <p class="mp">You last ordered in July. The PrimaLoft Ridge jacket is back in stock, and the first cold week is the one that catches people out.</p>
+            <p class="mcta"><span>See the Ridge jacket</span></p>
+            <p class="moffer" id="mOffer">Free shipping on your next order</p>
+          </div>
+        </div>
+      </div>
+      <div class="subjects" id="subjects">
+        <p class="sj-h">Subject lines in the test</p>
+        <ol id="sjList"></ol>
+      </div>
+      <figcaption><b>Figure 2.</b> The email as it will arrive, and the three subject lines being tested.</figcaption>
+    </figure>
+  </section>
+
+  <section class="sec" id="sJrn">
+    <h2>Journey</h2>
+    <div class="skel" aria-hidden="true"><i></i><i></i><i></i></div>
+    <p id="jrnP"></p>
+    <figure id="figJrn" class="fig">
+      <div class="jline" id="jline" role="img" aria-label="Timeline: email wave 1 Thursday 7:10 pm, wave 2 Friday 6:40 am, text on Nov 30, ads on Dec 5, last call email Dec 12, offer ends Dec 15."></div>
+      <figcaption id="jcap"><b>Figure 3.</b> Nineteen days, five touches.</figcaption>
+    </figure>
+  </section>
+
+  <section class="sec" id="sBud">
+    <h2>Budget</h2>
+    <div class="skel" aria-hidden="true"><i></i><i></i><i></i></div>
+    <p id="budP"></p>
+    <figure id="figBud" class="fig">
+      <div class="bbar" id="bbar" role="img" aria-label="Budget split"></div>
+      <div class="blabels" id="blabels"></div>
+      <figcaption id="bcap"><b>Figure 4.</b> $2,400 split three ways.</figcaption>
+    </figure>
+  </section>
+  <p class="colophon" id="colo"></p>
+</template>
+
+<script src="app.js"></script>
+</body>
+</html>

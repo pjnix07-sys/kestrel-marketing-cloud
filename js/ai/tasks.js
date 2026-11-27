@@ -1,7 +1,8 @@
 /* Marketing Cloud - MC.ai.tasks: on-demand Haiku tasks for the views (§12.6). Every task returns a
    Promise that always resolves (never rejects) with a usable result: Haiku's when connected and valid,
    otherwise the rule-based fallback. Results carry `source: 'ai' | 'rules'` for logging only; views must not
-   badge them (§12.7). Also registers MC.copy.generateAsync for the Content Studio. */
+   badge them (§12.7). Also registers MC.copy.generateAsync for the Content Studio, and writeBlocks (Haiku writes and tags
+   content blocks for the library; they go to review and the brand and tag checks apply as for variants). */
 (function () {
   'use strict';
   var MC = window.MC = window.MC || {};
@@ -88,6 +89,74 @@
         function () { return ruleVariants(opts); });
     };
   }
+
+  /* ---------------- writeBlocks ---------------- */
+  // writeBlocks({kind: 'headline'|'body'|'cta', angle, tone, productId?, count=3, seedKey?, notes?}) -> Promise<[{kind, value, tags, source}]>
+  // Haiku writes and tags content blocks for the library (they enter review; nothing applies them). Same brand rules and limits as
+  // writeVariants: every block must pass the content model's value and tag checks and render cleanly in an email made with approved
+  // neighbours, otherwise the rule-based drafts from MC.copy.generate stand. Always resolves.
+  function ruleBlocks(brief) {
+    var K = MC.content, out = [];
+    if (!(MC.copy && MC.copy.generate && K)) return out;
+    var w = world(), brand = w && w.guardrails && w.guardrails.brand, tone = brief.tone || 'practical';
+    var drafts = [];
+    try { drafts = MC.copy.generate({ channel: 'email', tone: tone, productId: brief.productId || null, offer: 'none', count: Math.max(4, brief.count * 3), seedKey: brief.seedKey || 'blocks:' + brief.kind + ':' + (brief.angle || ''), blocks: true }, w ? w.meta.seed : undefined) || []; } catch (e) { report(e); }
+    drafts.forEach(function (d) {
+      if (out.length >= brief.count) return;
+      if (MC.copy.check(d, brand).some(function (r) { return r.status === 'fail'; })) return;
+      var b = (d.blocks || []).filter(function (x) { return x.kind === brief.kind; })[0];
+      if (!b || K.valueError(b.kind, b.value) || out.some(function (x) { return x.value === b.value; })) return;
+      var tags = Object.assign({}, b.tags, brief.angle && brief.kind !== 'cta' ? { angle: brief.angle } : {}, { tone: tone });
+      out.push({ kind: b.kind, value: b.value, tags: tags, source: 'rules' });
+    });
+    return out;
+  }
+  function scratchOk(w, block) {
+    var K = MC.content, S = MC.select, slots = {};
+    if (!w || !S || !S.draftChecks) return true;
+    ['headline', 'body', 'cta'].forEach(function (k) {
+      if (k === block.kind) return;
+      var b = K.blocks(w).filter(function (x) { return x.kind === k && x.review === 'approved' && !x.retired && !x.archived && !(x.tags && x.tags.product); })[0];
+      if (b) slots[k] = b.id;
+    });
+    slots[block.kind] = '$new';
+    if (!slots.headline || !slots.body || !slots.cta) return true;
+    return S.draftChecks(w, { slots: slots, blocks: { $new: { kind: block.kind, value: block.value, tags: block.tags } } }, ['email'], null).ok;
+  }
+  TK.writeBlocks = function (brief) {
+    brief = Object.assign({ count: 3, kind: 'headline' }, brief || {});
+    brief.count = Math.max(1, Math.min(6, brief.count | 0 || 3));
+    var base = ruleBlocks(brief), K = MC.content;
+    if (!on() || !K || !FL()) return Promise.resolve(base);
+    var angles = K.ANGLES || [], tones = (MC.copy && MC.copy.TONES) || [];
+    var prod = MC.copy.productOf ? MC.copy.productOf(brief.productId) : null, label = K.KIND_LABEL[brief.kind] || brief.kind;
+    var instructions = 'Write ' + brief.count + ' distinct ' + label.toLowerCase() + ' blocks for Fernway\'s content library. Angle: ' + (brief.angle || 'any') + '. Tone: ' + (brief.tone || 'practical') +
+      '. Product: ' + (prod ? prod.name : 'the catalog') + '. A block is one piece of a message that is reused in every channel, so it must stand alone and not mention a channel. ' +
+      'Set "angle" and "tone" to what the words do (trail-season, warmth, gifting, urgency, utility or neutral; practical, adventurous, warm or urgent). ' +
+      'Urgency needs a real deadline, so avoid it unless the notes give one. Follow the brand book and limits exactly.' + (brief.notes ? ' Notes from the marketer: ' + str(brief.notes, 600) : '');
+    var schema = obj({ blocks: { type: 'array', items: obj({ value: S, angle: { type: 'string', enum: [''].concat(angles) }, tone: { type: 'string', enum: [''].concat(tones) } }) } });
+    var w = world();
+    return ask(instructions, { campaignId: '' }, schema, function (data) {
+      var out = [];
+      (data.blocks || []).slice(0, brief.count).forEach(function (x) {
+        var value = str(x && x.value, brief.kind === 'body' ? 600 : 120), tags = {};
+        if (!value || K.valueError(brief.kind, value)) return;
+        var angle = angles.indexOf(x.angle) >= 0 ? x.angle : (brief.angle || null), tone = tones.indexOf(x.tone) >= 0 ? x.tone : (brief.tone || null);
+        if (angle) tags.angle = brief.kind === 'cta' ? 'neutral' : angle;
+        if (tone) tags.tone = tone;
+        if (brief.productId) tags.product = brief.productId;
+        if (K.tagsError(tags)) return;
+        var b = { kind: brief.kind, value: value, tags: tags, source: 'ai' };
+        if (!scratchOk(w, b)) return;
+        out.push(b);
+      });
+      return out.length ? out : null;
+    }).then(function (ai) {
+      if (!ai) return base;
+      for (var i = 0; ai.length < brief.count && i < base.length; i++) ai.push(base[i]);
+      return ai;
+    });
+  };
 
   /* ---------------- briefFromText ---------------- */
   var GOALS = ['revenue', 'conversions', 'reactivation', 'engagement', 'launch'];
@@ -205,5 +274,63 @@
       var t = clean(d.answer, ground, 1500);
       return t ? { text: t, source: 'ai' } : null;
     }, { userText: str(question, 400) }).then(function (v) { return v || fb; });
+  };
+
+  /* ---------------- planFromGoal (missions) ---------------- */
+  // planFromGoal(goalText, world) -> Promise<{objective, plan, asks, data, source:'ai'|'rules'}>. Always resolves.
+  // Haiku reads the sentence and proposes the objective and an ordered plan; both are validated against the mission schema
+  // (metric, target, deadline, constraint kinds, step kinds), forced through the same guardrails as the rules planner
+  // (audience before campaign, a monitoring step, limits the marketer wrote are never dropped) and otherwise replaced by the rules plan.
+  TK.planFromGoal = function (goalText, w) {
+    w = w || world();
+    var Ld = MC.lead, text = str(goalText, 400);
+    var rules = Ld.plan(w, text);
+    var fb = { objective: rules.objective, plan: rules.plan, asks: rules.asks, data: rules.data, source: 'rules' };
+    if (!on() || !text || !FL() || !w) return Promise.resolve(fb);
+    var segIds = Object.keys(w.segments.byId).sort(), kinds = Ld.KINDS;
+    var schema = obj({
+      template: { type: 'string', enum: Ld.TEMPLATES }, metric: { type: 'string', enum: Ld.METRICS }, target: N, byInDays: N, audience: S, segmentId: S,
+      constraints: { type: 'array', items: obj({ kind: { type: 'string', enum: Ld.CONSTRAINT_KINDS }, value: S }) },
+      steps: { type: 'array', items: obj({ kind: { type: 'string', enum: kinds }, title: S, after: { type: 'array', items: N } }) }
+    });
+    var instructions = 'Plan a marketing mission from the marketer\'s sentence. Pick the template (winback, launch, event, grow, protect), the metric (reactivations, revenue, orders, signups, unsubs), ' +
+      'the numeric target and how many days from today the deadline is (byInDays). "audience" is a short plain label for who it is for; "segmentId" is one of the saved segment ids in the snapshot or "". ' +
+      'Copy every limit the marketer states into "constraints": maxDiscountPct (number), maxSpend (dollars), maxSendsPerWeek (number), excludeChannel (email, sms, push, social or web); values as strings. Never invent limits. ' +
+      'Then list 5 to 12 steps in order. Step kinds and owners: goal (Lead, always first), audience (Segment Scout), campaign (Campaign Planner), copy (Copy Drafter), guard (Fatigue Guard), sendtime (Send-Time Tuner), pacer (Budget Pacer), handoff (Lead), monitor (Insight Analyst, always last). ' +
+      '"after" lists the 1-based numbers of steps that must finish first. Audience comes before campaign; copy, sendtime and pacer come after campaign. A protect-the-list mission has no campaign or copy step.\n\nSentence: ' + text;
+    return ask(instructions, { segmentIds: segIds }, schema, function (d, ground) {
+      if (!d || Ld.TEMPLATES.indexOf(d.template) < 0 || Ld.METRICS.indexOf(d.metric) < 0) return null;
+      if (!(isNum(d.target) && d.target > 0) || !(isNum(d.byInDays) && d.byInDays >= 1 && d.byInDays <= 120)) return null;
+      if (!Array.isArray(d.steps) || d.steps.length < 3 || d.steps.length > Ld.MAX_STEPS) return null;
+      var today = MC.time.dayOf(w.meta.tick), parsed = Ld.parse(text, w), cons = parsed.constraints.slice();
+      var extra = (d.constraints || []).map(function (c) {
+        if (Ld.CONSTRAINT_KINDS.indexOf(c.kind) < 0) return null;
+        if (c.kind === 'excludeChannel') return MC.CH.ALL.indexOf(c.value) >= 0 ? { kind: c.kind, value: c.value } : null;
+        var v = parseFloat(String(c.value).replace(/[$,%]/g, ''));
+        return isNum(v) && v >= 0 && (c.kind !== 'maxDiscountPct' || v <= 100) ? { kind: c.kind, value: v } : null;
+      }).filter(Boolean);
+      cons = Ld.mergeConstraints(extra, cons);       // limits the marketer actually wrote win over a paraphrase
+      var by = parsed.byGiven ? parsed.by : today + Math.round(d.byInDays);
+      var objective = { metric: d.metric, target: parsed.targetGiven && parsed.target && !parsed.growthPct && parsed.metric === d.metric ? parsed.target : Math.round(d.target),
+        by: by, deadlineText: parsed.byGiven ? parsed.deadlineText : 'by ' + Ld.dayShort(by), constraints: cons, direction: d.metric === 'unsubs' ? 'atMost' : 'atLeast' };
+      var steps = [];
+      for (var i = 0; i < d.steps.length; i++) {
+        var x = d.steps[i];
+        if (Ld.KINDS.indexOf(x.kind) < 0) return null;
+        var needs = (x.after || []).map(function (n) { return Math.round(n); }).filter(function (n) { return n >= 1 && n <= i; }).map(function (n) { return 's' + n; });
+        if (!needs.length && i > 0) needs = ['s' + i];
+        var title = clean(x.title, ground, 120) || Ld.KIND_TITLE[x.kind];
+        steps.push(Ld.step('s' + (i + 1), x.kind, title, needs));
+      }
+      var np = Ld.normalizePlan(steps);
+      if (!np.ok) return null;
+      var bad = Ld.checkPlan(np.plan, d.template);
+      if (bad) return null;
+      var aud = Object.assign({}, rules.data.audience);
+      if (segIds.indexOf(d.segmentId) >= 0) { aud.segmentId = d.segmentId; if (!aud.label) aud.label = str(d.audience, 40).toLowerCase(); }
+      else if (!aud.label && d.audience) aud.label = str(d.audience, 40).toLowerCase();
+      var data = Object.assign({}, rules.data, { template: d.template, audience: aud, parsedBy: 'claude', missing: [] });
+      return { objective: objective, plan: np.plan, asks: [], data: data, source: 'ai' };
+    }, { userText: text }).then(function (r) { return r || fb; });
   };
 })();

@@ -1145,7 +1145,7 @@
       } else {
         var gap = pr.mean / gf.target - 1;
         cards.push({ id: 'n-month', tone: gf.status === 'behind' ? 'warn' : (gf.status === 'ahead' ? 'good' : 'neutral'), label: 'Forecast',
-          text: mname + ' revenue is on pace for ' + moneyC(pr.mean) + ' (' + moneyC(pr.lo80) + EN + moneyC(pr.hi80) + '), ' +
+          text: mname + ' revenue is heading for ' + moneyC(pr.mean) + ' (' + moneyC(pr.lo80) + EN + moneyC(pr.hi80) + '), ' +
             pct(Math.abs(gap), 0) + (gap >= 0 ? ' above' : ' below') + ' the ' + moneyC(gf.target) + ' goal' + (fin(gf.p) ? ' (' + pct(gf.p, 0) + ' chance of hitting it).' : '.'),
           evidence: { label: 'Show revenue trend', patch: { metric: 'revenue', campaignIds: [], channel: 'all' } } });
       }
@@ -1196,7 +1196,7 @@
     analyst.filter(function (ins) { return ins.kind !== 'pacing' || !has(sel(), 'campaignPacing'); }).slice(0, 4).forEach(function (ins) {
       var cid = ins.entity && ins.entity.kind === 'campaign' ? ins.entity.id : null;
       cards.push({ id: ins.id, tone: ins.severity === 'crit' ? 'crit' : (ins.severity === 'warn' ? 'warn' : 'agent'), label: 'Insight Analyst', agentId: 'analyst',
-        text: ins.title ? ins.title + (ins.body ? ' ' + ins.body : '') : ins.body, insightId: ins.id,
+        text: ins.title ? ins.title.replace(/[.!?]*$/, '.') + (ins.body ? ' ' + ins.body : '') : ins.body, insightId: ins.id,
         evidence: cid ? { label: 'Show campaign', patch: { campaignIds: [cid] } } : null });
     });
 
@@ -1302,7 +1302,7 @@
     }
     return html`<section className="v-analytics">
       <header className="an-pagehead">
-        <h1 id="page-title" tabIndex="-1" className="an-h1">Analytics</h1>
+        <h1 id="page-title" tabIndex="-1" className="an-h1">Analytics <span className="mc-art-tag">read by your agents, for your missions</span></h1>
         <${AsOf} />
       </header>
       <${FilterBar} focus=${focus} campaigns=${list} />

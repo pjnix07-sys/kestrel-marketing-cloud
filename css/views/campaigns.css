@@ -3,7 +3,6 @@
 
 .v-campaigns { display: flex; flex-direction: column; gap: var(--space-5); min-width: 0; color: var(--ink); }
 .v-campaigns *, .v-campaigns *::before, .v-campaigns *::after { box-sizing: border-box; }
-.v-campaigns .num { font-variant-numeric: tabular-nums; }
 .v-campaigns p { margin: 0; }
 .v-campaigns :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 
@@ -359,7 +358,7 @@
 /* planner: example briefs */
 .v-campaigns .cm-examples { display: flex; flex-wrap: wrap; gap: 8px; }
 .v-campaigns .cm-example {
-  min-height: 36px; padding: 6px 12px; border: 1px solid var(--line-strong); border-radius: 999px; background: transparent;
+  min-height: 36px; padding: 6px 12px; border: 1px solid var(--line-strong); border-radius: 2px; background: transparent;
   color: var(--ink-2); font: inherit; font-size: 13px; cursor: pointer;
 }
 .v-campaigns .cm-example:hover { border-color: var(--ink-3); color: var(--ink); }
@@ -375,3 +374,21 @@
   .v-campaigns .cm-table-stack td:first-child { justify-content: flex-start; font-size: 14px; }
   .v-campaigns .cm-table-stack td[data-label]:not(:first-child)::before { content: attr(data-label); color: var(--ink-3); text-align: left; }
 }
+
+/* ===== Artifact restyle: mission-control language (hairlines, no tiles, moss/signal discipline) =====
+   Legacy token names are remapped onto the new palette for this view; new tokens win when defined. */
+.v-campaigns {
+  --surface: var(--panel, #F4F6F0); --surface-2: var(--paper, #E7EBE3); --ground: var(--paper, #E7EBE3);
+  --ink-2: var(--muted, #53645A); --ink-3: var(--muted, #53645A); --line-strong: var(--line, #B4C0B5);
+  --accent: var(--moss, #1F5C46); --accent-soft: var(--lake-pale, #CFE2E8); --on-accent: #fff; --agent: var(--lake, #17667F);
+  --good: var(--moss, #1F5C46); --focus: var(--ink, #112019);
+  --radius-sm: 2px; --radius-md: 2px; --radius-lg: 2px; --shadow-pop: none;
+}
+.v-campaigns .mc-madeby { margin: 6px 0 0; font-size: 13px; color: var(--muted, #53645A); overflow-wrap: anywhere; }
+.v-campaigns .mc-madeby a { color: var(--ink); text-decoration: underline; text-decoration-color: var(--line); text-underline-offset: 3px; }
+.v-campaigns .mc-madeby a:hover { text-decoration-color: var(--ink); }
+.v-campaigns .mc-art-tag { display: block; margin-top: 6px; font-size: 15px; font-weight: 500; letter-spacing: 0; color: var(--muted, #53645A); }
+.v-campaigns .cm-head, .v-campaigns .cm-detail-head { border-bottom: 1.5px solid var(--ink); padding-bottom: 14px; }
+.v-campaigns .cm-h1 { font-size: clamp(30px, 3.6vw, 44px); line-height: 1.05; font-weight: 700; letter-spacing: -0.025em; }
+.v-campaigns ..cm-card, .v-campaigns .cm-fpanel { background: transparent; border: 0; border-top: 1px solid var(--line); border-radius: 0; box-shadow: none; padding-left: 0; padding-right: 0; }
+.v-campaigns .k-btn-primary { background: var(--moss, #1F5C46); border-color: var(--moss, #1F5C46); color: #fff; }

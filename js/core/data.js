@@ -501,6 +501,148 @@
     world.variants = { byId: vById };
   }
 
+  /* ---------------- seeded content: blocks and messages (docs/CONTENT.md) ----------------
+     The six campaigns' copy is migrated into reusable blocks: the same offers, calls to action, claims and images run
+     across campaigns, and each campaign tests angles against each other (trail season, warmth, gifting, urgency).
+     Every seeded variant is then re-rendered from its message and linked (messageId, renderedVer, pinned block versions). */
+  function bk(id, kind, value, tags, tick) {
+    return { id: id, kind: kind, value: value, tags: tags, locale: 'en-US', ver: 1, review: 'approved', author: 'user', createdTick: tick,
+      updatedBy: 'user', updatedTick: tick, history: [{ ver: 1, value: clone(value), tags: clone(tags), by: 'user', tick: tick, note: null }] };
+  }
+  function offerVal(type) {
+    var T = { pct15: ['Take 15% off your order.', '15% off your order.'], pct25: ['Take 25% off your order.', '25% off your order.'],
+      freeship: ['Shipping is on us.', 'Free shipping on your order.'], gift: ['Every order ships with a free gift.', 'Free gift with every order.'] }[type];
+    return { type: type, text: T[0], short: T[1] };
+  }
+  // [id, kind, value, tags]; created ticks follow the first campaign that used the block.
+  D.BLOCKS_SEED = [
+    // headlines: trail season
+    ['b-h-trail-frost', 'headline', 'Trail season runs late. Gear up for it.', { angle: 'trail-season', tone: 'adventurous', season: 'fall' }],
+    ['b-h-trail-shoulder', 'headline', 'Shoulder season is trail season', { angle: 'trail-season', tone: 'practical', season: 'fall' }],
+    ['b-h-trail-light', 'headline', 'Short days, long trails', { angle: 'trail-season', tone: 'adventurous', season: 'fall' }],
+    ['b-h-trail-run', 'headline', 'Frosty mornings, fast trails', { angle: 'trail-season', tone: 'adventurous', season: 'fall', product: 'p-trail-shoe' }],
+    ['b-h-trail-short', 'headline', 'Trail season is here', { angle: 'trail-season', tone: 'adventurous', season: 'fall' }],
+    // headlines: warmth and comfort
+    ['b-h-warm-layers', 'headline', 'Warm layers, warmer welcomes', { angle: 'warmth', tone: 'warm' }],
+    ['b-h-warm-thanks', 'headline', 'Thanks for getting outside with us', { angle: 'warmth', tone: 'warm' }],
+    ['b-h-warm-cozy', 'headline', 'Cozy evenings and early starts, covered', { angle: 'warmth', tone: 'warm' }],
+    ['b-h-warm-back', 'headline', 'We saved your spot on the trail', { angle: 'warmth', tone: 'warm' }],
+    // headlines: gifting
+    ['b-h-gift-guide', 'headline', 'Gifts for the people who live outside', { angle: 'gifting', tone: 'warm', season: 'holiday' }],
+    ['b-h-gift-pick', 'headline', 'Picked for the person on your list', { angle: 'gifting', tone: 'warm', season: 'holiday' }],
+    // headlines: urgency (backed only by a real campaign end date)
+    ['b-h-urg-friday', 'headline', 'Early access through Friday', { angle: 'urgency', tone: 'urgent' }],
+    ['b-h-urg-gear', 'headline', 'Gear up before the offer ends', { angle: 'urgency', tone: 'urgent' }],
+    ['b-h-urg-week', 'headline', 'This week only: take your pick', { angle: 'urgency', tone: 'urgent' }],
+    // headlines: practical
+    ['b-h-util-check', 'headline', 'The checklist for cold-night camping', { angle: 'utility', tone: 'practical' }],
+    // bodies
+    ['b-bd-trail-1', 'body', 'Hi {first_name}, shoulder season is when the trails empty out and the views open up. Pack layers you can trust and go farther.', { angle: 'trail-season', tone: 'adventurous' }],
+    ['b-bd-trail-2', 'body', 'The big days start early. Check the forecast, pack the right layers and head for the ridge.', { angle: 'trail-season', tone: 'adventurous' }],
+    ['b-bd-run-1', 'body', 'Frost on the trail means quiet, fast miles. Our trail shoes and layers are ready when you are.', { angle: 'trail-season', tone: 'practical', product: 'p-trail-shoe' }],
+    ['b-bd-warm-1', 'body', 'Hi {first_name}, thank you for exploring with us. Our crew picked gear we would hand to a friend.', { angle: 'warmth', tone: 'warm' }],
+    ['b-bd-warm-2', 'body', 'Hi {first_name}, it has been a while. The trails are still here, and we picked a few things to get you back out.', { angle: 'warmth', tone: 'warm' }],
+    ['b-bd-gift-1', 'body', 'Hi {first_name}, our gift guide is up. Warm layers, camp kit and trail gear, picked for the people on your list.', { angle: 'gifting', tone: 'warm', season: 'holiday' }],
+    ['b-bd-urg-1', 'body', '{first_name}, there is still time to get set for the season. Order today and be ready.', { angle: 'urgency', tone: 'urgent' }],
+    ['b-bd-camp-1', 'body', 'Hi {first_name}, the Basecamp stove and kitchen kit are built for cold-night camping. Light, tough and easy to pack.', { angle: 'utility', tone: 'practical', product: 'p-camp-stove' }],
+    // offers
+    ['b-of-pct15', 'offer', offerVal('pct15'), { offerType: 'pct15' }],
+    ['b-of-pct25', 'offer', offerVal('pct25'), { offerType: 'pct25' }],
+    ['b-of-freeship', 'offer', offerVal('freeship'), { offerType: 'freeship' }],
+    ['b-of-gift', 'offer', offerVal('gift'), { offerType: 'gift' }],
+    // calls to action
+    ['b-cta-shop', 'cta', 'Shop now', { angle: 'neutral' }],
+    ['b-cta-gearup', 'cta', 'Gear up', { angle: 'neutral' }],
+    ['b-cta-look', 'cta', 'Take a look', { angle: 'neutral' }],
+    ['b-cta-kit', 'cta', 'Build your kit', { angle: 'neutral' }],
+    ['b-cta-claim', 'cta', 'Claim your offer', { angle: 'neutral' }],
+    // images
+    ['b-im-trail', 'image', { imageId: 'scene-trail' }, { angle: 'trail-season' }],
+    ['b-im-snow', 'image', { imageId: 'scene-snow' }, { angle: 'warmth' }],
+    ['b-im-campfire', 'image', { imageId: 'scene-campfire' }, { angle: 'utility' }],
+    ['b-im-forest', 'image', { imageId: 'scene-forest' }, { angle: 'trail-season' }],
+    // approved claims
+    ['b-cl-returns', 'claim', 'Free returns within 60 days', { angle: 'neutral' }],
+    ['b-cl-primaloft', 'claim', 'PrimaLoft insulation', { angle: 'neutral', product: 'p-insulated-jacket' }],
+    ['b-cl-tested', 'claim', 'Field-tested by the Fernway crew', { angle: 'neutral' }],
+    // products
+    ['b-pr-jacket', 'product', { productId: 'p-insulated-jacket' }, { product: 'p-insulated-jacket' }],
+    ['b-pr-boot', 'product', { productId: 'p-trail-boot' }, { product: 'p-trail-boot' }],
+    ['b-pr-stove', 'product', { productId: 'p-camp-stove' }, { product: 'p-camp-stove' }],
+    ['b-pr-shoe', 'product', { productId: 'p-trail-shoe' }, { product: 'p-trail-shoe' }],
+    // sign-offs
+    ['b-so-crew', 'signoff', 'From the Fernway crew.', { angle: 'warmth' }],
+    ['b-so-thanks', 'signoff', 'Thank you for exploring with us.', { angle: 'warmth' }]
+  ];
+  // Messages per campaign: a, b and c mirror the seeded variants A, B and C in every channel.
+  // [campaign, letter, headline, body, offer, cta, image, product, claims[], signoff]
+  D.MESSAGES_SEED = [
+    ['c-wll', 'a', 'b-h-trail-frost', 'b-bd-trail-1', null, 'b-cta-gearup', 'b-im-snow', 'b-pr-jacket', ['b-cl-primaloft'], 'b-so-crew'],
+    ['c-wll', 'b', 'b-h-warm-layers', 'b-bd-warm-1', null, 'b-cta-look', 'b-im-snow', 'b-pr-jacket', ['b-cl-returns'], 'b-so-crew'],
+    ['c-wll', 'c', 'b-h-urg-gear', 'b-bd-urg-1', null, 'b-cta-shop', 'b-im-trail', 'b-pr-jacket', ['b-cl-returns'], null],
+    ['c-lhw', 'a', 'b-h-warm-back', 'b-bd-warm-2', 'b-of-pct15', 'b-cta-look', 'b-im-trail', 'b-pr-boot', ['b-cl-returns'], 'b-so-thanks'],
+    ['c-lhw', 'b', 'b-h-trail-shoulder', 'b-bd-trail-1', 'b-of-pct15', 'b-cta-shop', 'b-im-trail', 'b-pr-boot', ['b-cl-tested'], null],
+    ['c-lhw', 'c', 'b-h-urg-week', 'b-bd-urg-1', 'b-of-pct15', 'b-cta-claim', 'b-im-trail', 'b-pr-boot', ['b-cl-returns'], null],
+    ['c-cks', 'a', 'b-h-util-check', 'b-bd-camp-1', 'b-of-freeship', 'b-cta-kit', 'b-im-campfire', 'b-pr-stove', ['b-cl-returns'], null],
+    ['c-cks', 'b', 'b-h-trail-light', 'b-bd-trail-2', 'b-of-freeship', 'b-cta-shop', 'b-im-campfire', 'b-pr-stove', ['b-cl-tested'], null],
+    ['c-cks', 'c', 'b-h-urg-gear', 'b-bd-urg-1', 'b-of-freeship', 'b-cta-claim', 'b-im-campfire', 'b-pr-stove', ['b-cl-returns'], null],
+    ['c-bfe', 'a', 'b-h-urg-friday', 'b-bd-urg-1', 'b-of-pct25', 'b-cta-claim', 'b-im-snow', null, ['b-cl-returns'], 'b-so-crew'],
+    ['c-bfe', 'b', 'b-h-trail-frost', 'b-bd-trail-2', 'b-of-pct25', 'b-cta-shop', 'b-im-trail', null, ['b-cl-returns'], 'b-so-crew'],
+    ['c-bfe', 'c', 'b-h-warm-thanks', 'b-bd-warm-1', 'b-of-pct25', 'b-cta-look', 'b-im-snow', null, ['b-cl-returns'], 'b-so-thanks'],
+    ['c-hgg', 'a', 'b-h-gift-guide', 'b-bd-gift-1', 'b-of-gift', 'b-cta-look', 'b-im-snow', null, ['b-cl-returns'], 'b-so-crew'],
+    ['c-hgg', 'b', 'b-h-gift-pick', 'b-bd-gift-1', 'b-of-gift', 'b-cta-shop', 'b-im-campfire', null, ['b-cl-returns'], 'b-so-thanks'],
+    ['c-hgg', 'c', 'b-h-warm-cozy', 'b-bd-warm-1', 'b-of-gift', 'b-cta-look', 'b-im-campfire', null, ['b-cl-returns'], 'b-so-crew'],
+    ['c-trs', 'a', 'b-h-trail-run', 'b-bd-run-1', 'b-of-pct15', 'b-cta-shop', 'b-im-forest', 'b-pr-shoe', ['b-cl-tested'], null],
+    ['c-trs', 'b', 'b-h-trail-short', 'b-bd-run-1', 'b-of-pct15', 'b-cta-gearup', 'b-im-forest', 'b-pr-shoe', ['b-cl-returns'], null],
+    ['c-trs', 'c', 'b-h-trail-shoulder', 'b-bd-trail-2', 'b-of-pct15', 'b-cta-look', 'b-im-trail', 'b-pr-shoe', ['b-cl-tested'], null]
+  ];
+
+  // Builds world.content and re-renders every seeded variant from its message (fields, link, pinned blocks).
+  function makeContent(world) {
+    if (!MC.content) return;
+    var bById = {}, bOrder = [], mById = {}, mOrder = [], tickOf = {};
+    D.CAMPAIGNS_SEED.forEach(function (s) { tickOf[s.id] = s.created; });
+    var firstUse = {};
+    D.MESSAGES_SEED.forEach(function (m) {
+      [m[2], m[3], m[4], m[5], m[6], m[7], m[9]].concat(m[8]).forEach(function (id) { if (id && firstUse[id] === undefined) firstUse[id] = tickOf[m[0]]; });
+    });
+    D.BLOCKS_SEED.forEach(function (b) {
+      bById[b[0]] = bk(b[0], b[1], b[2], b[3], firstUse[b[0]] !== undefined ? firstUse[b[0]] : -24 * 14);
+      bOrder.push(b[0]);
+    });
+    D.MESSAGES_SEED.forEach(function (m) {
+      var id = 'msg-' + m[0].slice(2) + '-' + m[1], camp = D.CAMPAIGNS_SEED.filter(function (c) { return c.id === m[0]; })[0];
+      var hl = bById[m[2]], slots = { headline: m[2], body: m[3], cta: m[5], claims: m[8].slice() };
+      if (m[4]) slots.offer = m[4];
+      if (m[6]) slots.image = m[6];
+      if (m[7]) slots.product = m[7];
+      if (m[9]) slots.signoff = m[9];
+      var tags = { angle: hl.tags.angle, tone: camp.tone };
+      if (m[4]) tags.offerType = bById[m[4]].tags.offerType;
+      mById[id] = { id: id, name: camp.name + ': ' + { 'trail-season': 'trail season', warmth: 'warmth', gifting: 'gifting', urgency: 'urgency', utility: 'practical' }[hl.tags.angle] + ' (' + m[1].toUpperCase() + ')',
+        slots: slots, channelOverrides: {}, tags: tags, ver: 1, review: 'approved', author: 'user',
+        createdTick: tickOf[m[0]], updatedBy: 'user', updatedTick: tickOf[m[0]], history: [{ ver: 1, kind: 'create', by: 'user', tick: tickOf[m[0]], note: null }] };
+      mOrder.push(id);
+    });
+    // shorter headlines for the short channels where the long one gets cut
+    mById['msg-wll-a'].channelOverrides = { sms: { headline: 'b-h-trail-short' }, push: { headline: 'b-h-trail-short' } };
+    world.content = { blocks: { byId: bById, order: bOrder }, messages: { byId: mById, order: mOrder }, perf: {}, fat: {}, exp: {} };
+    // migrate the seeded variants: variant k of a campaign channel is message k
+    Object.keys(world.variants.byId).sort().forEach(function (vid) {
+      var v = world.variants.byId[vid], letter = vid.charAt(vid.length - 1), mid = 'msg-' + v.campaignId.slice(2) + '-' + letter;
+      var m = mById[mid];
+      if (!m) return;
+      var r = MC.content.render(world, mid, v.channel, { campaignId: v.campaignId });
+      var nv = Object.assign({}, v, { fields: r.fields, messageId: mid, renderedVer: m.ver,
+        blocks: r.blocksUsed.map(function (id) { return { id: id, ver: r.blockVers[id] }; }) });
+      var sc = MC.copy.score(nv);
+      nv.predicted = { score: sc.score, open: sc.predOpen, click: sc.predClick };
+      nv.history = [{ kind: 'create', by: 'user', tick: v.createdTick, note: 'Rendered from ' + m.name, fields: clone(r.fields) }];
+      world.variants.byId[vid] = nv;
+    });
+    world.latent.blocks = {};
+  }
+
   var AGENT_FALLBACK = [['optimizer', 'autopilot', 6], ['sendtime', 'autopilot', 24], ['pacer', 'suggest', 24], ['guard', 'autopilot', 12],
     ['analyst', 'suggest', 6], ['copy', 'suggest', 48], ['scout', 'suggest', 48], ['planner', 'suggest', 168]];
   function makeAgents(world) {
@@ -539,7 +681,8 @@
       rev: { profiles: 0, metrics: 0, enroll: 0, segCounts: 0 },
       catalog: { categories: D.CATEGORIES.map(function (c) { return { id: c.id, label: c.label }; }), products: D.PRODUCTS.map(function (p) { return clone(p); }) },
       profiles: null,
-      latent: { profiles: null, variants: {}, curves: {} },
+      latent: { profiles: null, variants: {}, curves: {}, blocks: {} },
+      content: MC.content ? MC.content.empty() : undefined,
       segments: { byId: {}, order: [] },
       campaigns: { byId: {}, order: [], all: [] },
       variants: { byId: {} },
@@ -547,6 +690,7 @@
       metrics: { days: [], hours: {} },
       agents: { byId: {}, order: [] },
       proposals: { byId: {}, order: [], open: [] },
+      missions: { byId: {}, order: [] },
       feed: [], insights: [],
       audit: { entries: [], head: '00000000' },
       guardrails: {
@@ -558,11 +702,138 @@
     };
   }
 
+
+  /* ---------------- seeded missions (docs/AGENTIC.md "Seeded state") ----------------
+     Two missions already running at boot, linked to existing campaigns and segments as artifacts. Numbers in the
+     narration are read from the world; the first mission waits on one ask (so catch-up leaves it mid-execution), the
+     second is monitoring with a re-plan in its history. */
+  D.MISSIONS_SEED = [
+    { id: 'm-lhw', goalText: 'Win back 400 lapsed hikers before Dec 15 without discounting more than 15%', campaignId: 'c-lhw', segmentId: 's-lapsed' },
+    { id: 'm-bfe', goalText: 'Hit $48k on Black Friday Early Access', campaignId: 'c-bfe', segmentId: 's-loyal' }
+  ];
+  function reachOf(world, sid, ch) {
+    var bits = MC.segments.members(world, sid), P = world.profiles, bit = MC.CH.BIT[ch], n = 0, r = 0;
+    for (var i = 0; i < P.n; i++) { if (!bits[i]) continue; n++; if ((P.consent[i] & bit) !== 0 && (P.unsub[i] & bit) === 0) r++; }
+    return { n: n, reach: r };
+  }
+  function chWord(ch) { return ch === 'sms' ? 'SMS' : (MC.CH.LABEL[ch] || ch).toLowerCase(); }
+  function joinWords(a) { return a.length <= 1 ? a.join('') : a.slice(0, -1).join(', ') + ' and ' + a[a.length - 1]; }
+  function lc1(s) { return /^[A-Z][a-z]/.test(s) ? s.charAt(0).toLowerCase() + s.slice(1) : s; }
+  function makeMissions(world) {
+    if (!(MC.lead && MC.missions)) return;
+    var L = MC.lead, byId = {}, order = [], fm = MC.fmt;
+    function base(spec, created) {
+      var pl = L.plan(world, spec.goalText);
+      return { pl: pl, m: { id: spec.id, title: pl.title, goalText: spec.goalText, objective: pl.objective, status: 'running', phase: 'executing', createdTick: created,
+        brain: 'rules', plan: pl.plan, asks: [], artifacts: [], log: [], progress: { value: 0, target: pl.objective.target, forecast: 0, lo: 0, hi: 0 },
+        data: pl.data, replans: 0, lastReplanDay: null, lastCheckDay: null, lastBeatDay: null, resumeDay: null, steers: [] } };
+    }
+    function beat(m, tick, agentId, kind, text, ref) { var b = { tick: tick, agentId: agentId, kind: kind, text: text }; if (ref) b.ref = ref; m.log.push(b); }
+    function stepDone(m, id, tick, patch) { m.plan = m.plan.map(function (s) { return s.id === id ? Object.assign({}, s, { status: 'done', startedTick: tick - 6, doneTick: tick }, patch || {}) : s; }); }
+
+    /* ---- 1. win back lapsed hikers: mid-execution, one ask waiting ---- */
+    (function () {
+      var spec = D.MISSIONS_SEED[0], c = world.campaigns.byId[spec.campaignId], sg = world.segments.byId[spec.segmentId];
+      if (!c || !sg) return;
+      var t0 = (D.seedTarget || 0) - 6 * 24, b = base(spec, t0), m = b.m, rc = reachOf(world, spec.segmentId, 'email');
+      var lastDay = Math.floor((c.endTick - 1) / 24), by = m.objective.by, extra = Math.max(1, by - lastDay);
+      var perDay = c.goal.target / Math.max(1, Math.round((c.endTick - c.startTick) / 24));
+      var offerPct = { pct15: 15, pct25: 25 }[c.offer] || 0;
+      m.plan = [
+        L.step('s1', 'goal', 'Confirm the goal and set the plan', []),
+        L.step('s2', 'audience', 'Find and size the lapsed hikers', ['s1']),
+        L.step('s3', 'campaign', 'Run wave 1: ' + c.name, ['s2']),
+        L.step('s4', 'extend', 'Run the win-back through ' + L.dayShort(by), ['s3']),
+        L.step('s5', 'sendtime', 'Re-check send times as results come in', ['s4']),
+        L.step('s6', 'pacer', 'Re-split the budget toward what is working', ['s4']),
+        L.step('s7', 'monitor', 'Start tracking progress every day', ['s5', 's6'])
+      ];
+      m.data = Object.assign({}, m.data, { audience: { segmentId: spec.segmentId, resolvedId: spec.segmentId, label: 'lapsed hikers', hints: ['lapsed hikers'], size: rc.n, reach: rc.reach, primary: 'email' },
+        linked: true, campaignId: c.id, channels: c.channels.slice(), missing: [] });
+      beat(m, t0, 'lead', 'thought', L.voice.opening(m));
+      beat(m, t0 + 1, 'lead', 'thought', 'Wave 1 is already running, so I’m building on it rather than starting a second campaign.');
+      stepDone(m, 's1', t0 + 2);
+      beat(m, t0 + 6, 'scout', 'did', 'Found ' + fm.num(rc.n) + ' lapsed hikers (no order in 120+ days); ' + fm.num(rc.reach) + ' (' + fm.pct(rc.n ? rc.reach / rc.n : 0, 0) + ') can be reached by email.');
+      stepDone(m, 's2', t0 + 6, { artifact: { kind: 'segment', id: spec.segmentId }, note: 'Found ' + fm.num(rc.n) + ' lapsed hikers.' });
+      beat(m, t0 + 7, 'scout', 'handoff', 'Passing the audience to Campaign Planner.');
+      beat(m, t0 + 12, 'planner', 'did', 'Wave 1 is “' + c.name + '”: ' + joinWords(c.channels.map(chWord)) + (offerPct ? ', ' + offerPct + '% off' : '') + ', ' + fm.money(c.budget.total) + ', running through ' + L.dayShort(lastDay) + '.');
+      stepDone(m, 's3', t0 + 12, { artifact: { kind: 'campaign', id: c.id }, note: 'Wave 1 is live.' });
+      m.artifacts = [{ kind: 'segment', id: spec.segmentId }, { kind: 'campaign', id: c.id }];
+      var ask = { id: 'a1', stepId: 's4', agentId: 'planner', kind: 'extend', blocking: true,
+        question: 'Wave 1 stops on ' + L.dayShort(lastDay) + ', well before ' + L.dayShort(by) + '. Extend it so the ' + (offerPct || 15) + '% offer keeps running for ' + extra + ' more days?',
+        why: 'On its own, wave 1 can’t reach 400 win-backs before it ends; it was planned for ' + fm.num(c.goal.target) + '. ' + (offerPct ? 'The offer stays at ' + offerPct + '%, inside your 15% limit.' : 'No deeper discount is involved.'),
+        impact: { metric: 'win-backs', lo: Math.round(extra * perDay * 0.7), hi: Math.round(extra * perDay * 1.3) },
+        options: ['Extend to ' + L.dayShort(by), 'Leave the end date'], default: 'Extend to ' + L.dayShort(by), status: 'open', answer: null, by: null, createdTick: t0 + 13, answeredTick: null };
+      m.asks = [ask];
+      m.plan = m.plan.map(function (s) { return s.id === 's4' ? Object.assign({}, s, { status: 'blocked', note: 'Waiting for your answer.' }) : s; });
+      beat(m, t0 + 13, 'planner', 'ask', ask.question, 'a1');
+      m.status = 'waiting';
+      m.progress = { value: 0, target: m.objective.target, forecast: 0, lo: 0, hi: 0 };
+      byId[m.id] = m; order.push(m.id);
+    })();
+
+    /* ---- 2. Black Friday Early Access: monitoring, one re-plan in its history ---- */
+    (function () {
+      var spec = D.MISSIONS_SEED[1], c = world.campaigns.byId[spec.campaignId], sg = world.segments.byId[spec.segmentId];
+      if (!c || !sg) return;
+      var t0 = (D.seedTarget || 0) - 4 * 24, b = base(spec, t0), m = b.m, rc = reachOf(world, spec.segmentId, 'email');
+      var vs = MC.catalog.variantsOf(world, c.id), chs = c.channels.slice();
+      var hours = MC.CH.OWNED.filter(function (ch) { return chs.indexOf(ch) >= 0; }).map(function (ch) { return chWord(ch) + ' at ' + fm.hour(c.sendHour[ch]); });
+      var big = chs.slice().sort(function (a, z) { return (c.budget.byChannel[z] || 0) - (c.budget.byChannel[a] || 0) || (a < z ? -1 : 1); })[0];
+      m.data = Object.assign({}, m.data, { audience: { segmentId: spec.segmentId, resolvedId: spec.segmentId, label: sg.name, hints: [], size: rc.n, reach: rc.reach, primary: 'email' },
+        linked: true, campaignId: c.id, channels: chs, missing: [] });
+      m.plan = m.plan.map(function (s) { return s; });
+      beat(m, t0, 'lead', 'thought', L.voice.opening(m));
+      beat(m, t0 + 1, 'lead', 'thought', L.voice.planned(m));
+      stepDone(m, 's1', t0 + 3);
+      beat(m, t0 + 6, 'scout', 'did', 'Found ' + fm.num(rc.n) + ' ' + lc1(sg.name) + '; ' + fm.num(rc.reach) + ' (' + fm.pct(rc.n ? rc.reach / rc.n : 0, 0) + ') can be reached by email. They get first access.');
+      stepDone(m, 's2', t0 + 6, { artifact: { kind: 'segment', id: spec.segmentId }, note: 'Found ' + fm.num(rc.n) + ' members.' });
+      beat(m, t0 + 7, 'scout', 'handoff', 'Passing the audience to Campaign Planner.');
+      beat(m, t0 + 14, 'planner', 'did', '“' + c.name + '” covers ' + joinWords(chs.map(chWord)) + ' with ' + fm.money(c.budget.total) + ', starting ' + L.dayShort(Math.floor(c.startTick / 24)) + '.');
+      stepDone(m, 's3', t0 + 14, { artifact: { kind: 'campaign', id: c.id }, note: 'Drafted and scheduled.' });
+      beat(m, t0 + 20, 'copy', 'did', 'The campaign carries ' + vs.length + ' messages across ' + joinWords(chs.map(chWord)) + ', all checked against the brand book.');
+      stepDone(m, 's4', t0 + 20, { note: vs.length + ' messages.' });
+      stepDone(m, 's5', t0 + 21, { note: 'Standing frequency caps apply.' });
+      beat(m, t0 + 22, 'sendtime', 'did', 'Sends are set: ' + joinWords(hours) + '.');
+      stepDone(m, 's6', t0 + 22, { note: joinWords(hours) });
+      beat(m, t0 + 24, 'pacer', 'did', 'The ' + fm.money(c.budget.total) + ' is split across ' + joinWords(chs.map(chWord)) + '; ' + chWord(big) + ' takes the largest share at ' + fm.money(c.budget.byChannel[big] || 0) + '.');
+      stepDone(m, 's7', t0 + 24, { note: 'Split set.' });
+      beat(m, t0 + 25, 'lead', 'did', 'The draft is ready and the team has checked it.');
+      stepDone(m, 's8', t0 + 26, { note: 'Handed over for sign-off.' });
+      var launch = { id: 'a1', stepId: 's8', agentId: 'lead', kind: 'launch', blocking: false, question: '“' + c.name + '” is drafted. Ready to schedule it for ' + L.dayShort(Math.floor(c.startTick / 24)) + '?',
+        why: 'Nothing sends until it passes the launch checklist and you schedule it.', impact: { metric: 'revenue', lo: 0, hi: 0 }, options: ['Yes, schedule it', 'Not yet'], default: 'Yes, schedule it',
+        status: 'answered', answer: 'Yes, schedule it', by: 'manager', createdTick: t0 + 26, answeredTick: t0 + 30 };
+      m.asks = [launch];
+      beat(m, t0 + 26, 'lead', 'ask', launch.question, 'a1');
+      beat(m, t0 + 30, 'lead', 'did', 'You answered: Yes, schedule it.', 'a1');
+      beat(m, t0 + 31, 'lead', 'did', 'Great. It’s in Campaigns and scheduled for ' + L.dayShort(Math.floor(c.startTick / 24)) + '.');
+      stepDone(m, 's9', t0 + 36, { note: 'Tracking daily.' });
+      beat(m, t0 + 37, 'analyst', 'did', 'I’ll check in every morning at ' + fm.hour(9) + ' against ' + fm.money(m.objective.target) + ' in revenue ' + m.objective.deadlineText + '.');
+      // the re-plan in its history
+      var rt = t0 + 24 * 2 + 9;
+      beat(m, rt, 'lead', 'replan', 'Reviewed the plan against the ' + fm.money(m.objective.target) + ' goal. With only a few days of runway the margin is thin, so I asked Budget Pacer to tilt spend toward the channels that return the most per dollar and Variant Optimizer to watch the first results closely.');
+      m.plan = m.plan.concat([L.step('s10', 'pacer', 'Re-split the budget toward the higher-return channels', [])]);
+      m.plan = m.plan.map(function (s) { return s.id === 's10' ? Object.assign({}, s, { status: 'done', startedTick: rt, doneTick: rt + 8, note: 'Budget tilted toward ' + chWord(big) + ' and the other high-return channels.' }) : s; });
+      beat(m, rt + 8, 'pacer', 'did', 'Re-split the budget toward the channels returning the most per extra dollar; the ' + fm.money(c.budget.total) + ' total did not change.');
+      m.artifacts = [{ kind: 'segment', id: spec.segmentId }, { kind: 'campaign', id: c.id }];
+      m.phase = 'monitoring'; m.status = 'running'; m.replans = 1; m.lastReplanDay = Math.floor(rt / 24);
+      m.log.sort(function (x, y) { return x.tick - y.tick; });
+      m.progress = { value: 0, target: m.objective.target, forecast: 0, lo: 0, hi: 0 };
+      byId[m.id] = m; order.push(m.id);
+    })();
+    world.missions = { byId: byId, order: order };
+    order.forEach(function (id) {
+      var mm = byId[id], pr = MC.missions.progressOf(world, mm, world.meta.tick);
+      byId[id] = Object.assign({}, mm, { progress: { value: pr.value, target: pr.target, forecast: pr.forecast, lo: pr.lo, hi: pr.hi } });
+    });
+  }
+
   function phaseProfiles(st) {
     var w = st.world = skeleton(st.seed);
     makeProfiles(w, st.seed);
     makeSegments(w);
     makeCampaigns(w, st.seed);
+    makeContent(w);
   }
   function phaseHistory(st) { makeHistory(st.world, st.seed); }
   function phaseScores(st) {
@@ -591,6 +862,7 @@
     U().bump(w, 'segCounts');
     // hidden truth for variants and paid curves
     Object.keys(w.variants.byId).sort().forEach(function (vid) { w.latent.variants[vid] = MC.sim.latentFor(w, w.variants.byId[vid]); });
+    Object.keys((w.content && w.content.blocks.byId) || {}).sort().forEach(function (bid) { w.latent.blocks[bid] = MC.sim.latentForBlock(w, bid); });
     w.campaigns.order.forEach(function (cid) { MC.sim.curvesFor(w, w.campaigns.byId[cid]); });
     // live campaigns enroll at t = 0; today's metrics entry carries their day records
     var today = w.metrics.days[0 - DAY0];
@@ -601,6 +873,7 @@
       campDay(today, cid);
     });
     makeAgents(w);
+    makeMissions(w);
     var rank = {};
     AGENT_FALLBACK.forEach(function (r, k) { rank[r[0]] = k; });
     w.agents.order.sort(function (a, b) { return ((rank[a] === undefined ? 99 : rank[a]) - (rank[b] === undefined ? 99 : rank[b])) || (a < b ? -1 : 1); });

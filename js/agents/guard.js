@@ -1,6 +1,7 @@
 /* Marketing Cloud - Fatigue Guard agent. Rests people who are being messaged too much on a
    channel, before they unsubscribe, and asks to pause a channel whose unsubscribe rate jumps well
-   above its normal level. Only treatment members are rested; the control group keeps its plan. */
+   above its normal level. Only treatment members are rested; the control group keeps its plan. It also watches how
+   people respond to content they have seen before and proposes retiring a worn-out block everywhere it runs. */
 (function () {
   'use strict';
   var MC = window.MC = window.MC || {};
@@ -57,6 +58,70 @@
       });
     });
     return { tick: t, units: out };
+  }
+
+  /* ---------------- tired content ---------------- */
+  function clip(s, n) { s = String(s || ''); return s.length > n ? s.slice(0, n - 1).replace(/\s+\S*$/, '') + '\u2026' : s; }
+  function plain(b) {
+    var K = MC.content, s = '';
+    if (b.kind === 'image') { var im = MC.copy && MC.copy.imageById(b.value && b.value.imageId); s = (im && im.alt) || K.textOf(b); }
+    else s = K.textOf(b);
+    return String(s).replace(/\s*\{first_name(\|[^}]*)?\}[,:]?\s*/g, ' ').replace(/\{[a-z_]+(\|[^}]*)?\}/g, '').replace(/\s+/g, ' ').trim();
+  }
+  function quoteBlock(b) { return '“' + clip(plain(b), 48) + '”'; }
+  function tiredBlocks(world, proposals, trace) {
+    var S = MC.select, K = MC.content;
+    if (!S || !S.contentRecommendations || !K) return [];
+    var recs = S.contentRecommendations(world).filter(function (r) { return r.kind === 'retire-block'; }), rows = [], cands = [];
+    var perf = S.contentPerformance(world, { by: 'block', days: 3 });
+    recs.forEach(function (r) {
+      var b = K.block(world, r.blockIds[0]), row = { block: quoteBlock(b), 'used in': r.placements + (r.placements === 1 ? ' message' : ' messages'), result: '' };
+      rows.push(row);
+      if (!r.replacementId) { row.result = 'No approved ' + K.KIND_LABEL[b.kind].toLowerCase() + ' of the same angle to swap in; Copy Drafter writes one'; return; }
+      var rep = K.block(world, r.replacementId), f = r.fatigue;
+      var recent = perf.filter(function (x) { return x.key === b.id; })[0], perDay = recent ? recent.delivered / 3 : 0;
+      var fx = S.blockFatigue(world, b.id), tot = 0, rep2 = 0;
+      fx.curve.forEach(function (c, i) { tot += c.delivered; if (i >= f.laterFrom) rep2 += c.delivered; });
+      var share = tot > 0 ? rep2 / tot : 0, gap = f.first.rate - f.later.rate;
+      var delta = perDay * 3 * share * gap, noun = f.metric === 'open' ? 'opens' : 'clicks';
+      var lo = f.drop.value !== 0 ? delta * f.drop.hi / f.drop.value : delta, hi = f.drop.value !== 0 ? delta * f.drop.lo / f.drop.value : delta;
+      var swaps = K.swapActions(world, b.id, rep.id);
+      if (!swaps.length) { row.result = 'Not used in a message'; return; }
+      if (!(delta > 0)) { row.result = 'Not sent lately, so nothing to gain yet'; return; }
+      var diff = [];
+      K.messagesUsing(world, b.id).forEach(function (m) {
+        K.placements(m, b.id).forEach(function (pl) {
+          diff.push({ label: m.name + ' (' + pl.slot + (pl.channel ? ', ' + chLower(pl.channel) + ' version' : '') + ')', before: clip(plain(b), 60), after: clip(plain(rep), 60) });
+        });
+      });
+      var perChan = r.channels.map(chLower), where = perChan.length ? ' on ' + (perChan.length === 1 ? perChan[0] : perChan.slice(0, -1).join(', ') + ' and ' + perChan[perChan.length - 1]) : '';
+      var kindWord = K.KIND_LABEL[b.kind].toLowerCase();
+      cands.push({ delta: delta, row: row, rep: rep, draft: {
+        kind: 'retire-block', risk: 'medium', mustQueue: true, horizon: 72,
+        target: { kind: 'block', id: b.id },
+        title: 'Retire ' + quoteBlock(b) + ' everywhere it runs (' + r.placements + (r.placements === 1 ? ' message' : ' messages') + ')',
+        rationale: 'People who see this ' + kindWord + ' again respond less: ' + noun + ' fall ' + pct(-f.drop.value, 0) + ' (' + pct(-f.drop.hi, 0) + ' to ' + pct(-f.drop.lo, 0) + ') ' +
+          'against the first time, across ' + num(f.first.n + f.later.n) + ' sends' + where + '. Retiring it stops new use and swaps ' + quoteBlock(rep) + ' into every message that carries it. ' +
+          'Messages already live keep their current words until the new version is published, and the edited messages go back to review.',
+        evidence: [
+          { label: 'First time seen', value: pct(f.first.rate, 1) + ' of ' + num(f.first.n) + (f.metric === 'open' ? ' opened' : ' clicked') },
+          { label: 'Seen again', value: pct(f.later.rate, 1) + ' of ' + num(f.later.n) },
+          { label: 'People who saw it more than once', value: fx.exposures ? pct(fx.exposures.repeatShare, 0) + ' of ' + num(fx.exposures.people) : 'n/a' },
+          { label: 'Replacement', value: quoteBlock(rep) }
+        ],
+        impact: { metric: noun + ' regained', unit: '#', delta: Math.round(delta * 10) / 10, lo: Math.round(Math.min(lo, hi) * 10) / 10, hi: Math.round(Math.max(lo, hi) * 10) / 10, horizonDays: 3, confidence: 0.6 },
+        actions: [{ type: 'block/retire', payload: { id: b.id, reason: 'Worn out: ' + noun + ' fall ' + pct(-f.drop.value, 0) + ' when the same people see it again' } }].concat(swaps),
+        diff: diff
+      } });
+    });
+    cands.sort(function (a, b) { return (b.delta - a.delta) || (a.draft.target.id < b.draft.target.id ? -1 : 1); });
+    cands.forEach(function (c, i) {
+      if (i >= 2) { c.row.result = 'Later: two retirements per run'; return; }
+      c.row.result = 'Retire and swap in ' + quoteBlock(c.rep);
+      proposals.push(c.draft);
+    });
+    if (rows.length) trace.push({ step: 'decide', text: 'Checked ' + rows.length + (rows.length === 1 ? ' block' : ' blocks') + ' for wear: how much worse people respond the second time they see the same words.', rows: rows });
+    return rows;
   }
 
   function decide(obs, ctx) {
@@ -139,6 +204,8 @@
       });
     });
 
+    // Worn-out content: a block the same people keep seeing is retired everywhere it runs, in one proposal.
+    var tiredRows = tiredBlocks(ctx.world, proposals, trace);
     if (rows.length) trace.push({ step: 'decide', text: 'Scored each person’s chance of unsubscribing from how many messages they got recently and how engaged they are.', rows: rows });
     trace.push({ step: 'decide', text: proposals.length
       ? 'Drafted ' + proposals.length + (proposals.length === 1 ? ' change' : ' changes') + ' to protect the list.'
@@ -147,7 +214,7 @@
   }
 
   MC.runtime.register({
-    id: ID, name: 'Fatigue Guard', short: 'Rests people who are being messaged too much, before they unsubscribe.', icon: 'shield', order: 4,
+    id: ID, name: 'Fatigue Guard', short: 'Rests people who are being messaged too much, and retires words people have seen too often.', icon: 'shield', order: 4,
     cadence: { 'default': 12, min: 3, max: 48, phase: 5 },
     autonomy: { 'default': 'autopilot', allowed: ['off', 'suggest', 'autopilot'] },
     autopilotMaxRisk: 'low',
@@ -157,13 +224,13 @@
       maxSuppressPct: { label: 'Max share rested', type: 'int', 'default': 15, min: 1, max: 30, step: 1, help: 'Never rest more than this percent of a campaign’s audience at once.' },
       unsubZ: { label: 'Spike sensitivity', type: 'float', 'default': 3, min: 2, max: 5, step: 0.5, help: 'How far above normal (in standard deviations) the unsubscribe rate must jump before suggesting a pause.' }
     },
-    emits: ['profiles/suppress', 'campaign/setChannelPaused'],
+    emits: ['profiles/suppress', 'campaign/setChannelPaused', 'block/retire', 'message/setSlot', 'message/setOverride'],
     guardrails: ['consent', 'maxSuppress', 'holdout', 'targetFresh'],
     notifyDefault: 'changes',
     materiality: { metric: 'unsubs avoided', min: 0.2 },
     horizon: 72,
     observe: observe,
     decide: decide,
-    risk: function (draft) { return draft.kind === 'pause-channel' ? 'high' : 'low'; }
+    risk: function (draft) { return draft.kind === 'pause-channel' ? 'high' : (draft.kind === 'retire-block' ? 'medium' : 'low'); }
   });
 })();

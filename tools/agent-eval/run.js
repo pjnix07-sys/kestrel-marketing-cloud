@@ -5,7 +5,7 @@ const fs = require('fs'), path = require('path'), vm = require('vm');
 const root = path.join(__dirname, '..', '..');
 const VERBOSE = process.argv.includes('--verbose');
 const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
-const srcs = [...html.matchAll(/src="(js\/[^"]+)"/g)].map(m => m[1]).filter(s => /^js\/(core|ai|agents)\//.test(s));
+const srcs = [...html.matchAll(/src="(js\/[^"?]+)(?:\?v=[^"]*)?"/g)].map(m => m[1]).filter(s => /^js\/(core|ai|agents)\//.test(s));
 const spec = JSON.parse(fs.readFileSync(path.join(__dirname, 'cases.json'), 'utf8'));
 
 // ---- fake Anthropic: only the 16-token verify call answers; agent calls are held until released ----
@@ -13,6 +13,7 @@ let mode = 'hold', held = [];
 const resp = (status, json) => Promise.resolve({ status, headers: { get: () => null }, text: () => Promise.resolve(JSON.stringify(json)) });
 const msg = (text, stop) => ({ type: 'message', stop_reason: stop || 'end_turn', content: [{ type: 'text', text }], usage: { input_tokens: 900, output_tokens: 300, cache_read_input_tokens: 6000 } });
 function fakeFetch(url, init) {
+  if (/\/v1\/models\//.test(url)) return resp(200, { type: 'model', id: 'claude-haiku-5-5' });   // key verification
   const body = JSON.parse(init.body);
   if (body.max_tokens === 16) return resp(200, msg('OK'));
   if (mode === 'hold') return new Promise((_, rej) => held.push(rej));

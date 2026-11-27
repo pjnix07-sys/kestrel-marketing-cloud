@@ -14,13 +14,13 @@
 
   var AGENT_NAMES = {
     optimizer: 'Variant Optimizer', sendtime: 'Send-Time Tuner', pacer: 'Budget Pacer', guard: 'Fatigue Guard',
-    analyst: 'Insight Analyst', copy: 'Copy Drafter', scout: 'Segment Scout', planner: 'Campaign Planner'
+    analyst: 'Insight Analyst', copy: 'Copy Drafter', scout: 'Segment Scout', planner: 'Campaign Planner', lead: 'Lead'
   };
   var AGENT_ORDER = ['optimizer', 'sendtime', 'pacer', 'guard', 'analyst', 'copy', 'scout', 'planner'];
   var KIND_LABEL = {
     'traffic-shift': 'Traffic shift', 'pause-variant': 'Pause variant', 'send-time': 'Send time', 'adaptive-send': 'Adaptive send time',
     'budget-shift': 'Budget shift', 'fatigue-suppress': 'Fatigue rest', 'pause-channel': 'Pause channel', 'extend-campaign': 'Extend campaign',
-    'new-variant': 'New variant', 'new-segment': 'New segment', 'retarget': 'Add audience', 'campaign-draft': 'Campaign draft'
+    'new-variant': 'New variant', 'new-segment': 'New segment', 'retarget': 'Add audience', 'campaign-draft': 'Campaign draft', 'retire-block': 'Retire a tired block', 'block-test': 'Test a headline across channels', 'block-verdict': 'Move traffic off a losing headline', 'new-blocks': 'New content blocks'
   };
   var RISK = {
     low: { label: 'Low risk', bg: 'var(--good-soft)', fg: 'var(--good)' },
@@ -204,7 +204,7 @@
     var th = { textAlign: 'left', fontWeight: 600, fontSize: 12, color: 'var(--ink-3)', padding: '4px 8px 4px 0', borderBottom: '1px solid var(--line)' };
     var td = { padding: '5px 8px 5px 0', fontSize: 13, borderBottom: '1px solid var(--line)', verticalAlign: 'top', overflowWrap: 'anywhere' };
     return html`<div className="ag-diff k-scroll-x" style=${{ overflowX: 'auto', maxWidth: '100%' }}>
-      <table className="num" style=${{ borderCollapse: 'collapse', width: '100%', fontVariantNumeric: 'tabular-nums' }}>
+      <table className="num" style=${{ borderCollapse: 'collapse', width: '100%' }}>
         <thead><tr><th scope="col" style=${th}>Change</th><th scope="col" style=${th}>Before</th><th scope="col" aria-hidden="true" style=${th}></th><th scope="col" style=${th}>After</th></tr></thead>
         <tbody>${rows.map(function (r, i) {
           var b = cellText(r.before), a = cellText(r.after), changed = b !== a;
@@ -333,7 +333,7 @@
   }
   var STATUS_NOTE = {
     rejected: 'Dismissed', expired: 'Expired unreviewed', superseded: 'Replaced by a newer proposal for the same target',
-    undone: 'Undone', stale: 'No longer applies: the campaign changed since this was proposed.'
+    undone: 'Undone', stale: 'Out of date: the campaign changed after this was suggested.'
   };
   var SEC = { display: 'grid', gridTemplateColumns: 'minmax(78px, 96px) minmax(0, 1fr)', gap: '4px 10px', alignItems: 'start' };
   var SEC_LABEL = { fontSize: 12, fontWeight: 600, color: 'var(--ink-3)', paddingTop: 2, margin: 0 };
@@ -407,7 +407,7 @@
       var ok = act(type, payload, fallback);
       if (ok) { announce(said + ': ' + (pr.title || 'proposal')); settleFocus(); }
     }
-    function approve() { decide('proposal/approve', { id: id }, "Couldn't approve this change.", 'Approved'); }
+    function approve() { decide('proposal/approve', { id: id }, "Couldn't approve this change. Reload and try again.", 'Approved'); }
     function reject(reason) { setMenu(false); decide('proposal/reject', { id: id, reason: reason }, "Couldn't dismiss this proposal.", 'Dismissed'); }
     function undo() { decide('proposal/undo', { id: id }, "Couldn't undo this change.", 'Undone'); }
     function closeMenu(restore) {
@@ -448,7 +448,7 @@
         <${Btn} raw=${true} kind="secondary" aria-expanded=${menuOpen ? 'true' : 'false'} data-ag-dismiss="true" onClick=${function () { if (menuOpen) closeMenu(false); else setMenu(true); }}>Dismiss <span aria-hidden="true">▾</span><//>
         ${!compact && (camp || (pr.target && (pr.target.kind === 'segment' || pr.target.kind === 'variant')))
           ? html`<${Btn} kind="ghost" onClick=${openTarget}>${camp ? 'Open campaign' : (pr.target.kind === 'segment' ? 'Open segment' : 'Open variant')}<//>` : null}
-        ${expires != null ? html`<span style=${{ marginLeft: 'auto', fontSize: 12, color: 'var(--ink-3)' }}>${'Expires in ' + expires + 'h'}</span>` : null}
+        ${expires != null ? html`<span style=${{ marginLeft: 'auto', fontSize: 12, color: 'var(--ink-3)' }}>${'Expires in ' + (expires > 24 ? Math.round(expires / 24) + (Math.round(expires / 24) === 1 ? ' day' : ' days') : expires + 'h')}</span>` : null}
       </div>`;
     } else if (pr.status === 'applied' || pr.status === 'auto') {
       var canUndo = !undoState || undoState.ok;
@@ -496,7 +496,7 @@
         <div style=${SEC}><p style=${SEC_LABEL}>Why</p>
           <div style=${{ fontSize: 13, color: 'var(--ink)', minWidth: 0, overflowWrap: 'anywhere' }}>
             ${pr.rationale}
-            ${pr.evidence && pr.evidence.length ? html`<ul style=${{ listStyle: 'none', margin: '4px 0 0', padding: 0, display: 'flex', flexWrap: 'wrap', gap: '2px 12px', fontSize: 12, color: 'var(--ink-2)', fontVariantNumeric: 'tabular-nums' }}>
+            ${pr.evidence && pr.evidence.length ? html`<ul style=${{ listStyle: 'none', margin: '4px 0 0', padding: 0, display: 'flex', flexWrap: 'wrap', gap: '2px 12px', fontSize: 12, color: 'var(--ink-2)' }}>
               ${pr.evidence.map(function (ev, i) { return html`<li key=${(ev.label || '') + i}>${ev.label}: <span style=${{ color: 'var(--ink)' }}>${cellText(ev.value)}</span></li>`; })}
             </ul>` : null}
           </div>
@@ -517,7 +517,7 @@
   }
 
   /* ================= TraceView ================= */
-  var MONO = { fontSize: 12, fontVariantNumeric: 'tabular-nums' };
+  var MONO = { fontSize: 12 };
   var H4 = { margin: '0 0 4px', fontSize: 13, fontWeight: 600, color: 'var(--ink-2)' };
   function rowCells(r) {
     if (Array.isArray(r)) return r;
@@ -531,7 +531,7 @@
     var rows = (p.rows || []).slice(0, 40);
     if (!rows.length) return null;
     return html`<div className="k-scroll-x" style=${{ overflowX: 'auto', marginTop: 4 }}>
-      <table className="num" style=${{ borderCollapse: 'collapse', fontSize: 12, fontVariantNumeric: 'tabular-nums', minWidth: '60%' }}>
+      <table className="num" style=${{ borderCollapse: 'collapse', fontSize: 12, minWidth: '60%' }}>
         <tbody>${rows.map(function (r, i) {
           var cells = rowCells(r);
           return html`<tr key=${i}>${cells.map(function (c, j) {
@@ -731,6 +731,46 @@
     </div>`;
   }
 
+
+  /* ---------- agent marks, colours and cursors (shared by the mission room, studio views, team) ---------- */
+  // One fixed glyph (16x16 stroke paths) and one colour per agent. Colours are >= 3:1 on the light paper and the dark ground
+  // used by the mission room; use them for marks, dots and cursor flags, never as a chart series.
+  var AGENT_GLYPH = {
+    lead: '<path d="M3 13V3l5 6 5-6v10"/>',
+    planner: '<path d="M2 13.5 8 2.5l6 11z"/>',
+    analyst: '<path d="M3 13.5V8.5M8 13.5v-10M13 13.5v-7"/>',
+    scout: '<circle cx="8" cy="8" r="4.5"/><path d="M8 1v3M8 12v3M1 8h3M12 8h3"/>',
+    copy: '<path d="M2 4h12M2 8h8M2 12h12"/>',
+    guard: '<path d="M8 1.8 13.3 4v4c0 3-2.3 5-5.3 6.2C5 13 2.7 11 2.7 8V4z"/>',
+    optimizer: '<path d="M2.5 2.5h4.5v11H2.5zM9 2.5h4.5v11H9z"/>',
+    pacer: '<path d="M8 2a6 6 0 1 0 6 6H8z"/>',
+    sendtime: '<circle cx="8" cy="8" r="6"/><path d="M8 4.5V8l2.6 1.8"/>'
+  };
+  var AGENT_COLOR = {
+    lead: '#112019', planner: '#4B58A6', analyst: '#3F7A2C', scout: '#17667F', copy: '#9A3F7A',
+    guard: '#8C6410', optimizer: '#B0443F', pacer: '#1F5C46', sendtime: '#2E6FA3'
+  };
+  function agentColor(id) { return AGENT_COLOR[id] || '#53645A'; }
+  // AgentMark: the agent's glyph, optionally in a filled square badge. props: id, size (px, default 16), badge (bool), title
+  function AgentMark(p) {
+    var size = p.size || 16, id = p.id, col = agentColor(id), g = AGENT_GLYPH[id] || '<circle cx="8" cy="8" r="4"/>';
+    var svg = html`<svg className="ag-mark-svg" viewBox="0 0 16 16" width=${size} height=${size} aria-hidden="true" focusable="false"
+      style=${{ flex: 'none', fill: 'none', stroke: p.badge ? '#fff' : col, strokeWidth: 1.7, strokeLinecap: 'round', strokeLinejoin: 'round' }}
+      dangerouslySetInnerHTML=${{ __html: g }} />`;
+    if (!p.badge) return svg;
+    var box = Math.round(size * 1.6);
+    return html`<span className="ag-mark" title=${p.title || agentName(id)} style=${{ flex: 'none', width: box, height: box, borderRadius: 3, background: col, display: 'inline-grid', placeItems: 'center' }}>${svg}</span>`;
+  }
+  // AgentCursor: a named pointer for an agent that is mid-task inside a panel. Render it only while the work is real.
+  // props: id, label (default the agent's name), style (position it: left/top), className
+  function AgentCursor(p) {
+    var col = agentColor(p.id), label = p.label || agentName(p.id);
+    return html`<span className=${'ag-cursor' + (p.className ? ' ' + p.className : '')} aria-hidden="true" style=${Object.assign({ position: 'absolute', zIndex: 5, pointerEvents: 'none', color: col }, p.style || null)}>
+      <svg viewBox="0 0 16 16" width="16" height="16" style=${{ display: 'block', fill: col, stroke: '#fff', strokeWidth: 1, strokeLinejoin: 'round' }}><path d="M2 1.5 13.5 7 8.2 8.6 6.4 14z"/></svg>
+      <span style=${{ position: 'absolute', left: 12, top: 12, whiteSpace: 'nowrap', background: col, color: '#fff', fontSize: 11, fontWeight: 700, lineHeight: 1, padding: '3px 7px 4px', borderRadius: '2px 8px 8px 8px' }}>${label}</span>
+    </span>`;
+  }
+
   /* ---------- exports ---------- */
   MC.ui.AgentChip = AgentChip;
   MC.ui.ProposalCard = ProposalCard;
@@ -741,4 +781,10 @@
   MC.ui.TraceView = TraceView;
   MC.ui.AgentPulse = AgentPulse;
   MC.ui.AutonomyControl = AutonomyControl;
+  MC.ui.AgentMark = AgentMark;
+  MC.ui.AgentCursor = AgentCursor;
+  MC.ui.agentColor = agentColor;
+  MC.ui.agentName = MC.ui.agentName || agentName;
+  MC.ui.AGENT_GLYPH = AGENT_GLYPH;
+  MC.ui.AGENT_COLOR = AGENT_COLOR;
 })();

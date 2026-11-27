@@ -92,6 +92,7 @@
       origin: origin, tick: tick, user: origin === 'user', by: meta.by || null, note: meta.note || null,
       agent: origin.indexOf('agent:') === 0,
       agentId: origin.indexOf('agent:') === 0 ? origin.slice(6) : null,
+      mission: meta.mission === true,   // a mission step acting for an agent (may work on its own drafts)
       created: []
     };
   }
@@ -195,7 +196,7 @@
         if (dn2 && dn2[payload.id] !== undefined) { var nn = assign({}, dn2); delete nn[payload.id]; MC.uiStore.set({ decisionNotes: nn }); }
       } catch (e) { /* no ui */ }
     }
-    var silent = action.type.indexOf('proposal/') === 0 || action.type === 'insight/dismiss' ||
+    var silent = action.type.indexOf('proposal/') === 0 || action.type.indexOf('mission/') === 0 || action.type === 'insight/dismiss' ||
       action.type === 'agent/aiRun' || action.type.indexOf('ai/') === 0;
     if (!silent) {
       var ent = def.entity ? def.entity(payload, r.created) : null;
@@ -250,7 +251,7 @@
     var c = camp(world, id);
     if (!c) return 'That campaign no longer exists.';
     opts = opts || {};
-    if (ctx.agent && c.status === 'draft' && !opts.allowDraftForAgent) return 'Agents never change draft campaigns.';
+    if (ctx.agent && !ctx.mission && c.status === 'draft' && !opts.allowDraftForAgent) return 'Agents never change draft campaigns.';
     if (c.status === 'completed' && !opts.allowCompleted) return 'Completed campaigns can’t be changed.';
     return null;
   }
@@ -585,12 +586,13 @@
 
   var UPDATE_KEYS = ['name', 'goal', 'startTick', 'endTick', 'tone', 'offer', 'productFocus', 'brief', 'eventDay'];
   C.define('campaign/update', {
-    by: ['user'],
+    by: ['user', 'agent:planner'],
     label: 'Edit campaign',
     entity: function (p) { return feedEntity('campaign', p.id); },
     validate: function (world, p, ctx) {
       var c = camp(world, p.id);
       if (!c) return 'That campaign no longer exists.';
+      if (ctx.agent && !ctx.mission) return 'Agents can’t edit campaigns directly.';
       if (!isObj(p.patch) || !Object.keys(p.patch).length) return 'Nothing to change.';
       var ks = Object.keys(p.patch);
       for (var i = 0; i < ks.length; i++) if (UPDATE_KEYS.indexOf(ks[i]) < 0) return 'Field ' + ks[i] + ' can’t be edited here.';
@@ -818,7 +820,7 @@
         next[ks[i]] = p.byChannel[ks[i]];
       }
       var tot = 0; sortedKeys(next).forEach(function (k) { tot += next[k]; });
-      if (ctx.agent && Math.abs(tot - c.budget.total) > 1) return 'Agents must keep the campaign total unchanged.';
+      if (ctx.agent && !ctx.mission && Math.abs(tot - c.budget.total) > 1) return 'Agents must keep the campaign total unchanged.';
       return null;
     },
     reduce: function (world, p, ctx) {
@@ -1451,6 +1453,462 @@
     function (world, p) { return { aiMode: p.aiMode }; },
     function (n, p) { return p.aiMode === 'rules' ? 'You set ' + n + ' to its standard playbook only' : 'You let ' + n + ' reason through its runs again'; });
 
+  /* ================= content actions (docs/CONTENT.md): blocks and messages ================= */
+  function KC() { return MC.content; }
+  function cslice(world) { return world.content || (world.content = KC().empty()); }
+  function cblock(world, id) { return KC().block(world, id); }
+  function cmsg(world, id) { return KC().message(world, id); }
+  // Copy-on-write put into a content slice; the simulator's ledgers (perf, fat, exp) are kept by reference.
+  function putContent(world, slice, ent) {
+    var c = cslice(world), s = c[slice];
+    var byId = assign({}, s.byId); byId[ent.id] = ent;
+    var o = {}; o[slice] = { byId: byId, order: s.order.indexOf(ent.id) < 0 ? s.order.concat([ent.id]) : s.order };
+    world.content = assign({}, c, o);
+  }
+  // Content versions bump only when the content changes; review and retirement leave `ver` alone.
+  function touch(ent, ctx, patch, bump) {
+    return assign({}, ent, patch || {}, { ver: (ent.ver || 0) + (bump ? 1 : 0), updatedBy: ctx.origin, updatedTick: ctx.tick });
+  }
+  function actorOf(ctx) { return ctx.user ? (ctx.by || 'user') : ctx.origin; }
+  function setBlockLatent(world, id) {
+    if (!(MC.sim && typeof MC.sim.latentForBlock === 'function')) return;
+    if (!world.latent) world.latent = { profiles: {}, variants: {}, curves: {} };
+    if (!world.latent.blocks) world.latent.blocks = {};
+    world.latent.blocks[id] = MC.sim.latentForBlock(world, id);
+  }
+  function bname(world, id) { var b = cblock(world, id); return b ? '“' + clipText(KC().textOf(b), 40) + '”' : 'a block'; }
+  function clipText(s, n) { s = String(s || ''); return s.length > n ? s.slice(0, n - 1).replace(/\s+\S*$/, '') + '…' : s; }
+  function mname(world, id) { var m = cmsg(world, id); return m ? '“' + m.name + '”' : 'a message'; }
+
+  function blockUsable(b) { return !!b && !b.retired && !b.archived; }
+  // Every slot id must name a live block of the right kind; returns an error or null.
+  function slotsErr(world, slots, required) {
+    if (!isObj(slots)) return 'A message needs its blocks.';
+    var K = KC(), i, s;
+    for (i = 0; i < K.REQUIRED.length; i++) if (required && !slots[K.REQUIRED[i]]) return 'A message needs a ' + K.KIND_LABEL[K.SLOT_KIND[K.REQUIRED[i]]].toLowerCase() + '.';
+    var ks = Object.keys(slots);
+    for (i = 0; i < ks.length; i++) {
+      s = ks[i];
+      if (K.SLOTS.indexOf(s) < 0) return 'Unknown slot ' + s + '.';
+      var ids = s === 'claims' ? slots.claims : (slots[s] ? [slots[s]] : []);
+      if (!Array.isArray(ids)) return 'Claims must be a list.';
+      for (var j = 0; j < ids.length; j++) {
+        var b = cblock(world, ids[j]);
+        if (!b) return 'A block in this message doesn’t exist.';
+        if (b.kind !== K.SLOT_KIND[s]) return 'A ' + K.KIND_LABEL[b.kind].toLowerCase() + ' can’t go in the ' + s + ' slot.';
+        if (!blockUsable(b)) return b.retired ? 'A retired block can’t be used in a message.' : 'An archived block can’t be used in a message.';
+      }
+    }
+    return null;
+  }
+  function overridesErr(world, co) {
+    if (co === undefined || co === null) return null;
+    if (!isObj(co)) return 'Channel overrides must be an object.';
+    var K = KC(), chs = Object.keys(co);
+    for (var i = 0; i < chs.length; i++) {
+      if (CH().ALL.indexOf(chs[i]) < 0) return 'Unknown channel ' + chs[i] + '.';
+      if (!isObj(co[chs[i]])) return 'Channel overrides must be an object.';
+      var ss = Object.keys(co[chs[i]]);
+      for (var j = 0; j < ss.length; j++) {
+        if (ss[j] === 'claims' || K.SLOTS.indexOf(ss[j]) < 0) return 'That slot can’t be overridden.';
+        var b = cblock(world, co[chs[i]][ss[j]]);
+        if (!b || b.kind !== K.SLOT_KIND[ss[j]]) return 'An override needs a block of the right kind.';
+        if (!blockUsable(b)) return 'A retired or archived block can’t be used in a message.';
+      }
+    }
+    return null;
+  }
+  function cleanTags(tags) {
+    var o = {};
+    if (!isObj(tags)) return o;
+    ['angle', 'tone', 'product', 'offerType', 'season'].forEach(function (k) { if (tags[k] !== undefined && tags[k] !== null && tags[k] !== '') o[k] = tags[k]; });
+    return o;
+  }
+
+  C.define('block/create', {
+    by: ['user', 'agent:*'],
+    label: 'Add block',
+    entity: function (p, created) { return feedEntity('block', created && created[0]); },
+    validate: function (world, p, ctx) {
+      var b = p.block;
+      if (!isObj(b)) return 'Missing block.';
+      var e = KC().valueError(b.kind, b.value) || KC().tagsError(b.tags);
+      if (e) return e;
+      if (p.forkOf !== undefined && p.forkOf !== null && !cblock(world, p.forkOf)) return 'The block to fork no longer exists.';
+      if (b.review !== undefined && REVIEWS.indexOf(b.review) < 0) return 'Unknown review state.';
+      return null;
+    },
+    reduce: function (world, p, ctx) {
+      var b = p.block, id = 'b-' + nextSeq(world);
+      ctx.created.push(id);
+      var by = actorOf(ctx), tags = cleanTags(b.tags), value = U().clone(b.value);
+      var blk = {
+        id: id, kind: b.kind, value: value, tags: tags, locale: 'en-US', ver: 1,
+        review: ctx.agent ? 'in_review' : (REVIEWS.indexOf(b.review) >= 0 ? b.review : 'draft'),
+        author: by, createdTick: ctx.tick, updatedBy: ctx.origin, updatedTick: ctx.tick,
+        history: [{ ver: 1, value: U().clone(value), tags: U().clone(tags), by: by, tick: ctx.tick, note: cleanNote(p.note) }]
+      };
+      if (p.forkOf) blk.forkOf = p.forkOf;
+      putContent(world, 'blocks', blk);
+      setBlockLatent(world, id);
+    },
+    inverse: function () { return [{ type: 'block/archive', payload: { id: '$created:0' } }]; },
+    describe: function (world, p) { var b = p.block || {}; return 'You added a ' + (KC().KIND_LABEL[b.kind] || 'block').toLowerCase() + ' block'; }
+  });
+
+  C.define('block/update', {
+    by: ['user'],
+    label: 'Edit block',
+    entity: function (p) { return feedEntity('block', p.id); },
+    validate: function (world, p) {
+      var b = cblock(world, p.id);
+      if (!b) return 'That block no longer exists.';
+      if (b.retired) return 'Retired blocks can’t be edited.';
+      if (p.value === undefined && p.tags === undefined) return 'Nothing to change.';
+      var e = p.value !== undefined ? KC().valueError(b.kind, p.value) : null;
+      e = e || KC().tagsError(p.tags);
+      return e;
+    },
+    reduce: function (world, p, ctx) {
+      var b = cblock(world, p.id), by = actorOf(ctx);
+      var value = p.value !== undefined ? U().clone(p.value) : b.value;
+      var tags = p.tags !== undefined ? assign({}, b.tags, cleanTags(p.tags)) : b.tags;
+      if (p.tags !== undefined) sortedKeys(p.tags).forEach(function (k) { if (p.tags[k] === null || p.tags[k] === '') delete tags[k]; });
+      if (U().canon(value) === U().canon(b.value) && U().canon(tags) === U().canon(b.tags)) return;
+      var nb = touch(b, ctx, { value: value, tags: tags, review: 'draft' }, true);
+      nb.history = (b.history || []).concat([{ ver: nb.ver, value: U().clone(value), tags: U().clone(tags), by: by, tick: ctx.tick, note: cleanNote(p.note) }]).slice(-30);
+      putContent(world, 'blocks', nb);
+      // Every message that uses the block moves to a new version; live variants keep what they were published with
+      // and show "newer version available" until someone publishes again.
+      KC().messagesUsing(world, p.id).forEach(function (m) {
+        var nm = touch(m, ctx, {}, true);
+        nm.history = (m.history || []).concat([{ ver: nm.ver, kind: 'block', blockId: p.id, by: by, tick: ctx.tick, note: cleanNote(p.note) }]).slice(-30);
+        putContent(world, 'messages', nm);
+      });
+    },
+    inverse: function (world, p) {
+      var b = cblock(world, p.id);
+      if (!b) return [];
+      var inv = { id: p.id };
+      if (p.value !== undefined) inv.value = U().clone(b.value);
+      if (p.tags !== undefined) { inv.tags = {}; ['angle', 'tone', 'product', 'offerType', 'season'].forEach(function (k) { inv.tags[k] = b.tags[k] === undefined ? null : b.tags[k]; }); }
+      return [{ type: 'block/update', payload: inv }];
+    },
+    describe: function (world, p) {
+      var n = KC().usedCount(world, p.id);
+      return 'You edited ' + bname(world, p.id) + (n > 1 ? ', used in ' + n + ' messages' : '');
+    }
+  });
+
+  function reviewAction(type, ent, getter, label) {
+    C.define(type, {
+      by: ['user'],
+      label: 'Change review state',
+      entity: function (p) { return feedEntity(ent, p.id); },
+      validate: function (world, p, ctx) {
+        var x = getter(world, p.id);
+        if (!x) return 'That ' + label + ' no longer exists.';
+        if (REVIEWS.indexOf(p.review) < 0) return 'Unknown review state.';
+        if (x.retired || x.archived) return 'Retired ' + label + 's can’t be reviewed.';
+        if (x.review === p.review) return 'This ' + label + ' is already ' + p.review.replace('_', ' ') + '.';
+        var e;
+        if (p.review === 'approved' || p.review === 'changes') { e = roleErr(ctx, 'copy', 'approve or return content'); if (e) return e; }
+        else { e = roleErr(ctx, 'submit', 'change review state'); if (e) return e; }
+        if (p.note !== undefined && p.note !== null && typeof p.note !== 'string') return 'The note must be text.';
+        if (type === 'message/setReview' && p.review === 'approved') {
+          var ids = KC().blockIdsOf(x);
+          for (var i = 0; i < ids.length; i++) {
+            var b = cblock(world, ids[i]);
+            if (!blockUsable(b)) return 'A block in this message is retired. Swap it out first.';
+            if (b.review !== 'approved') return 'Approve every block first: ' + bname(world, b.id) + ' is ' + b.review.replace('_', ' ') + '.';
+          }
+        }
+        return null;
+      },
+      reduce: function (world, p, ctx) {
+        var x = getter(world, p.id), nx = touch(x, ctx, { review: p.review }, false);
+        nx.history = (x.history || []).concat([{ ver: x.ver, kind: 'review', review: p.review, by: ctx.by || 'user', tick: ctx.tick, note: cleanNote(p.note) }]).slice(-30);
+        putContent(world, ent === 'block' ? 'blocks' : 'messages', nx);
+      },
+      inverse: function () { return []; },
+      describe: function (world, p) {
+        var n = ent === 'block' ? bname(world, p.id) : mname(world, p.id);
+        if (p.review === 'approved') return 'You approved ' + n;
+        if (p.review === 'in_review') return 'You sent ' + n + ' to review';
+        if (p.review === 'changes') return 'You asked for changes to ' + n;
+        return 'You moved ' + n + ' back to draft';
+      }
+    });
+  }
+  reviewAction('block/setReview', 'block', cblock, 'block');
+  reviewAction('message/setReview', 'message', cmsg, 'message');
+
+  C.define('block/archive', {
+    by: ['user', 'agent:*'],
+    label: 'Archive block',
+    entity: function (p) { return feedEntity('block', p.id); },
+    validate: function (world, p) {
+      var b = cblock(world, p.id);
+      if (!b) return 'That block no longer exists.';
+      var archive = p.archived !== false;
+      if (!!b.archived === archive) return archive ? 'This block is already archived.' : 'This block isn’t archived.';
+      if (archive && KC().usedCount(world, p.id) > 0) return 'This block is used in ' + KC().usedCount(world, p.id) + ' messages. Retire it and swap it out first.';
+      return null;
+    },
+    reduce: function (world, p, ctx) { putContent(world, 'blocks', touch(cblock(world, p.id), ctx, { archived: p.archived !== false }, false)); },
+    inverse: function (world, p) { var b = cblock(world, p.id); return b ? [{ type: 'block/archive', payload: { id: p.id, archived: !!b.archived } }] : []; },
+    describe: function (world, p) { return 'You ' + (p.archived === false ? 'restored ' : 'archived ') + bname(world, p.id); }
+  });
+
+  // Stops new use of a block. Messages that already use it keep working; the team swaps it out through normal proposals.
+  C.define('block/retire', {
+    by: ['user', 'agent:*'],
+    label: 'Retire block',
+    entity: function (p) { return feedEntity('block', p.id); },
+    validate: function (world, p) {
+      var b = cblock(world, p.id);
+      if (!b) return 'That block no longer exists.';
+      if (b.retired) return 'This block is already retired.';
+      if (p.reason !== undefined && p.reason !== null && typeof p.reason !== 'string') return 'The reason must be text.';
+      return null;
+    },
+    reduce: function (world, p, ctx) {
+      var b = cblock(world, p.id);
+      var nb = touch(b, ctx, { retired: { tick: ctx.tick, by: actorOf(ctx), reason: cleanNote(p.reason) } }, false);
+      nb.history = (b.history || []).concat([{ ver: b.ver, kind: 'retire', by: actorOf(ctx), tick: ctx.tick, note: cleanNote(p.reason) }]).slice(-30);
+      putContent(world, 'blocks', nb);
+      ctx.info = { placements: KC().usedCount(world, p.id) };
+    },
+    inverse: function () { return []; },
+    describe: function (world, p) {
+      var n = KC().usedCount(world, p.id);
+      return 'You retired ' + bname(world, p.id) + (n ? ' (still used in ' + n + (n === 1 ? ' message)' : ' messages)') : '');
+    }
+  });
+
+  C.define('message/create', {
+    by: ['user', 'agent:*'],
+    label: 'Add message',
+    entity: function (p, created) { return feedEntity('message', created && created[0]); },
+    validate: function (world, p) {
+      var m = p.message;
+      if (!isObj(m)) return 'Missing message.';
+      if (typeof m.name !== 'string' || !m.name.trim()) return 'Give the message a name.';
+      if (m.name.length > 80) return 'Message names are limited to 80 characters.';
+      var e = slotsErr(world, m.slots, true) || overridesErr(world, m.channelOverrides) || KC().tagsError(m.tags);
+      return e;
+    },
+    reduce: function (world, p, ctx) {
+      var m = p.message, id = 'msg-' + nextSeq(world), by = actorOf(ctx);
+      ctx.created.push(id);
+      var slots = {};
+      KC().SLOTS.forEach(function (s) {
+        if (s === 'claims') slots.claims = (m.slots.claims || []).slice();
+        else if (m.slots[s]) slots[s] = m.slots[s];
+      });
+      var co = {};
+      sortedKeys(m.channelOverrides || {}).forEach(function (ch) { co[ch] = assign({}, m.channelOverrides[ch]); });
+      putContent(world, 'messages', {
+        id: id, name: m.name.trim(), slots: slots, channelOverrides: co, tags: cleanTags(m.tags), ver: 1,
+        review: ctx.agent ? 'in_review' : 'draft', author: by, createdTick: ctx.tick, updatedBy: ctx.origin, updatedTick: ctx.tick,
+        history: [{ ver: 1, kind: 'create', by: by, tick: ctx.tick, note: cleanNote(p.note) }]
+      });
+    },
+    inverse: function () { return []; },
+    describe: function (world, p) { return 'You created the message “' + ((p.message && p.message.name) || '') + '”'; }
+  });
+
+  function messageEdit(m, ctx, patch, entry) {
+    var nm = touch(m, ctx, assign({ review: ctx.agent ? 'in_review' : 'draft' }, patch), true);
+    nm.history = (m.history || []).concat([assign({ ver: nm.ver, by: actorOf(ctx), tick: ctx.tick }, entry)]).slice(-30);
+    return nm;
+  }
+
+  C.define('message/update', {
+    by: ['user'],
+    label: 'Edit message',
+    entity: function (p) { return feedEntity('message', p.id); },
+    validate: function (world, p) {
+      var m = cmsg(world, p.id);
+      if (!m) return 'That message no longer exists.';
+      if (p.name === undefined && p.tags === undefined) return 'Nothing to change.';
+      if (p.name !== undefined && (typeof p.name !== 'string' || !p.name.trim() || p.name.length > 80)) return 'Give the message a name up to 80 characters.';
+      return KC().tagsError(p.tags);
+    },
+    reduce: function (world, p, ctx) {
+      var m = cmsg(world, p.id), patch = {};
+      if (p.name !== undefined) patch.name = p.name.trim();
+      if (p.tags !== undefined) { patch.tags = assign({}, m.tags, cleanTags(p.tags)); sortedKeys(p.tags).forEach(function (k) { if (p.tags[k] === null || p.tags[k] === '') delete patch.tags[k]; }); }
+      putContent(world, 'messages', messageEdit(m, ctx, patch, { kind: 'edit', note: cleanNote(p.note) }));
+    },
+    inverse: function (world, p) {
+      var m = cmsg(world, p.id);
+      if (!m) return [];
+      var inv = { id: p.id };
+      if (p.name !== undefined) inv.name = m.name;
+      if (p.tags !== undefined) { inv.tags = {}; ['angle', 'tone', 'product', 'offerType', 'season'].forEach(function (k) { inv.tags[k] = m.tags[k] === undefined ? null : m.tags[k]; }); }
+      return [{ type: 'message/update', payload: inv }];
+    },
+    describe: function (world, p) { return 'You edited the message ' + mname(world, p.id); }
+  });
+
+  C.define('message/setSlot', {
+    by: ['user', 'agent:*'],
+    label: 'Change a block in a message',
+    entity: function (p) { return feedEntity('message', p.id); },
+    validate: function (world, p) {
+      var m = cmsg(world, p.id);
+      if (!m) return 'That message no longer exists.';
+      var K = KC();
+      if (K.SLOTS.indexOf(p.slot) < 0) return 'Unknown slot.';
+      var next = assign({}, m.slots);
+      if (p.slot === 'claims') {
+        if (!Array.isArray(p.blockIds)) return 'Claims must be a list.';
+        next.claims = p.blockIds.slice();
+      } else {
+        if (!p.blockId) { if (K.REQUIRED.indexOf(p.slot) >= 0) return 'A message needs a ' + p.slot + '.'; delete next[p.slot]; }
+        else next[p.slot] = p.blockId;
+      }
+      // only the slot being changed must be live: older placements may include retired blocks
+      var only = {}; only[p.slot] = next[p.slot]; if (p.slot === 'claims') only.claims = next.claims;
+      var e = (p.blockId || p.slot === 'claims') ? slotsErr(world, only, false) : null;
+      if (e) return e;
+      if (p.slot !== 'claims' && (m.slots[p.slot] || null) === (p.blockId || null)) return 'That block is already there.';
+      return null;
+    },
+    reduce: function (world, p, ctx) {
+      var m = cmsg(world, p.id), slots = assign({}, m.slots);
+      if (p.slot === 'claims') slots.claims = p.blockIds.slice();
+      else if (!p.blockId) delete slots[p.slot];
+      else slots[p.slot] = p.blockId;
+      putContent(world, 'messages', messageEdit(m, ctx, { slots: slots }, { kind: 'slot', slot: p.slot, blockId: p.blockId || null }));
+    },
+    inverse: function (world, p) {
+      var m = cmsg(world, p.id);
+      if (!m) return [];
+      if (p.slot === 'claims') return [{ type: 'message/setSlot', payload: { id: p.id, slot: 'claims', blockIds: (m.slots.claims || []).slice() } }];
+      return [{ type: 'message/setSlot', payload: { id: p.id, slot: p.slot, blockId: m.slots[p.slot] || null } }];
+    },
+    describe: function (world, p) { return 'You changed the ' + p.slot + ' of ' + mname(world, p.id); }
+  });
+
+  C.define('message/setOverride', {
+    by: ['user', 'agent:*'],
+    label: 'Set a channel version',
+    entity: function (p) { return feedEntity('message', p.id); },
+    validate: function (world, p) {
+      var m = cmsg(world, p.id);
+      if (!m) return 'That message no longer exists.';
+      if (CH().ALL.indexOf(p.channel) < 0) return 'Unknown channel.';
+      if (!p.blockId) return null;
+      var co = {}; co[p.channel] = {}; co[p.channel][p.slot] = p.blockId;
+      return overridesErr(world, co);
+    },
+    reduce: function (world, p, ctx) {
+      var m = cmsg(world, p.id), co = {};
+      sortedKeys(m.channelOverrides || {}).forEach(function (ch) { co[ch] = assign({}, m.channelOverrides[ch]); });
+      co[p.channel] = co[p.channel] || {};
+      if (p.blockId) co[p.channel][p.slot] = p.blockId; else delete co[p.channel][p.slot];
+      if (!sortedKeys(co[p.channel]).length) delete co[p.channel];
+      putContent(world, 'messages', messageEdit(m, ctx, { channelOverrides: co }, { kind: 'override', channel: p.channel, slot: p.slot, blockId: p.blockId || null }));
+    },
+    inverse: function (world, p) {
+      var m = cmsg(world, p.id), o = m && m.channelOverrides && m.channelOverrides[p.channel];
+      return m ? [{ type: 'message/setOverride', payload: { id: p.id, channel: p.channel, slot: p.slot, blockId: (o && o[p.slot]) || null } }] : [];
+    },
+    describe: function (world, p) { return 'You set a ' + chLabel(p.channel) + ' version of the ' + p.slot + ' in ' + mname(world, p.id); }
+  });
+
+  // Renders a message for each channel of a campaign and writes the variants. A person's publish updates the variant
+  // already made from this message in place (and retires nothing); an agent's publish only ever adds new variants, in review.
+  function publishErr(world, p, ctx) {
+    var m = cmsg(world, p.id);
+    if (!m) return 'That message no longer exists.';
+    var e = campErr(world, p.campaignId, ctx); if (e) return e;
+    var c = camp(world, p.campaignId);
+    if (!Array.isArray(p.channels) || !p.channels.length) return 'Pick at least one channel.';
+    for (var i = 0; i < p.channels.length; i++) {
+      if (c.channels.indexOf(p.channels[i]) < 0) return 'This campaign doesn’t use ' + chLabel(p.channels[i]) + '.';
+      if (p.channels.indexOf(p.channels[i]) !== i) return 'Each channel can appear once.';
+    }
+    if (ctx.user && m.review !== 'approved') return 'Approve the message before publishing it.';
+    var ids = KC().blockIdsOf(m);
+    for (var k = 0; k < ids.length; k++) {
+      var pb = cblock(world, ids[k]);
+      if (!blockUsable(pb)) return 'A block in this message is retired. Swap it out first.';
+      if (ctx.user && pb.review !== 'approved') return 'Approve ' + bname(world, pb.id) + ' first; it is ' + pb.review.replace('_', ' ') + '.';
+    }
+    if (p.share !== undefined && p.share !== null && !(isNum(p.share) && p.share >= 0 && p.share < 1)) return 'Share must be between 0 and 1.';
+    for (var j = 0; j < p.channels.length; j++) {
+      var r = KC().render(world, p.id, p.channels[j], { campaignId: p.campaignId });
+      if (r.error) return r.error;
+      var bad = KC().failing(r)[0];
+      if (bad) return chLabel(p.channels[j]) + ' version: ' + bad.label.toLowerCase() + '. ' + bad.detail;
+    }
+    return null;
+  }
+
+  C.define('message/publish', {
+    by: ['user', 'agent:*'],
+    label: 'Publish message',
+    entity: function (p) { return feedEntity('message', p.id); },
+    validate: function (world, p, ctx) { return publishErr(world, p, ctx); },
+    reduce: function (world, p, ctx) {
+      var m = cmsg(world, p.id), c = camp(world, p.campaignId), by = actorOf(ctx);
+      var updated = [];
+      p.channels.forEach(function (ch) {
+        var r = KC().render(world, p.id, ch, { campaignId: p.campaignId });
+        var pin = r.blocksUsed.map(function (id) { return { id: id, ver: r.blockVers[id] }; });
+        var cur = ctx.user ? KC().variantFor(world, p.id, p.campaignId, ch) : null;
+        c = camp(world, p.campaignId);
+        if (cur) {
+          var nv = stamp(cur, ctx, { fields: U().clone(r.fields), tone: r.tone, offer: r.offer, productId: r.productId,
+            messageId: m.id, renderedVer: m.ver, blocks: pin });
+          nv.history = (cur.history || []).concat([{ kind: 'publish', by: by, tick: ctx.tick, note: 'Message version ' + m.ver, fields: U().clone(r.fields) }]).slice(-30);
+          nv.predicted = scoreVariant(nv);
+          putVariant(world, nv); setLatent(world, nv);
+          updated.push(nv.id);
+          return;
+        }
+        var vid = 'v-' + nextSeq(world);
+        ctx.created.push(vid);
+        var used = {};
+        variantsOf(world, c.id, ch).forEach(function (x) { used[x.channel + ':' + x.name] = true; });
+        var src = { campaignId: c.id, channel: ch, fields: r.fields, tone: r.tone, offer: r.offer, productId: r.productId,
+          review: m.review === 'approved' ? 'approved' : 'draft' };
+        if (ctx.agent) src.status = 'live';
+        var v = buildVariant(world, src, c, vid, ctx, false, used);
+        v.messageId = m.id; v.renderedVer = m.ver; v.blocks = pin;
+        if (!ctx.user) v.ctlStatus = 'draft';
+        putVariant(world, v); setLatent(world, v);
+        var share = isNum(p.share) ? p.share : 0, takes = v.status === 'live' || c.status === 'draft';
+        if (v.review !== 'approved' && c.status !== 'draft') {
+          takes = false;
+          if (share > 0) putVariant(world, assign({}, variant(world, vid), { pendingShare: share }));
+        }
+        var patch = {};
+        if (takes && (share > 0 || !(allocSum(c.alloc[ch]) > 0))) { var al = assign({}, c.alloc); al[ch] = addShare(c.alloc[ch], vid, share); patch.alloc = al; }
+        if (ctx.user && takes && (v.ctlStatus === 'live' || c.status === 'draft') && (share > 0 || !(allocSum(c.ctl.alloc[ch]) > 0))) {
+          var ca = assign({}, c.ctl.alloc); ca[ch] = addShare(c.ctl.alloc[ch], vid, share); patch.ctl = assign({}, c.ctl, { alloc: ca });
+        }
+        if (Object.keys(patch).length) putCampaign(world, stamp(c, ctx, patch));
+      });
+      ctx.info = { created: ctx.created.slice(), updated: updated };
+    },
+    inverse: function (world, p, ctx) {
+      // new variants are retired again; variants updated in place are not rolled back
+      var inv = [], k = 0;
+      (p.channels || []).forEach(function (ch) {
+        if (!(ctx && ctx.user) || !KC().variantFor(world, p.id, p.campaignId, ch)) inv.push({ type: 'variant/setStatus', payload: { id: '$created:' + (k++), status: 'retired' } });
+      });
+      return inv;
+    },
+    describe: function (world, p) {
+      var n = (p.channels || []).length;
+      return 'You published ' + mname(world, p.id) + ' to “' + cname(world, p.campaignId) + '” (' + n + (n === 1 ? ' channel)' : ' channels)');
+    }
+  });
+
   /* ================= Haiku agent fleet (§12.5) ================= */
   // Logged world fact: whether agent runs wait for the fleet's verdict. Dispatched by MC.ai.fleet when the
   // connection state changes; turning it off completes every waiting run with its rule-based drafts.
@@ -1817,4 +2275,26 @@
     inverse: function () { return []; },
     describe: function () { return 'You dismissed an insight'; }
   });
+  /* ================= missions (docs/AGENTIC.md) =================
+     State lives in world.missions {byId, order}. Logic is in MC.missions (js/core/missions.js) and MC.lead; these are the
+     typed, validated entry points. User actions are logged and replayed; the engine applies the same actions with origin
+     'mission' as deterministic consequences of ticks. */
+  function missionsLib() { return MC.missions; }
+  function missionAction(name, label, byList, describe) {
+    C.define('mission/' + name, {
+      by: byList,
+      label: label,
+      entity: function (p, created) { return feedEntity('mission', (created && created[0]) || p.id); },
+      validate: function (world, p, ctx) { var M = missionsLib(); return M ? M.validate(name, world, p || {}, ctx) : 'Missions aren’t available.'; },
+      reduce: function (world, p, ctx) { return missionsLib().reduce(name, world, p, ctx); },
+      inverse: function () { return []; },
+      describe: describe
+    });
+  }
+  missionAction('create', 'Start a mission', ['user'], function (world, p) { return 'You started a mission: ' + String(p.goalText || '').slice(0, 80); });
+  missionAction('step', 'Update a mission step', ['user', 'mission'], function () { return 'A mission step changed'; });
+  missionAction('ask', 'Ask the marketer', ['user', 'mission'], function () { return 'A mission asked a question'; });
+  missionAction('answer', 'Answer a mission question', ['user'], function () { return 'You answered a mission question'; });
+  missionAction('steer', 'Steer a mission', ['user'], function (world, p) { return 'You steered a mission: ' + String(p.text || '').slice(0, 80); });
+  missionAction('setStatus', 'Change mission status', ['user', 'mission'], function (world, p) { return 'You changed a mission to ' + p.status; });
 })();

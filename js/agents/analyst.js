@@ -163,6 +163,54 @@
     };
   }
 
+  /* ---------------- content insights ---------------- */
+  var ANGLE_WORD = { 'trail-season': 'trail-season', warmth: 'warmth', gifting: 'gifting', urgency: 'urgency', utility: 'practical', neutral: 'neutral' };
+  var NOUN = { open: 'opens', click: 'clicks', conv: 'orders' };
+  function capFirst(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
+  function chWord(ch) { return ch === 'sms' ? 'SMS' : (MC.CH.LABEL[ch] || ch).toLowerCase(); }
+  function joinList(a) { return a.length <= 1 ? a.join('') : a.slice(0, -1).join(', ') + ' and ' + a[a.length - 1]; }
+  function span(c) { return pct(c.lo, 0) + ' to ' + pct(c.hi, 0); }
+  function recentInsight(world, key, t) {
+    var list = world.insights || [];
+    for (var i = 0; i < list.length; i++) if (list[i].key === key && t - list[i].tick < 168) return true;
+    return false;
+  }
+  function contentInsights(world, t) {
+    var out = { insights: [], rows: [] }, S = MC.select;
+    if (!S || !S.contentRecommendations) return out;
+    var recs = S.contentRecommendations(world), wins = recs.filter(function (r) { return r.kind === 'angle-winner'; });
+    var thin = recs.filter(function (r) { return r.kind === 'needs-data'; }).map(function (r) { return r.channel; });
+    var flat = recs.filter(function (r) { return r.kind === 'angle-flat'; }).map(function (r) { return r.channel; });
+    var groups = {}, order = [];
+    wins.forEach(function (r) { var k = r.best.angle + '|' + r.worst.angle; if (!groups[k]) { groups[k] = []; order.push(k); } groups[k].push(r); });
+    order.sort(function (a, b) {
+      var la = Math.max.apply(null, groups[a].map(function (r) { return r.contrast.lo; })), lb = Math.max.apply(null, groups[b].map(function (r) { return r.contrast.lo; }));
+      return (lb - la) || (a < b ? -1 : 1);
+    });
+    order.slice(0, 2).forEach(function (k, idx) {
+      var rs = groups[k], r0 = rs[0], best = ANGLE_WORD[r0.best.angle] || r0.best.angle, worst = ANGLE_WORD[r0.worst.angle] || r0.worst.angle;
+      var parts = rs.map(function (r, i) {
+        return (i === 0 ? 'beat ' + worst + ' by ' : 'by ') + pct(r.contrast.value, 0) + ' on ' + chWord(r.channel) + ' ' + NOUN[r.metric] + ' (' + span(r.contrast) + ')';
+      });
+      var title = capFirst(best) + ' headlines ' + parts.join(' and ');
+      var rest = [];
+      var others = thin.filter(function (ch) { return rs.every(function (r) { return r.channel !== ch; }); });
+      if (others.length) rest.push(joinList(others.map(function (ch) { return ch === 'sms' ? 'SMS' : chWord(ch); })) + (others.length === 1 ? ' doesn\u2019t' : ' don\u2019t') + ' have enough data yet');
+      var flats = flat.filter(function (ch) { return rs.every(function (r) { return r.channel !== ch; }); });
+      if (flats.length) rest.push('no clear difference on ' + joinList(flats.map(chWord)));
+      var delivered = rs.reduce(function (s, r) { return s + r.best.delivered + r.worst.delivered; }, 0);
+      var key = 'content|angle|' + k + '|' + rs.map(function (r) { return r.channel; }).sort().join(',');
+      var row = { finding: title, 'based on': num(delivered) + ' delivered', result: '' };
+      out.rows.push(row);
+      if (recentInsight(world, key, t)) { row.result = 'Already reported this week'; return; }
+      row.result = 'Published';
+      out.insights.push({ kind: 'content', severity: 'info', key: key, title: title,
+        body: 'Measured per delivery with 95% intervals from ' + num(delivered) + ' sends of these headlines' + (rest.length ? '; ' + rest.join('; ') : '') + '. The ledger counts every block in every message it runs in, so this holds across campaigns.' });
+    });
+    if (!order.length) out.rows.push({ finding: 'No headline angle clearly ahead on any channel', 'based on': thin.length ? joinList(thin.map(chWord)) + ' too thin' : '', result: 'Nothing to report' });
+    return out;
+  }
+
   /* ---------------- decide ---------------- */
   function decide(obs, ctx) {
     var p = ctx.params, t = ctx.tick, world = ctx.world, today = obs.day, yday = today - 1;
@@ -253,12 +301,16 @@
       });
       trace.push({ step: 'decide', text: roi ? 'Ranked segments by their return on ' + roi + (roi === 1 ? ' campaign.' : ' campaigns.') : 'No segment stood out on return this week.' });
     }
+    // 4. What the content is teaching: headline angles by channel, with intervals.
+    var ci = contentInsights(world, t);
+    ci.insights.forEach(function (x) { insights.push(x); });
+    if (ci.rows.length) trace.push({ step: 'decide', text: ci.insights.length ? 'Compared headline angles on every channel from the content ledger.' : 'Compared headline angles on every channel; nothing new to report.', rows: ci.rows });
     if (!insights.length && !proposals.length) trace.push({ step: 'decide', text: 'Nothing unusual and every goal looks reachable.' });
     return { proposals: proposals, insights: insights, trace: trace };
   }
 
   MC.runtime.register({
-    id: ID, name: 'Insight Analyst', short: 'Watches the numbers, flags surprises, and warns when a goal is at risk.', icon: 'trend', order: 5,
+    id: ID, name: 'Insight Analyst', short: 'Watches the numbers, flags surprises, reports which words work, and warns when a goal is at risk.', icon: 'trend', order: 5,
     cadence: { 'default': 6, min: 1, max: 24, phase: 4 },
     autonomy: { 'default': 'suggest', allowed: ['off', 'suggest', 'autopilot'] },
     autopilotMaxRisk: 'low',

@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Studio · Fernway Marketing Cloud</title>
+<link rel="stylesheet" href="studio.css">
+</head>
+<body>
+<div class="app">
+
+  <section class="chat" aria-label="Conversation with the lead strategist">
+    <header class="chat-head">
+      <svg class="mark" width="26" height="26" viewBox="0 0 26 26" aria-hidden="true"><rect width="26" height="26" rx="6" fill="#E3E8DF"/><path d="M3 20 9.5 8l4 7 2.5-4L23 20Z" fill="#14291F"/></svg>
+      <div class="brand"><b>Fernway Outfitters</b><span>Studio · Thu Nov 26</span></div>
+    </header>
+    <div class="thread" id="thread" role="log" aria-label="Conversation"></div>
+    <div class="composer" aria-hidden="true">
+      <div class="composer-text" id="composerText"><span class="ph">Give the team a goal</span></div>
+      <div class="send" id="sendBtn"><svg width="16" height="16" viewBox="0 0 16 16"><path d="M8 13V3M3.5 7.5 8 3l4.5 4.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+    </div>
+  </section>
+
+  <section class="stage" aria-label="Campaign canvas">
+    <div class="viewport" id="viewport">
+      <div class="world" id="world" style="width:1060px;height:830px">
+
+        <div class="goalbar" id="goalbar">
+          <span class="goal-tag">Goal</span>
+          <span class="goal-text" id="goalText"></span>
+          <span class="presence" id="presence" aria-hidden="true"></span>
+        </div>
+
+        <!-- Audience -->
+        <div class="frame" id="fA" style="left:20px;top:74px;width:310px;height:400px">
+          <div class="flabel"><span>Audience</span><i class="fown" id="ownA"></i></div>
+          <div class="fbody">
+            <div class="a-head"><div><b>Lapsed hikers</b><span>No order in 120 days</span></div><output class="a-count" id="aCount">0</output></div>
+            <div class="dots-wrap">
+              <canvas id="dots" width="580" height="440"></canvas>
+              <svg class="lasso" id="lassoSvg" viewBox="0 0 290 220"><polygon id="lassoFill" points=""/><polyline id="lassoLine" points=""/></svg>
+            </div>
+            <div class="roster" id="roster">
+              <div class="r-head"><span>Messaged 5+ times in 14 days</span><output id="fgCount">0 paused</output></div>
+              <div class="r-row"><span>Maya R.</span><em>6 messages</em><i class="strike"></i></div>
+              <div class="r-row"><span>Owen T.</span><em>5 messages</em><i class="strike"></i></div>
+              <div class="r-row"><span>Lena P.</span><em>7 messages</em><i class="strike"></i></div>
+              <div class="r-row"><span>Dev K.</span><em>5 messages</em><i class="strike"></i></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Email -->
+        <div class="frame" id="fE" style="left:370px;top:74px;width:330px;height:400px">
+          <div class="flabel"><span>Email</span><i class="fown" id="ownE"></i></div>
+          <div class="fbody">
+            <div class="subjects" id="subjects">
+              <div class="sj"><b>A</b><span class="sj-t" id="sjA"></span><u><i></i></u><em>0%</em></div>
+              <div class="sj"><b>B</b><span class="sj-t" id="sjB"></span><u><i></i></u><em>0%</em></div>
+              <div class="sj"><b>C</b><span class="sj-t" id="sjC"></span><u><i></i></u><em>0%</em></div>
+              <div class="sj-note" id="sjNote">Best subject takes the rest after 150 opens</div>
+            </div>
+            <div class="mail" id="mail">
+              <div class="m-bar"><b>FERNWAY</b><span>Outfitters</span></div>
+              <svg class="m-hero" viewBox="0 0 306 84" preserveAspectRatio="none" aria-hidden="true">
+                <rect width="306" height="84" fill="#DCE5DA"/><circle cx="228" cy="26" r="13" fill="#F1D9AB"/>
+                <path d="M0 62 48 34l30 22 40-30 52 36 40-24 96 38v10H0Z" fill="#A9BFAC"/>
+                <path d="M0 74 40 52l36 18 56-34 44 30 40-18 90 36v-2H0Z" fill="#5F8268"/>
+                <path d="M0 84V72l52-14 60 12 70-16 60 14 64-6v22Z" fill="#2F5543"/>
+              </svg>
+              <div class="chip" id="chip"><b id="chipPct">15%</b><span>off layers<br>through Dec 15</span></div>
+              <h4 class="m-h" id="mHead"></h4>
+              <p class="m-p" id="mBody"></p>
+              <div class="m-cta" id="mCta">Shop warm layers</div>
+              <div class="sel" id="chipSel" aria-hidden="true"><i></i><i></i><i></i><i></i><span></span></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Budget -->
+        <div class="frame" id="fB" style="left:720px;top:74px;width:320px;height:250px">
+          <div class="flabel"><span>Budget</span><i class="fown" id="ownB"></i></div>
+          <div class="fbody">
+            <div class="b-head"><b>$2,400</b><span>to spend by Dec 15</span></div>
+            <div class="bar" id="bar">
+              <i class="seg s1"></i><i class="seg s2"></i><i class="seg s3"></i><i class="seg s4"></i>
+              <i class="knob" id="k1"></i><i class="knob" id="k2"></i><i class="knob" id="k3"></i>
+            </div>
+            <ul class="b-rows">
+              <li><i class="sw s1"></i><span>Email</span><output id="v1">$600</output><em id="p1">25%</em></li>
+              <li><i class="sw s2"></i><span>SMS</span><output id="v2">$600</output><em id="p2">25%</em></li>
+              <li><i class="sw s3"></i><span>Social ads</span><output id="v3">$600</output><em id="p3">25%</em></li>
+              <li><i class="sw s4"></i><span>Web ads</span><output id="v4">$600</output><em id="p4">25%</em></li>
+            </ul>
+            <div class="b-foot" id="bFoot">Even pace, about $126 a day</div>
+          </div>
+        </div>
+
+        <!-- Live board -->
+        <div class="frame" id="fL" style="left:720px;top:364px;width:320px;height:446px">
+          <div class="flabel"><span>Campaign board</span><i class="fown" id="ownL"></i></div>
+          <div class="fbody">
+            <div class="l-head"><b>Win-back to Dec 15</b><span class="status" id="status"><i></i><em id="statusT">Draft</em></span></div>
+            <div class="l-reach"><output id="lReach">0</output><span>of 400 hikers reached</span></div>
+            <dl class="l-trio">
+              <div><dt>Opened</dt><dd><output id="lOpen">0</output></dd></div>
+              <div><dt>Orders</dt><dd><output id="lOrd">0</output></dd></div>
+              <div><dt>Revenue</dt><dd><output id="lRev">$0</output></dd></div>
+            </dl>
+            <svg class="chart" id="chart" viewBox="0 0 296 112" role="img" aria-label="Orders against forecast range">
+              <g class="grid"><path d="M0 28H296M0 56H296M0 84H296"/></g>
+              <clipPath id="bandClip"><rect id="bandRect" x="0" y="0" width="0" height="112"/></clipPath>
+              <polygon id="band" clip-path="url(#bandClip)" points=""/>
+              <polyline id="bandHi" clip-path="url(#bandClip)" points=""/>
+              <polyline id="actual" points=""/>
+              <circle id="actualDot" r="4" cx="0" cy="112" opacity="0"/>
+              <text x="0" y="109" class="ax">Nov 26</text><text x="148" y="109" class="ax mid">Dec 5</text><text x="296" y="109" class="ax end">Dec 15</text>
+              <text x="294" y="12" class="ax end" id="fcLabel"></text>
+            </svg>
+            <ul class="feed" id="feed" aria-label="Latest orders"></ul>
+            <div class="l-foot"><div class="plan"><i class="base"></i><i class="add" id="planAdd"></i></div><span id="planT">November: $169.0k of $222k plan</span></div>
+          </div>
+        </div>
+
+        <!-- Journey -->
+        <div class="frame" id="fJ" style="left:20px;top:514px;width:680px;height:296px">
+          <div class="flabel"><span>Journey</span><i class="fown" id="ownJ"></i></div>
+          <div class="fbody">
+            <svg class="arrows" id="arrows" viewBox="0 0 680 296" aria-hidden="true">
+              <defs><marker id="ah" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1 9 5 1 9Z" fill="#14291F"/></marker></defs>
+              <path id="a12" d="M116 146H160"/><path id="a23" d="M264 146H308"/>
+              <path id="a34" d="M412 146C436 146 432 72 456 72"/><path id="a35" d="M412 146C436 146 432 220 456 220"/>
+              <path id="a46" d="M560 72C600 72 626 80 626 118"/><path id="a56" d="M560 220C600 220 626 212 626 174"/>
+            </svg>
+            <span class="alab" id="l34" style="left:366px;top:84px">opened</span>
+            <span class="alab" id="l35" style="left:352px;top:184px">not opened</span>
+            <div class="node" id="n1" style="left:12px;top:118px"><b>Lapsed hikers</b><span>414 people</span></div>
+            <div class="node" id="n2" style="left:160px;top:118px"><b>Email, day 0</b><span>15% off layers</span></div>
+            <div class="node q" id="n3" style="left:308px;top:118px"><b>Opened in 3 days?</b></div>
+            <div class="node" id="n4" style="left:456px;top:44px"><b>Email, day 4</b><span>Last call, 15%</span></div>
+            <div class="node" id="n5" style="left:456px;top:192px"><b>SMS, day 3</b><span>Short nudge</span></div>
+            <div class="node goal" id="n6" style="left:580px;top:118px"><b>First order</b><span>Exit journey</span></div>
+            <div class="note" id="noteT" style="--c:#0E7490;left:160px;top:196px"><span>Send at 6:40 pm in each person's time zone</span></div>
+            <div class="note" id="noteF" style="--c:#B91C1C;left:12px;top:196px"><span>Cap: 2 messages a week per person</span></div>
+          </div>
+        </div>
+
+        <div id="cursors"></div>
+      </div>
+    </div>
+
+    <div class="dock">
+      <div class="phases" id="phases" aria-hidden="true">
+        <i class="pbar"><b id="pfill"></b></i>
+        <span style="left:0%">Plan</span><span style="left:21%">Build</span><span style="left:58%">Your call</span><span style="left:71%">Finish</span><span style="left:87%">Live</span>
+      </div>
+      <div class="ctrls">
+        <button type="button" id="btnPause" aria-pressed="false">Pause</button>
+        <button type="button" id="btnReplay">Replay</button>
+        <button type="button" id="btnSkip">Skip to end</button>
+      </div>
+    </div>
+  </section>
+</div>
+
+<svg class="leader" id="leader" aria-hidden="true"><path id="leaderPath" d=""/><circle id="leaderEnd" r="7"/></svg>
+<div class="sr" id="live" aria-live="polite" role="status"></div>
+<script src="studio.js"></script>
+</body>
+</html>

@@ -1058,4 +1058,547 @@
       });
     });
   };
+
+  /* ---------------- content ----------------
+     whereUsed(w, blockId) -> { blockId, found, count, messages:[{id, name, ver, review, placements:[{slot, channel}], campaigns:[id]}],
+       campaigns:[{id, name, status, channels:[ch], variants:[variantId]}], channels:[ch], missions:[{id, title}],
+       variants:[{id, campaignId, channel, status, renderedVer, currentVer, newer}] }
+     A message is "used" by a block when the block is in one of its slots or channel overrides; campaigns, channels and variants
+     come from the variants published from those messages; missions are the ones that carry one of those campaigns. */
+  SEL.whereUsed = function (w, blockId) {
+    return memo('whereUsed', [w, w.content, w.variants, w.campaigns, w.missions], blockId, function () {
+      var K = MC.content, blk = K && K.block(w, blockId), out = { blockId: blockId, found: !!blk, count: 0, messages: [], campaigns: [], channels: [], missions: [], variants: [] };
+      if (!blk) return out;
+      var msgs = K.messagesUsing(w, blockId), mids = {}, cids = {}, chs = {};
+      msgs.forEach(function (m) { mids[m.id] = m; });
+      var byId = w.variants.byId, vids = sortedKeys(byId), perMsgCamp = {};
+      vids.forEach(function (id) {
+        var v = byId[id], m = v.messageId && mids[v.messageId];
+        if (!m) return;
+        // a channel override only matters on its own channel
+        var hit = K.placements(m, blockId).some(function (pl) { return !pl.channel || pl.channel === v.channel; });
+        if (!hit) return;
+        var st = K.variantState(w, v);
+        out.variants.push({ id: id, campaignId: v.campaignId, channel: v.channel, status: v.status, messageId: m.id, renderedVer: v.renderedVer, currentVer: st.currentVer, newer: !!st.newer });
+        var c = cids[v.campaignId] || (cids[v.campaignId] = { id: v.campaignId, name: (camp(w, v.campaignId) || {}).name || v.campaignId, status: (camp(w, v.campaignId) || {}).status, channels: [], variants: [] });
+        if (c.channels.indexOf(v.channel) < 0) c.channels.push(v.channel);
+        c.variants.push(id);
+        chs[v.channel] = true;
+        (perMsgCamp[m.id] = perMsgCamp[m.id] || {})[v.campaignId] = true;
+      });
+      out.messages = msgs.map(function (m) {
+        return { id: m.id, name: m.name, ver: m.ver, review: m.review, placements: K.placements(m, blockId), campaigns: sortedKeys(perMsgCamp[m.id] || {}) };
+      });
+      out.count = msgs.length;
+      out.campaigns = sortedKeys(cids).map(function (id) { cids[id].channels.sort(function (a, b) { return MC.CH.IDX[a] - MC.CH.IDX[b]; }); return cids[id]; });
+      out.channels = MC.CH.ALL.filter(function (ch) { return chs[ch]; });
+      var ms = w.missions;
+      if (ms) ms.order.forEach(function (id) {
+        var m = ms.byId[id], linked = (m.data && m.data.campaignId) || null;
+        var hit = out.campaigns.some(function (c) { return c.id === linked || (m.artifacts || []).some(function (a) { return a.kind === 'campaign' && a.id === c.id; }); });
+        if (hit) out.missions.push({ id: id, title: m.title });
+      });
+      return out;
+    });
+  };
+
+  /* ---------------- content intelligence (docs/CONTENT.md) ----------------
+     Everything here is read from the simulator's ledgers (world.content.perf by day, block and channel; world.content.fat by
+     exposure index; world.content.exp per person). Rates are per delivery with 95% Wilson intervals. Lift is the rate of a
+     group of blocks against the rest of the library of the same kind on the same channel (rate ratio, delta-method 95%
+     interval). When a group or its comparison is too thin the answer says so: lift is null, enough is false and `reason`
+     says what is missing. There is never a point estimate without its interval.
+       contentPerformance(w, {by, channel?, days?, kind?, metric?}) -> row[] (the array also carries .rows, .by, .channel, .baselines)
+         row = { by, key, label, kind, blockIds[], channel|null, sent, delivered, opens, clicks, conversions, revenue,
+                 rates:{open,click,conv} each {rate,lo,hi,k,n}, revPerSend:{value,lo,hi}, metric, lift:{value,lo,hi,metric,baseline}|null,
+                 enough, reason, trend:[{day,delivered,rate}], byChannel:{ch: cell} }
+       contentMatrix(w, {dim, days?}) -> { dim, channels[], rows:[{key, label, cells:{ch: cell}}] }
+       blockFatigue(w, blockId) -> { found, curve[], drop:{value,lo,hi}|null, enough, reason, tired, tiredSince, exposures }
+       contentRecommendations(w) -> [{id, kind, priority, title, summary, evidence[], blockIds[], channel?, ...}] */
+  var C_MIN_DELIV = 300, C_MIN_HITS = 15;
+  var C_LIFT_METRIC = { email: 'open', push: 'open', sms: 'click', social: 'click', web: 'click' };
+  var C_COL = { open: 2, click: 3, conv: 4 };
+  var C_NOUN = { open: 'opens', click: 'clicks', conv: 'orders' };
+  var C_RETIRABLE = { headline: 1, body: 1, cta: 1, image: 1, signoff: 1 };
+  SEL.CONTENT_MIN = { delivered: C_MIN_DELIV, hits: C_MIN_HITS };
+
+  function cvec() { return [0, 0, 0, 0, 0, 0]; }
+  function cadd(a, b) { for (var i = 0; i < 6; i++) a[i] += b[i]; return a; }
+  function csub(a, b) { var o = []; for (var i = 0; i < 6; i++) o.push(a[i] - b[i]); return o; }
+  function cr2(x) { return Math.round(x * 100) / 100; }
+  function chWord(ch) { return ch === 'sms' ? 'SMS' : (MC.CH.LABEL[ch] || ch).toLowerCase(); }
+  function chCap(ch) { return ch === 'sms' ? 'SMS' : (MC.CH.LABEL[ch] || ch); }
+  function clipc(s, n) { s = String(s || ''); return s.length > n ? s.slice(0, n - 1).replace(/\s+\S*$/, '') + '\u2026' : s; }
+  function cnum(x) { return MC.fmt.num(Math.round(x)); }
+  function crate(k, n) { var ci = MC.util.wilson(k, n); return { rate: n > 0 ? k / n : 0, lo: ci[0], hi: ci[1], k: k, n: n }; }
+  // Rate ratio of group 1 over group 0 as a change (value = ratio - 1) with a delta-method 95% interval.
+  function cratio(k1, n1, k0, n0) {
+    if (!(k1 > 0) || !(k0 > 0) || !(n1 > 0) || !(n0 > 0)) return null;
+    var lr = Math.log((k1 / n1) / (k0 / n0)), se = Math.sqrt(Math.max(0, 1 / k1 - 1 / n1 + 1 / k0 - 1 / n0));
+    return { value: Math.exp(lr) - 1, lo: Math.exp(lr - Z95 * se) - 1, hi: Math.exp(lr + Z95 * se) - 1 };
+  }
+  SEL.rateRatio = cratio;
+
+  // Ledger sums: out[blockId][channel] = { v: [sent, deliv, open, click, conv, rev], daily: {day: vec} }.
+  function cledger(w, days, channel) {
+    var P = (w.content && w.content.perf) || {}, t = today(w), out = {};
+    Object.keys(P).map(Number).sort(function (a, b) { return a - b; }).forEach(function (d) {
+      if (d > t || (days && d <= t - days)) return;
+      var day = P[d];
+      Object.keys(day).sort().forEach(function (bid) {
+        var b = day[bid];
+        Object.keys(b).sort().forEach(function (ch) {
+          if (channel && ch !== channel) return;
+          var o = out[bid] || (out[bid] = {}), c = o[ch] || (o[ch] = { v: cvec(), daily: {} });
+          cadd(c.v, b[ch]);
+          c.daily[d] = cadd(c.daily[d] || cvec(), b[ch]);
+        });
+      });
+    });
+    return out;
+  }
+  function cgroup(by, b) {
+    if (by === 'angle') return b.tags && b.tags.angle || 'neutral';
+    if (by === 'tone') return b.tags && b.tags.tone || 'untagged';
+    if (by === 'offerType') return (b.tags && b.tags.offerType) || (b.value && b.value.type) || 'none';
+    return b.id;
+  }
+  function cgroupKind(by, o) { return by === 'angle' || by === 'tone' ? 'headline' : (by === 'offerType' ? 'offer' : (by === 'image' ? 'image' : (o.kind || null))); }
+  function clabel(by, key, b) {
+    var K = MC.content, CP = MC.copy;
+    if (by === 'angle') return K.ANGLE_LABEL[key] || key;
+    if (by === 'tone') return (CP && CP.TONE_LABEL && CP.TONE_LABEL[key]) || key;
+    if (by === 'offerType') return (CP && CP.OFFER_LABEL && CP.OFFER_LABEL[key]) || key;
+    var t = K.textOf(b);
+    return t.length > 60 ? t.slice(0, 58).replace(/\s+\S*$/, '') + '…' : t;
+  }
+  function creason(ch, n1, k1, n0, k0, m) {
+    if (!(n1 > 0)) return 'Not sent on ' + chWord(ch) + ' yet.';
+    if (n1 < C_MIN_DELIV) return 'Only ' + cnum(n1) + ' delivered on ' + chWord(ch) + ' so far; needs about ' + C_MIN_DELIV + ' to compare.';
+    if (k1 < C_MIN_HITS) return 'Only ' + cnum(k1) + ' ' + C_NOUN[m] + ' on ' + chWord(ch) + ' so far; too few to compare.';
+    if (n0 < C_MIN_DELIV || k0 < C_MIN_HITS) return 'Not enough other content on ' + chWord(ch) + ' to compare with yet.';
+    return null;
+  }
+  function ccell(ch, g, rest, aov, metric) {
+    var m = metric || C_LIFT_METRIC[ch] || 'click', col = C_COL[m];
+    var n1 = g[1], k1 = g[col], n0 = rest ? rest[1] : 0, k0 = rest ? rest[col] : 0;
+    var cv = crate(g[4], g[0]), a = g[4] >= 5 ? g[5] / g[4] : aov;
+    var cell = { channel: ch, metric: m, sent: g[0], delivered: g[1], opens: g[2], clicks: g[3], conversions: g[4], revenue: cr2(g[5]),
+      rates: { open: crate(g[2], g[1]), click: crate(g[3], g[1]), conv: crate(g[4], g[1]) },
+      revPerSend: { value: g[0] > 0 ? g[5] / g[0] : 0, lo: cv.lo * (a || 0), hi: cv.hi * (a || 0) },
+      lift: null, enough: false, reason: null };
+    var why = creason(ch, n1, k1, n0, k0, m);
+    if (why) { cell.reason = why; return cell; }
+    var r = cratio(k1, n1, k0, n0);
+    if (!r) { cell.reason = 'No ' + C_NOUN[m] + ' to compare yet.'; return cell; }
+    cell.lift = { value: r.value, lo: r.lo, hi: r.hi, metric: m, baseline: crate(k0, n0) };
+    cell.enough = true;
+    return cell;
+  }
+
+  SEL.contentPerformance = function (w, o) {
+    o = o || {};
+    return memo('contentPerformance', [w, w.content, w.meta.tick], argKey(o), function () {
+      var K = MC.content, by = o.by || 'block', channel = o.channel || null, days = o.days > 0 ? o.days : 0;
+      var L = cledger(w, days, channel), t = today(w), kind = cgroupKind(by, o);
+      var groups = {}, order = [], kindTot = {}, chs = {};
+      Object.keys(L).sort().forEach(function (bid) {
+        var b = K.block(w, bid);
+        if (!b || (kind && b.kind !== kind)) return;
+        var key = cgroup(by, b), g = groups[key];
+        if (!g) { g = groups[key] = { key: key, label: clabel(by, key, b), kind: b.kind, blockIds: [], ch: {}, tags: by === 'block' || by === 'image' ? b.tags : null }; order.push(key); }
+        g.blockIds.push(bid);
+        var kt = kindTot[b.kind] || (kindTot[b.kind] = {});
+        Object.keys(L[bid]).forEach(function (ch) {
+          chs[ch] = true;
+          var c = L[bid][ch], gc = g.ch[ch] || (g.ch[ch] = { v: cvec(), daily: {} });
+          cadd(gc.v, c.v);
+          Object.keys(c.daily).forEach(function (d) { gc.daily[d] = cadd(gc.daily[d] || cvec(), c.daily[d]); });
+          cadd(kt[ch] || (kt[ch] = cvec()), c.v);
+        });
+      });
+      var chList = MC.CH.ALL.filter(function (ch) { return chs[ch]; });
+      var rows = order.map(function (key) {
+        var g = groups[key], tot = kindTot[g.kind] || {}, byCh = {}, sum = cvec(), obs = 0, exp = 0, k0s = 0, n1s = 0;
+        var trendDays = {};
+        chList.forEach(function (ch) {
+          if (!g.ch[ch]) return;
+          var v = g.ch[ch].v, rest = csub(tot[ch] || cvec(), v), aov = tot[ch] && tot[ch][4] > 0 ? tot[ch][5] / tot[ch][4] : 0;
+          var m = o.metric || C_LIFT_METRIC[ch] || 'click';
+          byCh[ch] = ccell(ch, v, rest, aov, o.metric);
+          cadd(sum, v);
+          if (rest[1] > 0) { obs += v[C_COL[m]]; exp += v[1] * rest[C_COL[m]] / rest[1]; k0s += rest[C_COL[m]]; }
+          n1s += v[1];
+          Object.keys(g.ch[ch].daily).forEach(function (d) {
+            var x = g.ch[ch].daily[d], td = trendDays[d] || (trendDays[d] = [0, 0]);
+            td[0] += x[1]; td[1] += x[C_COL[m]];
+          });
+        });
+        var row = { by: by, key: key, label: g.label, kind: g.kind, blockIds: g.blockIds.slice(), channel: channel, tags: g.tags,
+          sent: sum[0], delivered: sum[1], opens: sum[2], clicks: sum[3], conversions: sum[4], revenue: cr2(sum[5]), byChannel: byCh };
+        var cells = Object.keys(byCh);
+        if (channel && byCh[channel]) {
+          var c0 = byCh[channel];
+          row.rates = c0.rates; row.revPerSend = c0.revPerSend; row.metric = c0.metric; row.lift = c0.lift; row.enough = c0.enough; row.reason = c0.reason;
+        } else {
+          // across channels: opens only where opens mean something (not SMS); lift against each channel's own baseline
+          var po = cvec(), cnt = 0;
+          cells.forEach(function (ch) { if (ch !== 'sms') { po[1] += byCh[ch].delivered; po[2] += byCh[ch].opens; } });
+          row.rates = { open: crate(po[2], po[1]), click: crate(sum[3], sum[1]), conv: crate(sum[4], sum[1]) };
+          var cv = crate(sum[4], sum[0]), aov = sum[4] >= 5 ? sum[5] / sum[4] : 0;
+          row.revPerSend = { value: sum[0] > 0 ? sum[5] / sum[0] : 0, lo: cv.lo * aov, hi: cv.hi * aov };
+          row.metric = o.metric || 'engagement';
+          row.lift = null; row.enough = false;
+          if (!(n1s > 0)) row.reason = 'Not sent yet.';
+          else if (n1s < C_MIN_DELIV) row.reason = 'Only ' + cnum(n1s) + ' delivered so far; needs about ' + C_MIN_DELIV + ' to compare.';
+          else if (obs < C_MIN_HITS || k0s < C_MIN_HITS) row.reason = 'Too few ' + (o.metric ? C_NOUN[o.metric] : 'responses') + ' so far to compare.';
+          else {
+            // observed against what the rest of the library earns on the same channels
+            var lr = Math.log(obs / exp), se = Math.sqrt(1 / obs + 1 / k0s);
+            row.lift = { value: Math.exp(lr) - 1, lo: Math.exp(lr - Z95 * se) - 1, hi: Math.exp(lr + Z95 * se) - 1, metric: row.metric, baseline: null };
+            row.enough = isFinite(lr);
+          }
+        }
+        row.trend = Object.keys(trendDays).map(Number).sort(function (a, b) { return a - b; }).slice(-14).map(function (d) {
+          return { day: d, delivered: trendDays[d][0], rate: trendDays[d][0] > 0 ? trendDays[d][1] / trendDays[d][0] : 0 };
+        });
+        return row;
+      });
+      rows.sort(function (a, b) { return (b.delivered - a.delivered) || (a.key < b.key ? -1 : (a.key > b.key ? 1 : 0)); });
+      var baselines = {};
+      Object.keys(kindTot).sort().forEach(function (k) {
+        baselines[k] = {};
+        Object.keys(kindTot[k]).forEach(function (ch) { var v = kindTot[k][ch], m = o.metric || C_LIFT_METRIC[ch] || 'click'; baselines[k][ch] = { delivered: v[1], metric: m, rate: crate(v[C_COL[m]], v[1]) }; });
+      });
+      rows.rows = rows; rows.by = by; rows.channel = channel; rows.days = days; rows.day = t; rows.baselines = baselines;
+      return rows;
+    });
+  };
+
+  SEL.contentMatrix = function (w, o) {
+    o = o || {};
+    return memo('contentMatrix', [w, w.content, w.meta.tick], argKey(o), function () {
+      var dim = o.dim || 'angle', chs = MC.CH.OWNED.slice(), out = { dim: dim, channels: chs, days: o.days || 0, rows: [] };
+      var per = {};
+      chs.forEach(function (ch) { per[ch] = SEL.contentPerformance(w, { by: dim, channel: ch, days: o.days || 0 }); });
+      var keys = {}, order = [];
+      chs.forEach(function (ch) { per[ch].forEach(function (r) { if (!keys[r.key]) { keys[r.key] = r.label; order.push(r.key); } }); });
+      order.sort();
+      out.rows = order.map(function (key) {
+        var cells = {}, total = 0;
+        chs.forEach(function (ch) {
+          var r = per[ch].filter(function (x) { return x.key === key; })[0];
+          if (r) { cells[ch] = r.byChannel[ch] || null; total += r.delivered; }
+          if (!cells[ch]) cells[ch] = { channel: ch, metric: C_LIFT_METRIC[ch], delivered: 0, rates: null, lift: null, enough: false, reason: 'Not sent on ' + chWord(ch) + ' yet.' };
+        });
+        return { key: key, label: keys[key], delivered: total, cells: cells };
+      });
+      out.rows.sort(function (a, b) { return (b.delivered - a.delivered) || (a.key < b.key ? -1 : 1); });
+      return out;
+    });
+  };
+
+  // Exposure-index curve for one block: rate by how many times the same person had already seen it.
+  SEL.blockFatigue = function (w, blockId) {
+    return memo('blockFatigue', [w, w.content, w.meta.tick], blockId, function () {
+      var K = MC.content, blk = K.block(w, blockId);
+      var out = { blockId: blockId, found: !!blk, kind: blk ? blk.kind : null, metric: null, curve: [], first: null, later: null, laterFrom: null, drop: null,
+        enough: false, reason: null, tired: false, tiredSince: null, exposures: null, channels: [] };
+      if (!blk) { out.reason = 'That block no longer exists.'; return out; }
+      var open = blk.kind === 'headline' || blk.kind === 'image', metric = open ? 'open' : 'click', col = open ? 1 : 2;
+      out.metric = metric;
+      var F = (w.content && w.content.fat && w.content.fat[blockId]) || {}, chs = Object.keys(F).sort().filter(function (ch) { return !open || ch !== 'sms'; });
+      out.channels = chs;
+      var rows = [];
+      for (var i = 0; i < 6; i++) rows.push([0, 0, 0, 0]);
+      chs.forEach(function (ch) { F[ch].forEach(function (r, i) { for (var q = 0; q < 4; q++) rows[i][q] += r[q]; }); });
+      out.curve = rows.map(function (r, i) { return { exposure: i, delivered: r[0], open: crate(r[1], r[0]), click: crate(r[2], r[0]), rate: crate(r[col], r[0]) }; });
+      // who has seen it how often
+      var E = w.content && w.content.exp && w.content.exp[blockId];
+      if (E) {
+        var dist = [0, 0, 0, 0, 0, 0], seen = 0, tot = 0;
+        for (var p = 0; p < E.length; p++) { var k = E[p]; if (k > 0) { dist[k > 5 ? 5 : k]++; seen++; tot += k; } }
+        var rep = 0;
+        for (var j = 2; j < 6; j++) rep += dist[j];
+        out.exposures = { people: seen, distribution: dist.slice(1), average: seen ? tot / seen : 0, repeatShare: seen ? rep / seen : 0 };
+      }
+      var first = rows[0], laterFrom = 2, later = [0, 0, 0, 0];
+      for (var a = 2; a < 6; a++) for (var q2 = 0; q2 < 4; q2++) later[q2] += rows[a][q2];
+      if (later[0] < C_MIN_DELIV) { laterFrom = 1; later = [0, 0, 0, 0]; for (var b = 1; b < 6; b++) for (var q3 = 0; q3 < 4; q3++) later[q3] += rows[b][q3]; }
+      out.laterFrom = laterFrom; out.first = crate(first[col], first[0]); out.later = crate(later[col], later[0]);
+      if (first[0] < C_MIN_DELIV || later[0] < C_MIN_DELIV) {
+        out.reason = 'Only ' + cnum(first[0]) + ' first sends and ' + cnum(later[0]) + ' repeat sends so far; needs about ' + C_MIN_DELIV + ' of each.';
+        return out;
+      }
+      if (first[col] < C_MIN_HITS || later[col] < C_MIN_HITS) { out.reason = 'Too few ' + C_NOUN[metric] + ' so far to tell.'; return out; }
+      out.drop = cratio(later[col], later[0], first[col], first[0]);
+      out.enough = !!out.drop;
+      out.tired = out.enough && out.drop.hi < 0 && out.drop.value <= -0.1;
+      // when it started to tire: the first day its trailing window sat clearly below its early rate
+      var L = cledger(w, 0, null)[blockId] || {}, byDay = {};
+      Object.keys(L).forEach(function (ch) {
+        if (open && ch === 'sms') return;
+        Object.keys(L[ch].daily).forEach(function (d) { var x = L[ch].daily[d], y = byDay[d] || (byDay[d] = [0, 0]); y[0] += x[1]; y[1] += x[open ? 2 : 3]; });
+      });
+      var ds = Object.keys(byDay).map(Number).sort(function (x, y) { return x - y; }), base = null, bi = -1, n = 0, k = 0;
+      for (var s = 0; s < ds.length; s++) { n += byDay[ds[s]][0]; k += byDay[ds[s]][1]; if (n >= C_MIN_DELIV) { base = MC.util.wilson(k, n); bi = s; break; } }
+      if (base) {
+        for (var e = bi + 1; e < ds.length && !out.tiredSince; e++) {
+          var wn = 0, wk = 0;
+          for (var f = e; f > bi && wn < C_MIN_DELIV; f--) { wn += byDay[ds[f]][0]; wk += byDay[ds[f]][1]; }
+          if (wn >= C_MIN_DELIV && MC.util.wilson(wk, wn)[1] < base[0]) out.tiredSince = { day: ds[e], tick: ds[e] * 24 };
+        }
+      }
+      return out;
+    });
+  };
+
+  function cbestReplacement(w, blk, avoid) {
+    var K = MC.content, perf = SEL.contentPerformance(w, { by: 'block', kind: blk.kind }), byId = {};
+    perf.forEach(function (r) { byId[r.key] = r; });
+    var cands = K.blocks(w).filter(function (b) {
+      if (b.id === blk.id || b.kind !== blk.kind || b.review !== 'approved' || b.retired || b.archived || (avoid && avoid[b.id])) return false;
+      // a replacement may not bring in a product the original did not name, and words keep their angle
+      if (b.tags && b.tags.product && b.tags.product !== (blk.tags && blk.tags.product)) return false;
+      if ((blk.kind === 'headline' || blk.kind === 'body') && (b.tags && b.tags.angle) !== (blk.tags && blk.tags.angle)) return false;
+      return true;
+    });
+    var scored = cands.map(function (b) {
+      var r = byId[b.id], tired = SEL.blockFatigue(w, b.id).tired;
+      return { id: b.id, s: [tired ? 0 : 1, (b.tags && b.tags.angle) === (blk.tags && blk.tags.angle) ? 1 : 0, r && r.enough && r.lift ? r.lift.value : -1, K.usedCount(w, b.id) ? 0 : 1] };
+    });
+    scored.sort(function (a, b) {
+      for (var i = 0; i < 4; i++) if (a.s[i] !== b.s[i]) return b.s[i] - a.s[i];
+      return a.id < b.id ? -1 : 1;
+    });
+    return scored.length ? scored[0].id : null;
+  }
+
+  // draftChecks(w, {name?, slots, channelOverrides?, tags?, blocks?: {id: {kind, value, tags}}}, channels, campaignId?)
+  //   -> { ok, channel?, problem?, renders: {ch: render} }: renders a message (and blocks) that does not exist yet in each channel and
+  //   reports the first brand, length or token problem, so an agent never proposes words that would fail at publish. Not memoized (inputs are drafts).
+  SEL.draftChecks = function (w, draft, channels, campaignId) {
+    var K = MC.content, S = K.slice(w), blocks = assign({}, S.blocks.byId), msgs = assign({}, S.messages.byId), order = S.blocks.order.slice();
+    Object.keys(draft.blocks || {}).sort().forEach(function (id) { blocks[id] = assign({ id: id, ver: 1, locale: 'en-US', review: 'in_review', tags: {}, history: [] }, draft.blocks[id]); order.push(id); });
+    msgs.$draft = { id: '$draft', ver: 1, review: 'in_review', name: draft.name || 'Draft', slots: draft.slots, channelOverrides: draft.channelOverrides || {}, tags: draft.tags || {} };
+    var fw = assign({}, w, { content: assign({}, w.content, { blocks: { byId: blocks, order: order }, messages: { byId: msgs, order: S.messages.order.concat(['$draft']) } }) });
+    var out = { ok: true, renders: {} };
+    for (var i = 0; i < channels.length; i++) {
+      var r = K.render(fw, '$draft', channels[i], { campaignId: campaignId });
+      out.renders[channels[i]] = r;
+      if (r.error) return assign(out, { ok: false, channel: channels[i], problem: r.error });
+      var bad = K.failing(r)[0];
+      if (bad) return assign(out, { ok: false, channel: channels[i], problem: bad.label });
+    }
+    return out;
+  };
+
+  // contentContrast(w, {by, a, b, channel, kind?}) -> how group a does against group b on one channel: { enough, reason, contrast:{value,lo,hi}, a, b, metric }
+  SEL.contentContrast = function (w, o) {
+    o = o || {};
+    return memo('contentContrast', [w, w.content, w.meta.tick], argKey(o), function () {
+      var ch = o.channel, rows = SEL.contentPerformance(w, { by: o.by || 'angle', channel: ch, kind: o.kind });
+      var ra = rows.filter(function (r) { return r.key === o.a; })[0], rb = rows.filter(function (r) { return r.key === o.b; })[0];
+      var out = { by: o.by || 'angle', channel: ch, metric: C_LIFT_METRIC[ch] || 'click', a: ra || null, b: rb || null, enough: false, reason: null, contrast: null };
+      var ca = ra && ra.byChannel[ch], cb = rb && rb.byChannel[ch];
+      if (!ca || !cb) { out.reason = 'Not sent on ' + chWord(ch) + ' yet.'; return out; }
+      var m = out.metric;
+      if (ca.delivered < C_MIN_DELIV || cb.delivered < C_MIN_DELIV) { out.reason = 'Only ' + cnum(Math.min(ca.delivered, cb.delivered)) + ' delivered on ' + chWord(ch) + ' so far; needs about ' + C_MIN_DELIV + ' each.'; return out; }
+      var d = cratio(ca.rates[m].k, ca.delivered, cb.rates[m].k, cb.delivered);
+      if (!d || ca.rates[m].k < C_MIN_HITS || cb.rates[m].k < C_MIN_HITS) { out.reason = 'Too few ' + C_NOUN[m] + ' so far to compare.'; return out; }
+      out.enough = true; out.contrast = d;
+      return out;
+    });
+  };
+
+  // Direct contrast of the best and worst headline angle on a channel, with its interval.
+  function cangleContrast(w, ch) {
+    var rows = SEL.contentPerformance(w, { by: 'angle', channel: ch }), ok = [], thin = [];
+    rows.forEach(function (r) { var c = r.byChannel[ch]; if (c && c.enough) ok.push({ r: r, c: c }); else thin.push({ r: r, c: c }); });
+    var out = { channel: ch, metric: C_LIFT_METRIC[ch], ok: ok.length, thin: thin.length };
+    if (ok.length < 2) { out.enough = false; out.reason = ok.length ? 'Only one headline angle has enough ' + chWord(ch) + ' data so far.' : (rows.length ? rows[0].byChannel[ch] && rows[0].byChannel[ch].reason : 'Nothing has been sent on ' + chWord(ch) + ' yet.') || 'Not enough data yet.'; return out; }
+    var m = out.metric, col = C_COL[m];
+    ok.sort(function (a, b) { return (b.c.rates[m].rate - a.c.rates[m].rate) || (a.r.key < b.r.key ? -1 : 1); });
+    var best = ok[0], worst = ok[ok.length - 1];
+    var d = cratio(best.c.rates[m].k, best.c.delivered, worst.c.rates[m].k, worst.c.delivered);
+    out.enough = !!d; out.best = best; out.worst = worst; out.contrast = d;
+    out.clear = !!d && d.lo > 0;
+    return out;
+  }
+
+  SEL.contentRecommendations = function (w) {
+    return memo('contentRecommendations', [w, w.content, w.variants, w.campaigns, w.meta.tick], '', function () {
+      var K = MC.content, recs = [];
+      // 1. angle winners per channel, and the channels that do not have enough data yet
+      MC.CH.OWNED.forEach(function (ch) {
+        var x = cangleContrast(w, ch);
+        if (x.enough && x.clear) {
+          var bestBlocks = SEL.contentPerformance(w, { by: 'block', kind: 'headline', channel: ch }).filter(function (r) { return r.tags && r.tags.angle === x.best.r.key && r.enough && r.lift && r.lift.lo > -1; });
+          var approved = bestBlocks.filter(function (r) { var b = K.block(w, r.key); return b && b.review === 'approved' && !b.retired && !b.archived; });
+          approved.sort(function (a, b) { return (b.lift.value - a.lift.value) || (a.key < b.key ? -1 : 1); });
+          recs.push({ id: 'angle:' + ch + ':' + x.best.r.key + ':' + x.worst.r.key, kind: 'angle-winner', priority: 2, channel: ch, metric: x.metric,
+            best: { angle: x.best.r.key, label: x.best.r.label, rate: x.best.c.rates[x.metric], lift: x.best.c.lift, delivered: x.best.c.delivered },
+            worst: { angle: x.worst.r.key, label: x.worst.r.label, rate: x.worst.c.rates[x.metric], lift: x.worst.c.lift, delivered: x.worst.c.delivered },
+            contrast: x.contrast, blockIds: approved.slice(0, 3).map(function (r) { return r.key; }),
+            title: x.best.r.label + ' headlines beat ' + x.worst.r.label.toLowerCase() + ' on ' + chWord(ch) + ' ' + C_NOUN[x.metric],
+            summary: x.best.r.label + ' beat ' + x.worst.r.label.toLowerCase() + ' by ' + MC.fmt.pct(x.contrast.value, 0) + ' on ' + chWord(ch) + ' ' + C_NOUN[x.metric] + ' (' + MC.fmt.pct(x.contrast.lo, 0) + ' to ' + MC.fmt.pct(x.contrast.hi, 0) + ').',
+            evidence: [{ label: x.best.r.label, value: MC.fmt.pct(x.best.c.rates[x.metric].rate, 1) + ' of ' + cnum(x.best.c.delivered) + ' delivered' },
+              { label: x.worst.r.label, value: MC.fmt.pct(x.worst.c.rates[x.metric].rate, 1) + ' of ' + cnum(x.worst.c.delivered) + ' delivered' }] });
+        } else if (x.enough) {
+          recs.push({ id: 'angle-flat:' + ch, kind: 'angle-flat', priority: 0, channel: ch, metric: x.metric, contrast: x.contrast, blockIds: [],
+            title: 'No clear difference between headline angles on ' + chWord(ch),
+            summary: 'The best and worst headline angles on ' + chWord(ch) + ' differ by ' + MC.fmt.pct(x.contrast.value, 0) + ' (' + MC.fmt.pct(x.contrast.lo, 0) + ' to ' + MC.fmt.pct(x.contrast.hi, 0) + '), which could be chance.', evidence: [] });
+        } else {
+          recs.push({ id: 'data:' + ch, kind: 'needs-data', priority: 0, channel: ch, blockIds: [], title: chCap(ch) + ' doesn’t have enough data yet', summary: x.reason || 'Not enough data yet.', evidence: [] });
+        }
+      });
+      // 2. tired blocks that can be swapped out everywhere they run
+      K.blocks(w).forEach(function (b) {
+        if (!C_RETIRABLE[b.kind] || b.retired || b.archived || b.review !== 'approved') return;
+        var n = K.usedCount(w, b.id);
+        if (!n) return;
+        var f = SEL.blockFatigue(w, b.id);
+        if (!f.tired) return;
+        var wu = SEL.whereUsed(w, b.id), rep = cbestReplacement(w, b, null);
+        if (!rep && (b.kind === 'headline' || b.kind === 'body' || b.kind === 'cta')) {
+          recs.push({ id: 'write:replace:' + b.id, kind: 'write-blocks', priority: 3, blockKind: b.kind, angle: (b.tags && b.tags.angle) || 'neutral', tone: (b.tags && b.tags.tone) || null, product: (b.tags && b.tags.product) || null,
+            replaces: b.id, blockIds: [b.id], channel: wu.channels[0] || null,
+            title: 'Write a fresh ' + K.KIND_LABEL[b.kind].toLowerCase() + ' to replace \u201c' + clipc(K.textOf(b), 40) + '\u201d',
+            summary: 'This ' + K.KIND_LABEL[b.kind].toLowerCase() + ' has worn out (' + C_NOUN[f.metric] + ' fall ' + MC.fmt.pct(-f.drop.value, 0) + ' when the same people see it again) and the library has no approved one of the same angle to swap in.', evidence: [] });
+        }
+        recs.push({ id: 'retire:' + b.id, kind: 'retire-block', priority: 3, blockIds: [b.id], replacementId: rep, placements: n, channels: wu.channels,
+          fatigue: { drop: f.drop, metric: f.metric, first: f.first, later: f.later, laterFrom: f.laterFrom, tiredSince: f.tiredSince, exposures: f.exposures },
+          title: 'Retire “' + K.textOf(b) + '”: it has worn out where it runs',
+          summary: 'The same people see this ' + K.KIND_LABEL[b.kind].toLowerCase() + ' again and ' + C_NOUN[f.metric] + ' fall ' + MC.fmt.pct(-f.drop.value, 0) + ' (' + MC.fmt.pct(-f.drop.hi, 0) + ' to ' + MC.fmt.pct(-f.drop.lo, 0) + ') against the first time. It is used in ' + n + (n === 1 ? ' message.' : ' messages.'),
+          evidence: [{ label: 'First time seen', value: MC.fmt.pct(f.first.rate, 1) + ' of ' + cnum(f.first.n) }, { label: 'Seen again', value: MC.fmt.pct(f.later.rate, 1) + ' of ' + cnum(f.later.n) }] });
+      });
+      // 3. angles that win but have few fresh approved headlines left to use
+      recs.filter(function (r) { return r.kind === 'angle-winner'; }).forEach(function (r) {
+        var angle = r.best.angle, pool = K.blocks(w).filter(function (b) { return b.kind === 'headline' && b.tags.angle === angle && b.review === 'approved' && !b.retired && !b.archived; });
+        var unused = pool.filter(function (b) { return !K.usedCount(w, b.id); });
+        if (unused.length < 2) {
+          recs.push({ id: 'write:' + angle + ':' + r.channel, kind: 'write-blocks', priority: 1, blockKind: 'headline', channel: r.channel, angle: angle, blockIds: [], have: pool.length, unused: unused.length,
+            title: 'Write more ' + r.best.label.toLowerCase() + ' headlines',
+            summary: r.best.label + ' is winning on ' + chWord(r.channel) + ' and only ' + unused.length + ' approved ' + (unused.length === 1 ? 'headline is' : 'headlines are') + ' not already in use.', evidence: [] });
+        }
+      });
+      recs.sort(function (a, b) { return (b.priority - a.priority) || (a.id < b.id ? -1 : 1); });
+      return recs;
+    });
+  };
+
+  /* ---------------- missions (docs/AGENTIC.md) ----------------
+     missions(w)                  -> row[]: one per mission, newest first (see missionRow)
+     mission(w, id)               -> detail: row + plan[], asks{open,answered}, beats[], artifacts[], steers[]
+     missionAsks(w)               -> [{missionId, missionTitle, ask, agentName, blocking}] open asks across missions
+     missionAgents(w)             -> [{agentId, name, status, current[], voice, voiceTick, missions}] one per agent
+     All derived from world.missions (progress numbers come from the engine's daily check-ins). */
+  var M_AGENTS = ['lead', 'scout', 'planner', 'copy', 'guard', 'sendtime', 'pacer', 'optimizer', 'analyst'];
+  function mAgentName(id) { return MC.lead && MC.lead.agentName ? MC.lead.agentName(id) : agentName(id); }
+  function mList(w) { var s = w.missions; return s ? s.order.map(function (id) { return s.byId[id]; }).filter(Boolean) : EMPTY; }
+  function stepText(st) { return st.title; }
+  function missionRow(w, m) {
+    var o = m.objective, L = MC.lead, pr = m.progress || { value: 0, target: o.target, forecast: 0, lo: 0, hi: 0 };
+    var open = (m.asks || []).filter(function (a) { return a.status === 'open'; });
+    var blocking = open.filter(function (a) { return a.blocking !== false; });
+    var done = 0; m.plan.forEach(function (st) { if (st.status === 'done' || st.status === 'skipped') done++; });
+    var working = m.plan.filter(function (st) { return st.status === 'working'; });
+    var by = {};
+    m.plan.forEach(function (st) {
+      var cur = by[st.agentId];
+      var rank = { working: 3, blocked: 2, queued: 1, done: 0, skipped: 0 }[st.status];
+      if (!cur || rank > cur.rank) by[st.agentId] = { rank: rank, status: st.status === 'working' ? 'working' : (st.status === 'blocked' ? 'waiting' : (st.status === 'queued' ? 'queued' : 'done')), task: st.title, stepId: st.id };
+    });
+    var agents = sortedKeys(by).map(function (id) { return { agentId: id, name: mAgentName(id), status: by[id].status, task: by[id].task, stepId: by[id].stepId }; });
+    var order = { working: 0, waiting: 1, queued: 2, done: 3 };
+    agents.sort(function (a, b) { return (order[a.status] - order[b.status]) || (M_AGENTS.indexOf(a.agentId) - M_AGENTS.indexOf(b.agentId)); });
+    var lastBeat = m.log.length ? m.log[m.log.length - 1] : null;
+    var nowStep = working[0] || m.plan.filter(function (st) { return st.status === 'blocked'; })[0] || null;
+    var now = nowStep ? { agentId: nowStep.agentId, name: mAgentName(nowStep.agentId), text: nowStep.status === 'working' ? nowStep.title : 'Waiting on your answer: ' + nowStep.title }
+      : (lastBeat ? { agentId: lastBeat.agentId, name: mAgentName(lastBeat.agentId), text: lastBeat.text } : null);
+    var cons = (o.constraints || []).map(function (c) { return { kind: c.kind, value: c.value, label: L ? L.constraintLabel(c) : c.kind }; });
+    var band = (m.data && m.data.band) || 'early';
+    return {
+      id: m.id, title: m.title, goalText: m.goalText, status: m.status, phase: m.phase, brain: m.brain, createdTick: m.createdTick,
+      objective: { metric: o.metric, target: o.target, by: o.by, deadlineText: o.deadlineText, direction: o.direction || 'atLeast', constraints: cons, text: L ? L.objectiveText(o) : '' },
+      progress: { value: pr.value, target: pr.target, forecast: pr.forecast, lo: pr.lo, hi: pr.hi, pct: pr.target > 0 ? pr.value / pr.target : 0, forecastPct: pr.target > 0 ? pr.forecast / pr.target : 0, band: band },
+      steps: { done: done, total: m.plan.length }, agents: agents, now: now,
+      nextAsk: blocking[0] || open[0] || null, openAsks: open.length, blockingAsks: blocking.length, artifacts: (m.artifacts || []).length, replans: m.replans || 0,
+      lastBeat: lastBeat ? { tick: lastBeat.tick, agentId: lastBeat.agentId, kind: lastBeat.kind, text: lastBeat.text } : null
+    };
+  }
+  SEL.missions = function (w) {
+    return memo('missions', [w, w.missions, w.meta.tick], '', function () {
+      return mList(w).slice().sort(function (a, b) { return (b.createdTick - a.createdTick) || (a.id < b.id ? -1 : 1); }).map(function (m) { return missionRow(w, m); });
+    });
+  };
+  function artifactRow(w, a) {
+    var out = { kind: a.kind, id: a.id, name: a.id, status: null, exists: false };
+    if (a.kind === 'campaign' && w.campaigns.byId[a.id]) { var c = w.campaigns.byId[a.id]; out.name = c.name; out.status = c.status; out.exists = true; }
+    else if (a.kind === 'segment' && w.segments.byId[a.id]) { var s = w.segments.byId[a.id]; out.name = s.name; out.status = null; out.exists = true; out.count = s.count; }
+    else if (a.kind === 'variant' && w.variants.byId[a.id]) { var v = w.variants.byId[a.id]; out.name = v.channel + ' ' + v.name; out.status = v.status; out.exists = true; }
+    return out;
+  }
+  SEL.mission = function (w, id) {
+    var m = w.missions && w.missions.byId[id];
+    if (!m) return null;
+    return memo('mission', [w, w.missions, w.meta.tick, w.campaigns, w.segments], id, function () {
+      var row = missionRow(w, m);
+      var plan = m.plan.map(function (st) {
+        var ask = st.status === 'blocked' ? (m.asks || []).filter(function (a) { return a.stepId === st.id && a.status === 'open'; })[0] : null;
+        return { id: st.id, kind: st.kind, agentId: st.agentId, agentName: mAgentName(st.agentId), title: st.title, needs: st.needs.slice(), status: st.status, note: st.note || '',
+          startedTick: st.startedTick, doneTick: st.doneTick, artifact: st.artifact || null, askId: ask ? ask.id : null };
+      });
+      var art = (m.artifacts || []).map(function (a) { return artifactRow(w, a); });
+      var open = (m.asks || []).filter(function (a) { return a.status === 'open'; });
+      var answered = (m.asks || []).filter(function (a) { return a.status === 'answered'; });
+      var beats = m.log.map(function (b) { return { tick: b.tick, agentId: b.agentId, agentName: mAgentName(b.agentId), kind: b.kind, text: b.text, ref: b.ref || null }; });
+      return assign({}, row, { plan: plan, asks: { open: open, answered: answered }, beats: beats, artifacts: art, steers: (m.steers || []).slice(), data: m.data || {} });
+    });
+  };
+  SEL.missionAsks = function (w) {
+    return memo('missionAsks', [w, w.missions], '', function () {
+      var out = [];
+      mList(w).forEach(function (m) {
+        (m.asks || []).forEach(function (a) {
+          if (a.status === 'open') out.push({ missionId: m.id, missionTitle: m.title, ask: a, agentName: mAgentName(a.agentId), blocking: a.blocking !== false, tick: a.createdTick });
+        });
+      });
+      out.sort(function (x, y) { return ((y.blocking ? 1 : 0) - (x.blocking ? 1 : 0)) || (x.tick - y.tick) || (x.missionId < y.missionId ? -1 : 1); });
+      return out;
+    });
+  };
+  SEL.missionAgents = function (w) {
+    return memo('missionAgents', [w, w.missions], '', function () {
+      var by = {};
+      M_AGENTS.forEach(function (id) { by[id] = { agentId: id, name: mAgentName(id), status: 'idle', current: [], voice: '', voiceTick: null, missions: 0, _seen: {} }; });
+      mList(w).forEach(function (m) {
+        if (m.status === 'stopped' || m.status === 'done') {
+          m.log.forEach(function (b) { var a = by[b.agentId]; if (a && (a.voiceTick === null || b.tick >= a.voiceTick) && (b.kind === 'did' || b.kind === 'result' || b.kind === 'thought')) { a.voice = b.text; a.voiceTick = b.tick; } });
+          return;
+        }
+        m.plan.forEach(function (st) {
+          var a = by[st.agentId];
+          if (!a) return;
+          if (!a._seen[m.id]) { a._seen[m.id] = true; a.missions++; }
+          if (st.status === 'working') { a.current.push({ missionId: m.id, missionTitle: m.title, stepId: st.id, title: st.title, status: 'working' }); }
+          else if (st.status === 'blocked') { a.current.push({ missionId: m.id, missionTitle: m.title, stepId: st.id, title: st.title, status: 'waiting' }); }
+        });
+        m.log.forEach(function (b) {
+          var a = by[b.agentId];
+          if (a && (a.voiceTick === null || b.tick >= a.voiceTick) && (b.kind === 'did' || b.kind === 'result' || b.kind === 'thought' || b.kind === 'replan')) { a.voice = b.text; a.voiceTick = b.tick; }
+        });
+        if (m.phase === 'monitoring' && m.status === 'running') {
+          var an = by.analyst;
+          if (!an._seen[m.id]) { an._seen[m.id] = true; an.missions++; }
+        }
+      });
+      return M_AGENTS.map(function (id) {
+        var a = by[id];
+        a.status = a.current.some(function (c) { return c.status === 'working'; }) ? 'working' : (a.current.length ? 'waiting' : 'idle');
+        delete a._seen;
+        return a;
+      });
+    });
+  };
 })();

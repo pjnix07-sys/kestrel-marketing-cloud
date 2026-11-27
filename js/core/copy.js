@@ -298,8 +298,22 @@
     return draftRaw(opts, rng).map(function (d) {
       var s = CP.score(d);
       d.predicted = { score: s.score, open: s.predOpen, click: s.predClick };
+      if (opts.blocks) d.blocks = CP.blockDrafts(d);
       return d;
     });
+  };
+
+  // The angle a tone writes toward (content model tags): urgent -> urgency, warm -> warmth, adventurous -> trail-season.
+  CP.ANGLE_OF_TONE = { practical: 'utility', adventurous: 'trail-season', warm: 'warmth', urgent: 'urgency' };
+  // blockDrafts(draft) -> [{kind, value, tags}]: the pieces of a generated draft as content blocks (never applied on their own).
+  CP.blockDrafts = function (d) {
+    var f = (d && d.fields) || {}, ch = CP.FIELDS[d.channel] ? d.channel : 'email', tone = d.tone || 'practical';
+    var tags = { angle: CP.ANGLE_OF_TONE[tone] || 'utility', tone: tone };
+    var out = [], hook = str(f[CP.HOOK[ch]]), main = str(f[CP.MAIN[ch]]);
+    if (hook) out.push({ kind: 'headline', value: hook, tags: Object.assign({}, tags) });
+    if (main && (ch === 'email' || ch === 'social' || ch === 'web')) out.push({ kind: 'body', value: main, tags: Object.assign({}, tags) });
+    if (str(f.cta)) out.push({ kind: 'cta', value: str(f.cta), tags: Object.assign({}, tags, { angle: 'neutral' }) });
+    return out;
   };
 
   /* ---------------- features ---------------- */
@@ -822,6 +836,85 @@
   };
 
   /* ---------------- rendering ---------------- */
+  /* ---------------- channel renderers (content model: blocks -> one channel's fields) ---------------- */
+  // Bare {first_name} gets its fallback, so a person with no name on file never reads a raw token.
+  CP.fixTokens = function (text) {
+    var t = str(text);
+    return t.replace(/\{first_name\}/g, function (m, off) { return '{first_name|' + nameFallback(t.slice(0, off)) + '}'; });
+  };
+  // Tidies, adds token fallbacks and cuts at a word so the text as a reader sees it fits `max`; never leaves half a token.
+  function fitText(text, max, ctx) {
+    var t = tidy(CP.fixTokens(text));
+    for (var i = 0; i < 8 && max && measure(t, ctx) > max; i++) {
+      t = clipMeasured(t, max, ctx).replace(/\{[^{}]*$/, '');
+      t = tidy(t);
+    }
+    return t;
+  }
+  CP.fitText = function (text, max, variant) { var v = variant || {}; return fitText(text, max, contextFor(v.productId, v.offer || 'none')); };
+  function firstSentence(t) { var parts = str(t).split(/(?<=[.!?])\s+/); return parts[0] || ''; }
+  function stripEnd(s) { return str(s).replace(/[.!?:;,\s]+$/, ''); }
+
+  // renderChannel(parts, channel) -> { fields }
+  // parts: { headline, body, offer: {type, text, short}|null, cta, image: {imageId, alt}|null, claims: [text], signoff, productId, link }
+  // Every channel reuses the same limits (CP.LIMITS), the SMS opt-out line and GSM-7 straightening, and the token fallbacks.
+  CP.renderChannel = function (parts, channel) {
+    var P = parts || {}, ch = CP.FIELDS[channel] ? channel : 'email';
+    var off = P.offer && P.offer.type && P.offer.type !== 'none' ? P.offer : null;
+    var ctx = contextFor(P.productId || null, off ? off.type : 'none');
+    var L = CP.LIMITS, f = {};
+    var head = tidy(str(P.headline)), body = tidy(str(P.body)), cta = tidy(str(P.cta)), sign = tidy(str(P.signoff));
+    var offText = off ? tidy(str(off.text) || OFFER_TEXT[off.type].OS) : '';
+    var offShort = off ? tidy(str(off.short) || str(off.text) || OFFER_TEXT[off.type].OSS) : '';
+    var claim = (P.claims || []).length ? tidy(str(P.claims[0])) : '';
+    var link = str(P.link) || ctx.link;
+    function img() {
+      if (!P.image || !P.image.imageId) return;
+      f.imageId = P.image.imageId;
+      var im = imageById(f.imageId);
+      f.alt = str(P.image.alt) || (im ? im.alt : '');
+    }
+    function pick(cands, max) {
+      for (var i = 0; i < cands.length; i++) { var t = fitText(cands[i], 0, ctx); if (t && measure(t, ctx) <= max) return t; }
+      return fitText(cands[0] || '', max, ctx);
+    }
+    if (ch === 'email') {
+      f.subject = fitText(head, L.subject, ctx);
+      f.preheader = fitText(claim ? stripEnd(claim) + '.' : (offText || firstSentence(body)), L.preheader, ctx);
+      f.headline = fitText(head, L.headline, ctx);
+      var b = [body]; if (offText && body.toLowerCase().indexOf(offText.toLowerCase()) < 0) b.push(offText);
+      if (sign) b.push(sign);
+      f.body = tidy(CP.fixTokens(b.join(' ')));
+      f.cta = fitText(cta, L.cta, ctx);
+      f.link = link; img();
+    } else if (ch === 'sms') {
+      var h0 = stripEnd(head), pre = /^fernway\b/i.test(h0) ? '' : 'Fernway: ', cands = [];
+      var tail = cta ? cta + ': {link}' : '{link}';
+      if (offShort) { cands.push(pre + h0 + '. ' + offShort + ' ' + tail); cands.push(pre + h0 + '. ' + offShort + ' {link}'); }
+      cands.push(pre + h0 + '. ' + tail); cands.push(pre + h0 + ' {link}');
+      var room = L.sms - OPT_OUT.length, sms = null;
+      for (var i = 0; i < cands.length && sms === null; i++) { var t = fitText(CP.straighten(cands[i]), 0, ctx); if (measure(t, ctx) <= room) sms = t; }
+      if (sms === null) {
+        // Shorten the headline until the lean form fits; the link stays.
+        var lean = h0;
+        for (var j = 0; j < 40 && measure(fitText(pre + lean + ' {link}', 0, ctx), ctx) > room; j++) lean = lean.replace(/\s*\S+$/, '');
+        sms = fitText(CP.straighten(pre + lean + ' {link}'), room, ctx);
+      }
+      f.sms = tidy(sms) + OPT_OUT; f.link = link;
+    } else if (ch === 'push') {
+      f.pushTitle = fitText(head, L.pushTitle, ctx);
+      var lead = firstSentence(body), tl = cta ? cta + '.' : '';
+      f.pushBody = pick([[lead, offShort, tl].join(' '), [offShort, tl].join(' '), [lead, tl].join(' '), tl || lead], L.pushBody);
+      f.link = link;
+    } else {
+      f.socialHeadline = fitText(head, L.socialHeadline, ctx);
+      f.socialText = pick([[firstSentence(body), offText].join(' '), [offText, firstSentence(body)].join(' '), firstSentence(body), offText], L.socialText);
+      f.cta = fitText(cta, L.cta, ctx);
+      f.link = link; img();
+    }
+    return { fields: f, productId: ctx.product ? ctx.product.id : null, offer: off ? off.type : 'none' };
+  };
+
   CP.LONG_NAME = 'Maximilian-Alexander';
   // render(variant, world, profileIdx, opts) -> fields with {first_name} {product} {offer} {link} filled.
   // A token's own fallback ({first_name|there}) is used when there is no value; opts.name overrides the profile's

@@ -21,7 +21,7 @@
     var parts = {
       profiles: d(w.profiles), latent: d(w.latent), metrics: d(w.metrics), enroll: d(w.enroll),
       entities: d({ meta: w.meta, seq: w.seq, catalog: w.catalog, modelState: w.modelState, segments: w.segments,
-        campaigns: w.campaigns, variants: w.variants, agents: w.agents, proposals: w.proposals, feed: w.feed,
+        campaigns: w.campaigns, variants: w.variants, content: w.content, agents: w.agents, proposals: w.proposals, feed: w.feed,
         insights: w.insights, guardrails: w.guardrails }),
       log: d(w.log)
     };

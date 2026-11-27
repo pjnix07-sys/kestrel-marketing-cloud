@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mission control · Fernway Outfitters</title>
+<link rel="stylesheet" href="mc.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand"><span class="mark" aria-hidden="true"></span><b>Fernway Outfitters</b><span class="where">Mission room, Thu Nov 26</span></div>
+  <div class="ctl" role="group" aria-label="Playback">
+    <button type="button" id="bPause">Pause</button>
+    <button type="button" id="bSkip">Skip to live</button>
+    <button type="button" id="bReplay">Replay</button>
+  </div>
+</header>
+
+<section class="goal" aria-label="Mission goal">
+  <h1 id="goal" aria-label="Win back 400 lapsed hikers before Dec 15 without discounting more than 15%"><span id="goalText" aria-hidden="true"></span><span class="caret" id="caret" aria-hidden="true"></span></h1>
+  <dl class="limits" id="limits">
+    <div><dt>Deadline</dt><dd>Dec 15, 19 days</dd></div>
+    <div><dt>Discount ceiling</dt><dd>15% off</dd></div>
+    <div><dt>Target</dt><dd>400 people</dd></div>
+  </dl>
+</section>
+
+<main class="board" id="board" aria-label="Agent team timeline">
+  <div class="ruler"><div class="rl"></div><div class="rt" id="ruler"></div></div>
+  <div class="lanes" id="lanes"></div>
+  <div class="stage" id="stage">
+    <svg class="wires" id="wires" aria-hidden="true"></svg>
+    <div class="batons" id="batons" aria-hidden="true"></div>
+    <div class="playhead" id="playhead" aria-hidden="true"><span id="phTag">0:00</span></div>
+  </div>
+  <section class="decision" id="decision" role="alertdialog" aria-labelledby="dTitle" aria-describedby="dWhy" hidden>
+    <p class="d-who">One decision needs you. Everything else is running without you.</p>
+    <h2 id="dTitle">Approve 15% off for 412 people?</h2>
+    <div class="d-grid">
+      <div><span class="k">Expected win-back</span><b id="dRate">9 to 14%</b><small id="dPeople">37 to 58 people</small></div>
+      <div><span class="k">Expected revenue</span><b id="dRev">$4.3k to $6.8k</b><small>after the discount</small></div>
+      <div><span class="k">Margin held</span><b>Above floor</b><small>15% is the ceiling you set</small></div>
+    </div>
+    <p id="dWhy" class="d-why">Insight Analyst forecasts 15% off wins back about 4 points more than 10%. Budget Pacer confirms the $2.4k split still holds. Fatigue Guard already removed 38 people, so nobody gets a fourth message this month.</p>
+    <div class="d-act">
+      <button type="button" class="go" id="dYes">Approve 15% off</button>
+      <button type="button" id="dNo">Use 10% instead</button>
+      <span class="d-timer" aria-hidden="true"><i id="dBar"></i></span>
+      <span class="d-count" id="dCount">Approves itself in 8s</span>
+    </div>
+  </section>
+</main>
+
+<section class="bay">
+  <div class="narr" aria-label="Narration">
+    <ol id="log"></ol>
+  </div>
+  <div class="arts" id="arts">
+    <article class="art wait" id="aSeg"><header><h3>Segment</h3><span class="by">Segment Scout</span></header>
+      <div class="body"><div class="seg-n"><b id="segN">450</b><span id="segCap">lapsed hikers</span></div><div class="dots" id="dots"></div></div>
+      <p class="ph">Waiting on Segment Scout</p></article>
+    <article class="art wait" id="aMail"><header><h3>Email</h3><span class="by">Copy Drafter</span></header>
+      <div class="body"><div class="mail"><div class="m-bar">Fernway Outfitters</div>
+        <svg class="m-hero" viewBox="0 0 160 70" preserveAspectRatio="xMidYMax slice" aria-hidden="true"><rect width="160" height="70" fill="#1F5C46"/><circle cx="122" cy="20" r="9" fill="#FF5A1F"/><path d="M0 70 L42 24 L66 48 L96 14 L160 70Z" fill="#112019"/><path d="M0 70 L30 44 L52 64 L74 38 L110 70Z" fill="#2F7A5E"/></svg>
+        <p class="m-h" id="mHead">The trail is still there.</p><span class="m-cta" id="mCta">Take 15% off</span></div>
+        <ul class="subs" id="subs"></ul></div>
+      <p class="ph">Waiting on Copy Drafter</p></article>
+    <article class="art wait" id="aJour"><header><h3>Journey</h3><span class="by">Campaign Planner</span></header>
+      <div class="body"><ol class="jr" id="jr"></ol></div>
+      <p class="ph">Waiting on Campaign Planner</p></article>
+    <article class="art wait" id="aBud"><header><h3>Budget</h3><span class="by">Budget Pacer</span></header>
+      <div class="body"><div class="bud-t"><b id="budT">$2,400</b><span>9 days</span></div><div class="bbar" id="bbar"></div><ul class="bl" id="bl"></ul></div>
+      <p class="ph">Waiting on Budget Pacer</p></article>
+  </div>
+  <div class="ctrs" id="ctrs" aria-label="Live results">
+    <div class="ctr"><span class="k">Reached</span><b id="cReach">0</b><small id="cReachS">of 400 target</small></div>
+    <div class="ctr"><span class="k">Sent</span><b id="cSent">0</b><small id="cSentS">across 4 channels</small></div>
+    <div class="ctr"><span class="k">Revenue</span><b id="cRev">$0</b><small id="cRevS">from win-backs so far</small></div>
+  </div>
+</section>
+<div class="sr" id="sr" aria-live="polite" role="status"></div>
+<script src="mc.js"></script>
+</body>
+</html>

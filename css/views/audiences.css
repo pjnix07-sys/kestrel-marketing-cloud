@@ -1,7 +1,6 @@
 /* Audiences view (#audiences). Everything is scoped under .v-audiences and uses tokens only. */
 .v-audiences { display: flex; flex-direction: column; gap: 16px; min-width: 0; color: var(--ink); }
 .v-audiences * { box-sizing: border-box; }
-.v-audiences .num { font-variant-numeric: tabular-nums; }
 .v-audiences :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 
 /* header */
@@ -17,7 +16,7 @@
 .v-audiences .aud-h3 { font-size: 14px; font-weight: 600; margin: 16px 0 6px; }
 .v-audiences .aud-muted { color: var(--ink-3); }
 .v-audiences .aud-small { font-size: 12px; }
-.v-audiences .aud-mono { font-variant-numeric: tabular-nums; font-size: 12px; color: var(--ink-2); }
+.v-audiences .aud-mono { font-size: 12px; color: var(--ink-2); }
 .v-audiences .aud-empty { color: var(--ink-2); padding: 8px 0; margin: 8px 0; }
 
 /* cards */
@@ -41,7 +40,7 @@
 .v-audiences .aud-seg { display: inline-flex; border: 1px solid var(--line-strong); border-radius: 6px; overflow: hidden; }
 .v-audiences .aud-seg-opt { font: inherit; font-size: 13px; padding: 4px 12px; min-height: 36px; border: 0; background: var(--surface); color: var(--ink-2); cursor: pointer; }
 .v-audiences .aud-seg-opt.is-on { background: var(--accent); color: var(--on-accent); }
-.v-audiences .aud-pill { display: inline-block; font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 999px; background: var(--surface-2); color: var(--ink-2); border: 1px solid var(--line); }
+.v-audiences .aud-pill { display: inline-block; font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 2px; background: var(--surface-2); color: var(--ink-2); border: 1px solid var(--line); }
 .v-audiences .aud-pill-good { background: var(--good-soft); color: var(--good); border-color: transparent; }
 .v-audiences .aud-pill-warn { background: var(--warn-soft); color: var(--warn); border-color: transparent; }
 .v-audiences .aud-pill-crit { background: var(--crit-soft); color: var(--crit); border-color: transparent; }
@@ -70,7 +69,7 @@
 .v-audiences .aud-msg-crit { background: var(--crit-soft); color: var(--crit); }
 
 /* describe */
-.v-audiences .aud-describe { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 16px; margin-bottom: 16px; }
+.v-audiences .aud-describe { background: var(--surface); border: 1px solid var(--line); border-radius: 2px; padding: 16px; margin-bottom: 16px; }
 .v-audiences .aud-describe-row { display: flex; gap: 8px; flex-wrap: wrap; }
 .v-audiences .aud-describe-input { flex: 1 1 280px; }
 .v-audiences .aud-parsed { margin-top: 12px; display: flex; flex-direction: column; gap: 8px; }
@@ -78,7 +77,7 @@
 .v-audiences .aud-parsed-k { font-size: 13px; font-weight: 600; color: var(--ink-2); padding-top: 4px; }
 .v-audiences .aud-parsed-foot { display: flex; gap: 4px; align-items: center; flex-wrap: wrap; font-size: 13px; }
 .v-audiences .aud-chips { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
-.v-audiences .aud-chip { font-size: 13px; padding: 4px 10px; border-radius: 999px; background: var(--accent-soft); color: var(--ink); overflow-wrap: anywhere; }
+.v-audiences .aud-chip { font-size: 13px; padding: 4px 10px; border-radius: 2px; background: var(--accent-soft); color: var(--ink); overflow-wrap: anywhere; }
 .v-audiences .aud-plainlist { list-style: none; margin: 0; padding: 4px 0 0; display: flex; flex-direction: column; gap: 2px; font-size: 14px; }
 .v-audiences .aud-chip-phrase { font-weight: 600; }
 .v-audiences .aud-chip-ign { background: var(--surface-2); color: var(--ink-3); border: 1px dashed var(--line-strong); }
@@ -103,7 +102,7 @@
 .v-audiences .aud-between { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .v-audiences .aud-unit { font-size: 12px; color: var(--ink-3); }
 .v-audiences .aud-hint { flex-basis: 100%; font-size: 12px; color: var(--warn); }
-.v-audiences .aud-pred-badge { display: inline-block; font-size: 11px; font-weight: 600; letter-spacing: .02em; padding: 1px 6px; border-radius: 999px;
+.v-audiences .aud-pred-badge { display: inline-block; font-size: 11px; font-weight: 600; letter-spacing: .02em; padding: 1px 6px; border-radius: 2px;
   background: var(--accent-soft); color: var(--accent); vertical-align: middle; }
 .v-audiences .aud-group-actions { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 8px; }
 .v-audiences .aud-empty-group { font-size: 13px; margin: 4px 0; }
@@ -126,7 +125,7 @@
 .v-audiences .aud-live-head { margin: 8px 0 12px; }
 .v-audiences .aud-big { font-size: 15px; margin: 0; }
 .v-audiences .aud-big strong { font-family: var(--font-display); font-size: 32px; font-weight: 700; }
-.v-audiences .aud-meter { height: 8px; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--line); overflow: hidden; margin-top: 8px; }
+.v-audiences .aud-meter { height: 8px; border-radius: 2px; background: var(--surface-2); border: 1px solid var(--line); overflow: hidden; margin-top: 8px; }
 .v-audiences .aud-meter > span { display: block; height: 100%; background: var(--accent); transition: width .3s ease; }
 .v-audiences .aud-meter > span.is-good { background: var(--good); }
 .v-audiences .aud-meter > span.is-warn { background: var(--warn); }
@@ -161,7 +160,7 @@
 .v-audiences .aud-table { width: 100%; border-collapse: collapse; font-size: 14px; }
 .v-audiences .aud-table th { text-align: left; font-size: 12px; font-weight: 600; color: var(--ink-3); padding: 8px; border-bottom: 1px solid var(--line-strong); white-space: nowrap; }
 .v-audiences .aud-table td { padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: middle; }
-.v-audiences .aud-table .is-num { text-align: right; font-variant-numeric: tabular-nums; }
+.v-audiences .aud-table .is-num { text-align: right; }
 .v-audiences .aud-table tr.is-selected td { background: var(--accent-soft); }
 .v-audiences .aud-prof-table { min-width: 880px; }
 .v-audiences .aud-prof-table td:first-child { display: flex; flex-direction: column; align-items: flex-start; }
@@ -195,8 +194,7 @@
 .aud-profile { font-size: 14px; color: var(--ink); }
 .aud-profile .aud-h3 { font-size: 14px; font-weight: 600; margin: 16px 0 6px; }
 .aud-profile .aud-muted { color: var(--ink-3); }
-.aud-profile .aud-mono { font-variant-numeric: tabular-nums; font-size: 12px; color: var(--ink-2); }
-.aud-profile .num { font-variant-numeric: tabular-nums; }
+.aud-profile .aud-mono { font-size: 12px; color: var(--ink-2); }
 .aud-profile-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .aud-facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 16px; margin: 12px 0 0; }
 .aud-facts dt { font-size: 12px; color: var(--ink-3); }
@@ -204,7 +202,7 @@
 .aud-preds { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 .aud-preds > li { border-bottom: 1px solid var(--line); padding: 8px 0; }
 .aud-pred-row { display: flex; justify-content: space-between; gap: 8px; align-items: center; flex-wrap: wrap; }
-.aud-profile .aud-pred-badge { font-size: 11px; font-weight: 600; padding: 1px 6px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); }
+.aud-profile .aud-pred-badge { font-size: 11px; font-weight: 600; padding: 1px 6px; border-radius: 2px; background: var(--accent-soft); color: var(--accent); }
 .aud-profile .aud-link { font: inherit; font-size: 13px; background: none; border: 0; padding: 4px 0; color: var(--accent); cursor: pointer; text-decoration: underline; min-height: 32px; }
 .aud-why-body { margin-top: 4px; }
 .aud-contrib { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
@@ -219,14 +217,14 @@
 .aud-sups li { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
 .aud-timeline li { display: flex; flex-direction: column; }
 .aud-consent-line { margin: 0; }
-.aud-profile .aud-meter { height: 8px; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--line); overflow: hidden; margin-top: 6px; }
+.aud-profile .aud-meter { height: 8px; border-radius: 2px; background: var(--surface-2); border: 1px solid var(--line); overflow: hidden; margin-top: 6px; }
 .aud-profile .aud-meter > span { display: block; height: 100%; }
 .aud-profile .aud-meter > .is-good { background: var(--good); }
 .aud-profile .aud-meter > .is-warn { background: var(--warn); }
 .aud-profile .aud-meter > .is-crit { background: var(--crit); }
 .aud-profile .aud-chips { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
-.aud-profile .aud-chip { font-size: 13px; padding: 4px 10px; border-radius: 999px; background: var(--accent-soft); color: var(--ink); }
-.aud-profile .aud-pill { display: inline-block; font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 999px; background: var(--surface-2); color: var(--ink-2); }
+.aud-profile .aud-chip { font-size: 13px; padding: 4px 10px; border-radius: 2px; background: var(--accent-soft); color: var(--ink); }
+.aud-profile .aud-pill { display: inline-block; font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 2px; background: var(--surface-2); color: var(--ink-2); }
 .aud-profile .aud-pill-good { background: var(--good-soft); color: var(--good); }
 .aud-profile .aud-pill-warn { background: var(--warn-soft); color: var(--warn); }
 .aud-profile .aud-pill-crit { background: var(--crit-soft); color: var(--crit); }
@@ -266,3 +264,21 @@
 .v-audiences .aud-why { margin: 0; max-width: 68ch; }
 
 .v-audiences .aud-seg-detail { padding-top: 16px; border-top: 1px solid var(--line); }
+
+/* ===== Artifact restyle: mission-control language (hairlines, no tiles, moss/signal discipline) =====
+   Legacy token names are remapped onto the new palette for this view; new tokens win when defined. */
+.v-audiences {
+  --surface: var(--panel, #F4F6F0); --surface-2: var(--paper, #E7EBE3); --ground: var(--paper, #E7EBE3);
+  --ink-2: var(--muted, #53645A); --ink-3: var(--muted, #53645A); --line-strong: var(--line, #B4C0B5);
+  --accent: var(--moss, #1F5C46); --accent-soft: var(--lake-pale, #CFE2E8); --on-accent: #fff; --agent: var(--lake, #17667F);
+  --good: var(--moss, #1F5C46); --focus: var(--ink, #112019);
+  --radius-sm: 2px; --radius-md: 2px; --radius-lg: 2px; --shadow-pop: none;
+}
+.v-audiences .mc-madeby { margin: 6px 0 0; font-size: 13px; color: var(--muted, #53645A); overflow-wrap: anywhere; }
+.v-audiences .mc-madeby a { color: var(--ink); text-decoration: underline; text-decoration-color: var(--line); text-underline-offset: 3px; }
+.v-audiences .mc-madeby a:hover { text-decoration-color: var(--ink); }
+.v-audiences .mc-art-tag { display: block; margin-top: 6px; font-size: 15px; font-weight: 500; letter-spacing: 0; color: var(--muted, #53645A); }
+.v-audiences .aud-header { border-bottom: 1.5px solid var(--ink); padding-bottom: 14px; }
+.v-audiences .aud-title { font-size: clamp(30px, 3.6vw, 44px); line-height: 1.05; font-weight: 700; letter-spacing: -0.025em; }
+.v-audiences ..aud-describe, .v-audiences .aud-group { background: transparent; border: 0; border-top: 1px solid var(--line); border-radius: 0; box-shadow: none; padding-left: 0; padding-right: 0; }
+.v-audiences .k-btn-primary { background: var(--moss, #1F5C46); border-color: var(--moss, #1F5C46); color: #fff; }

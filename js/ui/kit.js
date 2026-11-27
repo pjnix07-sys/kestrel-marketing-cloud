@@ -423,7 +423,7 @@
   var STATUS = {
     draft: { label: 'Draft', tone: 'neutral' }, scheduled: { label: 'Scheduled', tone: 'accent' },
     live: { label: 'Live', tone: 'good' }, paused: { label: 'Paused', tone: 'warn' }, completed: { label: 'Completed', tone: 'neutral' },
-    retired: { label: 'Retired', tone: 'neutral' }, pending: { label: 'Needs you', tone: 'agent' }, applied: { label: 'Applied', tone: 'good' },
+    retired: { label: 'Retired', tone: 'neutral' }, pending: { label: 'Needs you', tone: 'signal' }, applied: { label: 'Applied', tone: 'good' },
     auto: { label: 'Applied by agent', tone: 'agent' }, rejected: { label: 'Dismissed', tone: 'neutral' }, expired: { label: 'Expired', tone: 'neutral' },
     superseded: { label: 'Superseded', tone: 'neutral' }, undone: { label: 'Undone', tone: 'neutral' }, stale: { label: 'No longer applies', tone: 'warn' },
     on: { label: 'On track', tone: 'good' }, risk: { label: 'At risk', tone: 'warn' }, off: { label: 'Off track', tone: 'crit' }

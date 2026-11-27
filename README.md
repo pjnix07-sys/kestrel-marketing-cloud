@@ -24,6 +24,8 @@ The app runs on rules by default, with no network calls. Eight agents (Variant O
 
 Data policy: only aggregated campaign and audience numbers are sent to Anthropic, never individual customer records. Your key stays in this browser (localStorage if "Remember on this device" is on, otherwise sessionStorage) and is sent only to api.anthropic.com. Disconnect clears it.
 
+**Sign-in options.** Besides an API key, Connect Claude accepts a federated access token (`sk-ant-oat01-…`, from your organisation's Anthropic Workload Identity Federation, for example `ant auth print-credentials --access-token`). It is sent as a Bearer token, kept in sessionStorage only, and the agents fall back to rules when it expires. An operator can also switch on "Sign in with <your company>" by setting `MC.CONFIG.federation` in `js/config.js` (OIDC code + PKCE in the browser) and deploying the relay in `tools/wif-relay/`, because Anthropic's token exchange does not allow browser CORS. When you do, add the IdP and relay origins to `connect-src` in the CSP meta tag of `index.html` and run `node tools/check-config.js`. Anthropic documents federation for workload identities; end-user ID tokens may be rejected, so test with your organisation. Details: [docs/AI-FLEET.md](docs/AI-FLEET.md#authentication-api-key-federated-token-company-sign-in) and [tools/wif-relay/README.md](tools/wif-relay/README.md).
+
 ## Run locally
 
 There is no build step. Serve the repository root with any static server.
