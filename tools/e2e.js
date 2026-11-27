@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 /* End-to-end suite for the static Marketing Cloud app (Playwright + Chromium).
-   Usage:  NODE_PATH=$(npm root -g) node tools/e2e.js [--port 8870] [--out /tmp/claude-0/e2e-out] [--date 2026-11-26] [--only boot,home,...]
+   Tests the mission-first product: mission room, asks, steering, new goals, team, artifacts, Connect Claude.
+   Usage:  NODE_PATH=$(npm root -g) node tools/e2e.js [--port 8870] [--out /tmp/claude-0/e2e-out] [--date 2026-11-26] [--only boot,missions,...]
    - Starts its own static server on --port serving the repo root.
    - Fails if any request leaves localhost, except api.anthropic.com which is stubbed with page routes.
    - One line per check: PASS|FAIL|WARN <name> — <detail>; a summary line; exit 1 on any FAIL.
    - Screenshots only for failures, written to --out.
-   - --only takes a comma list of groups: boot, dates, home, approvals, campaigns, content, audiences, agents, connect, determinism (default: all).
+   - --only takes a comma list of groups: boot, missions, asks, team, artifacts, connect, no-theatre, determinism (default: all).
    - --port is the static server port; --out is where failure screenshots go.
    - --date pins the browser clock (YYYY-MM-DD at 10:00 local); default pins to the moment the suite started so
      every context sees the same date.
@@ -69,7 +70,9 @@ const check = (n, ok, d, p) => report(ok ? 'PASS' : 'FAIL', n, d === undefined ?
 /* ------------------------------ browser contexts ------------------------------ */
 const externals = [];           // every non-localhost request that is not api.anthropic.com
 const FORBIDDEN = [/kestrel/i, /sim day/i, /simulat/i, /\bseeds?\b/i, /\bticks?\b/i];
-const ROUTES = [['home', 'Command Center'], ['campaigns', 'Campaigns'], ['content', 'Content Studio'], ['audiences', 'Audiences'], ['analytics', 'Analytics'], ['agents', 'Agents']];
+/* [hash, ui route, h1 prefix (null = a mission goal sentence)] */
+const ROUTES = [['missions', 'missions', null], ['missions/m-lhw', 'missions', null], ['team', 'agents', 'Your team of nine'], ['campaigns', 'campaigns', 'Campaigns'],
+  ['content', 'content', 'Content Studio'], ['audiences', 'audiences', 'Audiences'], ['analytics', 'analytics', 'Analytics']];
 
 let browser;
 const live = new Set();
@@ -121,6 +124,17 @@ async function section(name, fn) {
   if (ONLY && !ONLY.includes(name)) return;
   try { await fn(); } catch (e) { await fail('section ' + name + ' crashed', (e && e.stack || e).toString().split('\n').slice(0, 3).join(' | ')); }
 }
+/* ------------------------------ mission helpers ------------------------------ */
+const SEED_LHW = 'm-lhw', SEED_BFE = 'm-bfe';
+const tick = async (page, n) => { await page.evaluate(k => MC.engine.step(k), n || 1); await page.waitForTimeout(250); };
+const mission = (page, id) => page.evaluate(id => { const m = MC.store.getState().missions.byId[id]; return m ? JSON.parse(JSON.stringify(m)) : null; }, id);
+const askCount = page => page.evaluate(() => { const l = document.getElementById('app-asks-btn').getAttribute('aria-label'); const m = /(\d+)/.exec(l); return m ? +m[1] : 0; });
+const expectedAsks = page => page.evaluate(() => {
+  const w = MC.store.getState(); let n = w.proposals.open.length;
+  w.missions.order.forEach(id => { const m = w.missions.byId[id]; if (m.status !== 'done' && m.status !== 'stopped') m.asks.forEach(a => { if (a.status === 'open') n++; }); });
+  return n;
+});
+const steps = m => m.plan.map(s => s.id + ':' + s.status).join(' ');
 
 /* ============================== 1. Boot ============================== */
 async function secBoot() {
@@ -128,20 +142,20 @@ async function secBoot() {
   for (const vp of vps) for (const theme of ['light', 'dark']) {
     const ctx = await newCtx({ viewport: { width: vp.w, height: vp.h } });
     try {
-      for (const [route, label] of ROUTES) {
-        const name = `boot ${route} ${vp.w}x${vp.h} ${theme}`;
+      for (const [hash, route, label] of ROUTES) {
+        const name = `boot ${hash} ${vp.w}x${vp.h} ${theme}`;
         let page;
         try {
-          const o = await openApp(ctx, route, { settle: 0 });
+          const o = await openApp(ctx, hash, { settle: 0 });
           page = o.page;
           await page.evaluate(t => MC.uiStore.set({ theme: t }), theme);
           await page.waitForTimeout(900);
           const info = await page.evaluate(() => {
             const aria = [...document.querySelectorAll('[aria-label],[title]')].map(e => (e.getAttribute('aria-label') || '') + ' ' + (e.getAttribute('title') || '')).join(' \n ');
-            const de = document.documentElement;
+            const de = document.documentElement, goals = MC.missions.list(MC.store.getState()).map(m => m.goalText);
             return { text: document.body.innerText + '\n' + aria, h1: document.querySelectorAll('h1').length, h1id: document.querySelectorAll('h1#page-title').length,
-              h1text: (document.querySelector('h1#page-title') || {}).textContent, scrollW: de.scrollWidth, clientW: de.clientWidth, bodyScrollW: document.body.scrollWidth,
-              title: document.title, theme: de.getAttribute('data-theme'), route: MC.uiStore.getState().route };
+              h1text: ((document.querySelector('h1#page-title') || {}).textContent || '').trim(), scrollW: de.scrollWidth, clientW: de.clientWidth, bodyScrollW: document.body.scrollWidth,
+              title: document.title, theme: de.getAttribute('data-theme'), route: MC.uiStore.getState().route, goals };
           });
           const errs = o.w.take();
           const bad = [];
@@ -153,8 +167,9 @@ async function secBoot() {
           if (!/ · Marketing Cloud$/.test(info.title)) bad.push('title "' + info.title + '"');
           if (info.theme !== theme) bad.push('theme attr ' + info.theme);
           if (info.route !== route) bad.push('route ' + info.route);
-          if (info.h1text !== label) bad.push('h1 "' + info.h1text + '" expected "' + label + '"');
-          await check(name, !bad.length, bad.length ? bad.join(' | ') : `no errors, one h1 "${info.h1text}", no overflow, clean text, title "${info.title}"`, page);
+          if (label === null ? info.goals.indexOf(info.h1text) < 0 : info.h1text.indexOf(label) !== 0) bad.push('h1 "' + info.h1text + '" expected ' + (label === null ? 'a mission goal' : '"' + label + '"'));
+          if (hash === 'missions/m-lhw' && info.goals.indexOf(info.h1text) !== info.goals.indexOf(info.goals.find(g => /lapsed hikers/.test(g)))) bad.push('did not open mission m-lhw');
+          await check(name, !bad.length, bad.length ? bad.join(' | ') : `no errors, one h1 "${info.h1text.slice(0, 40)}", no overflow, clean text, title "${info.title}"`, page);
         } catch (e) { await fail(name, e.message.split('\n')[0], page); }
         if (page) await page.close();
       }
@@ -162,322 +177,268 @@ async function secBoot() {
   }
 }
 
-/* ============================== 2. Dates ============================== */
-async function secDates() {
-  const cases = [[new Date(2026, 10, 26, 10), '2026-11-26'], [new Date(2026, 11, 5, 10), '2026-12-05'], [PIN, null]];
-  for (const [d, expectYmd] of cases) {
-    const ctx = await newCtx({ date: d });
-    try {
-      const { page } = await openApp(ctx, 'home');
-      const r = await page.evaluate(() => {
-        const T = MC.time, w = MC.store.getState(), n = new Date();
-        const pad = x => ('0' + x).slice(-2);
-        const todayYmd = n.getFullYear() + '-' + pad(n.getMonth() + 1) + '-' + pad(n.getDate());
-        const bf = T.EVENTS.find(e => e.label === 'Black Friday');
-        return { todayYmd, bfLabel: T.dayLabel(bf.day), bfYmd: T.displayYmd(bf.day), tickYmd: T.displayYmd(T.dayOf(w.meta.tick)), tick: w.meta.tick,
-          inSeason: n >= new Date(2026, 10, 7) && n < new Date(2027, 0, 1), gold: T.EVENTS.map(e => e.label + '=' + T.dayLabel(e.day, { style: 'short' })).join(', ') };
-      });
-      const tag = 'dates (clock ' + r.todayYmd + ')';
-      if (!r.inSeason) { await warn(tag, 'date outside Nov 7 - Dec 31 2026; display mapping checks skipped'); }
-      else {
-        await check(tag + ' Black Friday shows Nov 27', /Nov 27$/.test(r.bfLabel), r.bfLabel + ' (' + r.gold + ')', page);
-        await check(tag + ' world tick is today', r.tickYmd === r.todayYmd, 'tick ' + r.tick + ' displays ' + r.tickYmd + ', today ' + r.todayYmd, page);
-        if (expectYmd) await check(tag + ' pinned date honoured', r.todayYmd === expectYmd, r.todayYmd);
-      }
-      await page.close();
-    } finally { await closeCtx(ctx); }
-  }
-}
-
-/* ============================== 3. Command Center ============================== */
-async function secHome() {
-  const ctx = await newCtx();
+/* ============================== 2. Missions ============================== */
+async function secMissions() {
+  /* --- the room, an open ask answered from the strip --- */
+  let ctx = await newCtx();
   try {
-    const { page, w } = await openApp(ctx, 'home');
-    await page.waitForSelector('#home-brief');
-    const brief = (await page.innerText('#home-brief')).trim();
-    await check('home brief sentence present', /[A-Z][a-z]+ (has brought in|is) .*\.\s+.*(agent|Agents).*\.$/s.test(brief) || (brief.split('.').length >= 3 && brief.length > 40), brief, page);
-    const nodes = await page.locator('svg.hm-j-svg g.hm-node').count();
-    await check('home journey line has agent nodes', nodes > 0, nodes + ' nodes', page);
-    if (nodes > 0) {
-      const node = page.locator('svg.hm-j-svg g.hm-node').last();
-      await node.scrollIntoViewIfNeeded();
-      await node.click({ force: true });
-      let hot = false;
-      try { await page.waitForSelector('.hm-feed-row.is-hot', { timeout: 4000 }); hot = true; } catch (e) { /* maybe scroll only */ }
-      const inView = await page.evaluate(() => { const el = document.getElementById('home-changes'); if (!el) return false; const r = el.getBoundingClientRect(); return r.top < innerHeight && r.bottom > 0; });
-      await check('home journey node click highlights/scrolls a feed row', hot || inView, hot ? 'feed row highlighted (is-hot)' : (inView ? 'no highlighted row, but What changed scrolled into view' : 'nothing happened'), page);
-    }
-    const s = await page.evaluate(() => ({ label: document.getElementById('app-approvals-btn').getAttribute('aria-label'), open: MC.store.getState().proposals.open.length,
-      pendingByStatus: Object.values(MC.store.getState().proposals.byId).filter(p => p.status === 'pending').length }));
-    const m = /(\d+)/.exec(s.label);
-    const bm = /(\d+) needs? you/.exec(brief);
-    const uiN = m ? +m[1] : 0;
-    await check('approvals button count matches pending proposals', uiN === s.open && s.open === s.pendingByStatus, `button "${s.label}", open ${s.open}, pending ${s.pendingByStatus}`, page);
-    if (bm) await check('brief "needs you" count matches pending proposals', +bm[1] === s.open, `brief ${bm[1]}, open ${s.open}`, page);
-    else if (s.open === 0) await pass('brief has no needs-you clause when nothing is pending', brief);
-    else await warn('brief "needs you" count', 'no "N need you" text in brief');
+    const { page, w } = await openApp(ctx, 'missions/' + SEED_LHW);
+    const seeded = await page.evaluate(() => MC.missions.list(MC.store.getState()).map(m => ({ id: m.id, goal: m.goalText })));
+    const tabs = await page.$$eval('#app-mission-tabs a', els => els.map(e => ({ text: e.textContent.replace(/\s+/g, ' ').trim(), href: e.getAttribute('href'), on: e.getAttribute('aria-current') === 'page' })));
+    await check('missions: seeded missions are tabs in the top bar', seeded.length >= 2 && seeded.every(s => tabs.some(t => t.text.indexOf(s.goal) === 0 && t.href === '#missions/' + s.id)),
+      tabs.map(t => t.text.slice(0, 30)).join(' | '), page);
+    await check('missions: the open mission tab is marked current', tabs.filter(t => t.on).length === 1 && /lapsed hikers/.test(tabs.find(t => t.on).text), JSON.stringify(tabs.filter(t => t.on).map(t => t.href)), page);
+
+    const m0 = await mission(page, SEED_LHW);
+    const h1 = (await page.innerText('h1#page-title')).trim();
+    await check('missions: room h1 is the goal sentence', h1 === m0.goalText, '"' + h1 + '"', page);
+    const status = (await page.innerText('.mr-status')).replace(/\s+/g, ' ').trim();
+    await check('missions: status sentence carries numbers', /\d/.test(status) && /(people|messages|found)/i.test(status) && /[.!]$/.test(status), status, page);
+    const meta = (await page.innerText('.mr-meta')).replace(/\s+/g, ' ');
+    await check('missions: deadline, limits and target shown', /Deadline/.test(meta) && /Limits/.test(meta) && /Target/.test(meta) && /\d/.test(meta) && /15%/.test(meta), meta, page);
+    const lanes = await page.locator('.mr-lane').count(), blocks = await page.locator('.mr-blk').count();
+    await check('missions: board has a lane per agent and a block per step', lanes >= 3 && blocks === m0.plan.length, `${lanes} lanes, ${blocks} blocks, ${m0.plan.length} steps`, page);
+    const labels = await page.$$eval('.mr-blk', els => els.map(e => e.getAttribute('aria-label')));
+    await check('missions: each block names its agent, step and state', labels.every(l => /^[^:]+: .+, (done|working|queued|waiting on you|skipped)$/.test(l)), labels.slice(0, 2).join(' | '), page);
+    const batons = await page.$$eval('.mr-baton', els => els.map(e => e.getAttribute('title')));
+    await check('missions: finished steps show hand-off batons', batons.length >= 1 && batons.every(t => /handed .+ to /.test(t)), batons.slice(0, 2).join(' | ') || 'none', page);
+    const panels = await page.$$eval('.mr-art h3', els => els.map(e => e.textContent.trim()));
+    await check('missions: artifact panels Segment, Email, Journey, Budget', JSON.stringify(panels) === JSON.stringify(['Segment', 'Email', 'Journey', 'Budget']), panels.join(','), page);
+    const filled = await page.locator('.mr-art:not(.is-wait)').count();
+    await check('missions: artifact panels hold real objects', filled >= 3, filled + ' of 4 filled', page);
+    const narr = await page.locator('.mr-narr li').count(), narrH = await page.innerText('.mr-narr h2');
+    await check('missions: narration lists what the team said', narr >= 1 && /team is saying/i.test(narrH), `${narr} lines under "${narrH}"`, page);
+    const thread = await page.locator('.mr-thread .mr-msg').count();
+    await check('missions: Lead column shows the goal and Lead replies', thread >= 2 && (await page.locator('.mr-thread .mr-msg.you').first().innerText()).trim() === m0.goalText, thread + ' messages', page);
+
+    /* the Lead column opens on its newest message with nothing clipped at the top */
+    const sc = await page.evaluate(() => { const t = document.querySelector('.mr-thread'), first = t.querySelector('.mr-msg'), a = t.getBoundingClientRect(), b = first.getBoundingClientRect();
+      return { st: t.scrollTop, sh: t.scrollHeight, ch: t.clientHeight, gap: b.top - a.top, atEnd: t.scrollTop + t.clientHeight >= t.scrollHeight - 1 }; });
+    await check('missions: Lead column opens with the first message unclipped and scrolled to the latest', sc.gap >= 0 && sc.atEnd, JSON.stringify(sc), page);
+
+    /* ask on the strip */
+    await page.waitForSelector('.mr-ask');
+    const ask0 = m0.asks.find(a => a.status === 'open'), blocked0 = m0.plan.filter(s => s.status === 'blocked');
+    const q = (await page.innerText('.mr-ask h2')).trim();
+    await check('missions: an open ask is shown with its question, why and options', !!ask0 && q === ask0.question && (await page.locator('.mr-ask details').count()) === 1 && (await page.locator('.mr-ask-btn').count()) === ask0.options.length && m0.status === 'waiting' && blocked0.length >= 1,
+      `status ${m0.status}; "${q.slice(0, 60)}"; blocked ${blocked0.map(s => s.id)}`, page);
+    const before = await askCount(page);
+    await page.locator('.mr-ask-btn.go').click();
+    await page.waitForTimeout(300);
+    const m1 = await mission(page, SEED_LHW), a1 = m1.asks.find(a => a.id === ask0.id);
+    await check('missions: answering on the strip records the answer and resumes the mission', a1.status === 'answered' && a1.answer === ask0.default && m1.status !== 'waiting' && m1.plan.every(s => s.status !== 'blocked'),
+      `ask ${a1.status} "${a1.answer}", mission ${m1.status}, steps ${steps(m1)}`, page);
+    await check('missions: the ask strip goes and the Asks count drops by one', (await page.locator('.mr-ask').count()) === 0 && (await askCount(page)) === before - 1, `Asks ${before} -> ${await askCount(page)}`, page);
+    const answered = await page.locator('.mr-msg.lead', { hasText: 'You answered' }).count();
+    await check('missions: Lead column notes the answer', answered >= 1, answered + ' message(s)', page);
+    const bid = blocked0[0].id;
+    let seen = [];
+    for (let i = 0; i < 10; i++) { await tick(page, 1); seen.push((await mission(page, SEED_LHW)).plan.find(s => s.id === bid).status); if (seen[seen.length - 1] === 'done') break; }
+    await check('missions: the unblocked step runs and finishes on the next ticks', seen[seen.length - 1] === 'done', `${bid}: ${seen.join(' > ')}`, page);
+    const m2 = await mission(page, SEED_LHW);
+    const blk = await page.locator('.mr-blk.s-' + 'done').count();
+    await check('missions: the board shows the step done without a reload', blk === m2.plan.filter(s => s.status === 'done').length && blk > m0.plan.filter(s => s.status === 'done').length, `${blk} done blocks`, page);
     const errs = w.take();
-    await check('home no console errors during interaction', !errs.length, errs.join(' / ') || 'none', page);
+    await check('missions: no console errors in the room', !errs.length, errs.join(' / ') || 'none', page);
+    await page.close();
+  } finally { await closeCtx(ctx); }
+
+  /* --- steering through the Lead column --- */
+  ctx = await newCtx();
+  try {
+    const { page, w } = await openApp(ctx, 'missions/' + SEED_LHW);
+    const m0 = await mission(page, SEED_LHW), n0 = m0.plan.length;
+    await page.fill('#mr-lead-input', 'skip SMS');
+    await page.click('.mr-send');
+    await page.waitForTimeout(350);
+    const m1 = await mission(page, SEED_LHW);
+    const replan = m1.log.filter(b => b.kind === 'replan' && b.agentId === 'lead' && /SMS/.test(b.text));
+    await check('steer: "skip SMS" is recorded and Lead re-plans with a visible beat', m1.steers.length === 1 && m1.steers[0].text === 'skip SMS' && replan.length >= 1, `steers ${m1.steers.length}, replan beats ${replan.map(b => b.text.slice(0, 60))}`, page);
+    await check('steer: the limit is added to the mission', m1.objective.constraints.some(c => c.kind === 'excludeChannel' && c.value === 'sms') && /sms/i.test((await page.innerText('.mr-meta'))), JSON.stringify(m1.objective.constraints), page);
+    const bubbles = await page.$$eval('.mr-thread .mr-msg', els => els.map(e => e.className + '|' + e.innerText.replace(/\s+/g, ' ').trim()));
+    await check('steer: the Lead column shows the steer and Lead\'s reply', bubbles.some(b => /^mr-msg you\|skip SMS$/.test(b)) && bubbles.some(b => /^mr-msg lead\|Lead Dropping SMS/.test(b)), bubbles.slice(-2).join(' || '), page);
+    await check('steer: the plan gains steps that take SMS out', m1.plan.length > n0 && m1.plan.slice(n0).some(s => /SMS/.test(s.title)) && (await page.locator('.mr-blk').count()) === m1.plan.length, `${n0} -> ${m1.plan.length} steps: ${m1.plan.slice(n0).map(s => s.title)}`, page);
+    for (let i = 0; i < 10; i++) { await tick(page, 1); const m = await mission(page, SEED_LHW); if (m.plan.slice(n0).every(s => s.status === 'done')) break; }
+    const m2 = await mission(page, SEED_LHW);
+    const remaining = m2.plan.filter(s => s.status === 'queued' || s.status === 'working' || s.status === 'blocked');
+    const smsLeft = remaining.filter(s => /SMS/i.test(s.title + ' ' + (s.note || '')));
+    const sched = await page.evaluate(id => { const w = MC.store.getState(), m = w.missions.byId[id], c = w.campaigns.byId[m.artifacts.find(a => a.kind === 'campaign').id];
+      return { sms: c.budget.byChannel.sms || 0, vs: MC.catalog.variantsOf(w, c.id).filter(v => v.channel === 'sms' && v.status !== 'retired' && v.status !== 'paused').length }; }, SEED_LHW);
+    await check('steer: SMS is gone from what remains (no SMS step left, no SMS budget)', m2.plan.slice(n0).every(s => s.status === 'done') && !smsLeft.length && sched.sms === 0, `remaining ${remaining.map(s => s.title)}; sms budget ${sched.sms}; live sms variants ${sched.vs}`, page);
+    const narr = await page.$$eval('.mr-narr li', els => els.map(e => e.innerText.replace(/\s+/g, ' ')));
+    await check('steer: narration reports taking SMS out', narr.some(t => /SMS/.test(t)), narr.slice(-2).join(' || '), page);
+    const errs = w.take();
+    await check('steer: no console errors', !errs.length, errs.join(' / ') || 'none', page);
+    await page.close();
+  } finally { await closeCtx(ctx); }
+
+  /* --- a new goal from the New goal drawer, run across ticks without a reload --- */
+  ctx = await newCtx();
+  try {
+    const { page, w } = await openApp(ctx, 'missions');
+    await page.evaluate(() => { window.__noReload = 'same-page'; });
+    const goal = 'Grow Trail runners by 300 sign-ups by Dec 20 with no SMS';
+    const before = await page.evaluate(() => MC.missions.list(MC.store.getState()).length);
+    await page.click('#app-new-goal');
+    await page.waitForSelector('#goal-drawer #app-goal-text', { state: 'visible' });
+    await page.fill('#app-goal-text', goal);
+    await page.click('#app-goal-go');
+    await page.waitForFunction(g => MC.missions.list(MC.store.getState()).some(m => m.goalText === g), goal, { timeout: 8000 }).catch(() => {});
+    await page.waitForTimeout(400);
+    const list = await page.evaluate(() => MC.missions.list(MC.store.getState()).map(m => m.id));
+    const nm = await page.evaluate(g => { const m = MC.missions.list(MC.store.getState()).find(m => m.goalText === g); return m ? JSON.parse(JSON.stringify(m)) : null; }, goal);
+    await check('new goal: the mission is created', !!nm && list.length === before + 1, nm ? nm.id + ' ' + nm.status : 'missing', page);
+    if (!nm) return;
+    await check('new goal: the drawer closes and the new mission room opens', (await page.locator('#goal-drawer').isVisible().catch(() => false)) === false && /#missions\/m-/.test(await page.evaluate(() => location.hash)) && (await page.innerText('h1#page-title')).trim() === goal, await page.evaluate(() => location.hash), page);
+    const tabs = await page.$$eval('#app-mission-tabs a', els => els.map(e => ({ t: e.textContent.replace(/\s+/g, ' ').trim(), h: e.getAttribute('href'), on: e.getAttribute('aria-current') === 'page' })));
+    await check('new goal: it appears as a tab, and is the current one', tabs.some(t => t.t.indexOf(goal) === 0 && t.h === '#missions/' + nm.id && t.on), tabs.map(t => t.t.slice(0, 24)).join(' | '), page);
+    await check('new goal: the goal was understood (sign-ups, 300, no SMS)', nm.objective.metric === 'signups' && nm.objective.target === 300 && nm.objective.constraints.some(c => c.kind === 'excludeChannel' && c.value === 'sms') && nm.brain === 'rules',
+      JSON.stringify({ metric: nm.objective.metric, target: nm.objective.target, cons: nm.objective.constraints, brain: nm.brain }), page);
+    const seen = new Set(nm.plan.map(s => s.status));
+    const hist = [nm.plan.map(s => s.status[0]).join('')];
+    const startedQueued = nm.plan.every(s => s.status === 'queued');
+    let fin = null, answeredAsks = 0;
+    for (let i = 0; i < 80; i++) {
+      await tick(page, 1);
+      const m = await mission(page, nm.id);
+      m.plan.forEach(s => seen.add(s.status));
+      hist.push(m.plan.map(s => s.status[0]).join(''));
+      const open = m.asks.filter(a => a.status === 'open');
+      if (open.length) { await page.locator('.mr-ask-btn.go').first().click().catch(() => {}); answeredAsks++; await page.waitForTimeout(200); }
+      if (m.plan.every(s => s.status === 'done' || s.status === 'skipped')) { fin = m; break; }
+    }
+    await check('new goal: steps start queued and move through working to done across ticks', startedQueued && seen.has('working') && !!fin, `start ${hist[0]} ... end ${hist[hist.length - 1]} after ${hist.length - 1} ticks; statuses ${[...seen]}`, page);
+    if (fin) {
+      const blocks = await page.locator('.mr-blk.s-done').count();
+      await check('new goal: the room shows every step done, with artifacts made', blocks === fin.plan.length && fin.artifacts.length >= 1, `${blocks}/${fin.plan.length} done blocks; artifacts ${JSON.stringify(fin.artifacts)}; asks answered ${answeredAsks}`, page);
+    }
+    await check('new goal: no page reload happened', (await page.evaluate(() => window.__noReload)) === 'same-page', 'marker kept');
+    const errs = w.take();
+    await check('new goal: no console errors', !errs.length, errs.join(' / ') || 'none', page);
     await page.close();
   } finally { await closeCtx(ctx); }
 }
 
-/* ============================== 4. Approvals ============================== */
-async function secApprovals() {
+/* ============================== 3. Asks drawer ============================== */
+async function secAsks() {
   const ctx = await newCtx();
   try {
-    const { page, w } = await openApp(ctx, 'home');
-    const open = await ws(page, w => w.proposals.open.slice());
-    if (!open.length) { await warn('approvals', 'no pending proposals in this world; skipped'); return; }
-    await page.click('#app-approvals-btn');
+    const { page, w } = await openApp(ctx, 'missions');
+    const n = await askCount(page), exp = await expectedAsks(page);
+    const sel = await page.evaluate(() => MC.select.missionAsks(MC.store.getState()).length);
+    const props = await page.evaluate(() => MC.store.getState().proposals.open.length);
+    await check('asks: top-bar count = open mission asks + pending proposals', n === exp && n === sel + props, `button ${n}, mission asks ${sel}, proposals ${props}`, page);
+    const visible = await page.evaluate(() => getComputedStyle(document.querySelector('#app-asks-btn .app-count')).display !== 'none');
+    await check('asks: the count is shown', visible && (await page.innerText('#app-asks-btn .app-count')).trim() === String(n), (await page.innerText('#app-asks-btn')).replace(/\s+/g, ' '), page);
+    await page.click('#app-asks-btn');
     const drawer = page.locator('#approvals-drawer');
     await drawer.waitFor({ state: 'visible' });
-    const cards = drawer.locator('article');
-    await cards.first().waitFor();
-    const nCards = await cards.count();
-    await check('approvals drawer lists pending proposals', nCards === open.length || nCards >= Math.min(open.length, 30), `${nCards} cards, ${open.length} pending`, page);
-    let done = null;
-    for (let i = 0; i < Math.min(nCards, 8) && !done; i++) {
-      const card = cards.nth(i);
-      const titleId = await card.locator('[id^="proposal-"][id$="-title"]').first().getAttribute('id');
-      const pid = open.find(id => 'proposal-' + id.replace(/[^a-zA-Z0-9_-]/g, '-') + '-title' === titleId);
-      if (!pid) continue;
-      await card.getByRole('button', { name: 'Approve', exact: true }).click();
-      await page.waitForFunction(id => { const p = MC.store.getState().proposals.byId[id]; return p && p.status !== 'pending'; }, pid, { timeout: 2500 }).catch(() => {});
-      const st = await ws(page, (w, id) => ({ status: w.proposals.byId[id].status, undo: MC.runtime.undoCheck(w, id), open: w.proposals.open.length }), pid);
-      if (st.status === 'applied' || st.status === 'auto') { done = { pid, titleId, st }; break; }
-      const txt = (await card.innerText()).split('\n').filter(l => /Blocked|Couldn|guardrail/i.test(l)).join(' ');
-      await warn('approvals: Approve did not apply ' + pid, 'status ' + st.status + '; card says "' + txt + '"', page);
-    }
-    await check('approve -> applied/auto and undo available', !!done && done.st.undo && done.st.undo.ok, done ? `${done.pid}: status ${done.st.status}, undoCheck ${JSON.stringify(done.st.undo)}` : 'none of the first pending proposals could be approved', page);
-    if (done) {
-      await check('approving reduces the pending count', done.st.open === open.length - 1, `open ${open.length} -> ${done.st.open}`, page);
-      await page.mouse.move(2, 2);   // the list freezes while hovered
-      await page.getByRole('tab', { name: /^Applied/ }).click();   // everything applied (by agents or by you) lands in Applied
-      const same = page.locator('article:has(#' + done.titleId + ')');
-      if (!(await same.count())) { const old = page.getByRole('tab', { name: /^History/ }); if (await old.count()) await old.click(); }   // older builds kept approved-by-you under History
-      for (let k = 0; k < 4 && !(await same.count()); k++) { const more = page.locator('#approvals-more'); if (!(await more.count())) break; await more.click(); await page.waitForTimeout(250); }
-      await same.waitFor({ timeout: 3000 }).catch(() => {});
-      const undoBtn = same.getByRole('button', { name: 'Undo' });
-      if (await undoBtn.count() && await undoBtn.isEnabled()) {
-        await undoBtn.click();
-        await page.waitForFunction(id => MC.store.getState().proposals.byId[id].status === 'undone', done.pid, { timeout: 8000 }).catch(() => {});
-        const s2 = await ws(page, (w, id) => w.proposals.byId[id].status, done.pid);
-        await check('undo restores the proposal (status undone)', s2 === 'undone', 'status ' + s2, page);
-      } else await warn('approvals undo via UI', 'Undo button not found/enabled for ' + done.pid, page);
-    }
-    const errs = w.take();
-    await check('approvals no console errors', !errs.length, errs.join(' / ') || 'none', page);
+    const cards = await drawer.locator('.app-ask').count();
+    await check('asks: drawer lists every open mission ask with Why and impact', cards === sel && cards >= 1 && (await drawer.locator('.app-ask .app-ask-why').count()) === cards, `${cards} ask cards, ${sel} open`, page);
+    const pc = await drawer.locator('#approvals-panel article').count();
+    await check('asks: drawer lists the pending proposals', pc === props || pc >= Math.min(props, 30), `${pc} proposal cards, ${props} pending`, page);
+    await check('asks: drawer count matches the top bar', cards + props === n, `${cards} + ${props} = ${cards + props}, bar ${n}`, page);
+    const card = drawer.locator('.app-ask').first();
+    const goal = (await card.locator('.app-ask-from').innerText()).trim();
+    const def = await card.locator('.app-ask-btn.is-default').innerText();
+    await card.locator('.app-ask-btn.is-default').click();
+    await page.waitForTimeout(350);
+    const st = await page.evaluate(() => ({ open: MC.select.missionAsks(MC.store.getState()).length, ans: MC.missions.list(MC.store.getState()).flatMap(m => m.asks.filter(a => a.status === 'answered').map(a => m.id + ':' + a.id + '=' + a.answer)) }));
+    await check('asks: answering from the drawer resolves the ask', st.open === sel - 1 && st.ans.some(x => x.indexOf(SEED_LHW + ':') === 0) && (await askCount(page)) === n - 1, `open ${sel} -> ${st.open}; answered ${st.ans}; default "${def.replace(/\s*\(default\)/, '')}" on "${goal.slice(0, 40)}"`, page);
+    await check('asks: drawer shows the empty state when nothing is waiting from missions', (await drawer.locator('.app-ask').count()) === sel - 1 && (sel > 1 || /No mission is waiting on you/.test(await drawer.innerText())), (await drawer.locator('.app-ask').count()) + ' cards left', page);
     await page.keyboard.press('Escape');
-    await page.close();
-  } finally { await closeCtx(ctx); }
-}
-
-/* ============================== 5. Campaigns ============================== */
-async function secCampaigns() {
-  const ctx = await newCtx();
-  try {
-    const { page, w } = await openApp(ctx, 'campaigns');
-    await page.waitForSelector('#cmp-modes-board');
-    await page.click('#cmp-modes-list');
-    await page.waitForSelector('table');
-    await check('campaigns list mode', (await page.locator('table tbody tr').count()) >= 3, (await page.locator('table tbody tr').count()) + ' rows', page);
-    await page.click('#cmp-modes-calendar');
-    await page.waitForFunction(() => /Select a bar to open the campaign/.test(document.body.innerText), null, { timeout: 5000 }).catch(() => {});
-    await check('campaigns calendar mode', /Select a bar to open the campaign/.test(await page.innerText('main')), 'calendar caption present', page);
-    await page.click('#cmp-modes-board');
-    await check('campaigns board mode', (await page.locator('h2', { hasText: /^Draft/ }).count()) > 0, 'Draft column present', page);
-
-    for (const name of ['Winter Layering Launch', 'Holiday Gift Guide']) {
-      const btn = page.getByRole('button', { name, exact: true }).first();
-      if (!(await btn.count())) { await warn('campaign detail ' + name, 'card not found on board'); continue; }
-      await btn.click();
-      await page.waitForFunction(n => (document.querySelector('h1#page-title') || {}).textContent === n, name, { timeout: 8000 }).catch(() => {});
-      const h1 = await page.innerText('h1#page-title');
-      await check('campaign detail opens: ' + name, h1 === name, 'h1 "' + h1 + '"', page);
-      const tabs = await page.$$eval('[role=tab][id^="cmp-tabs-"]', els => els.map(e => e.id));
-      await check('campaign detail has tabs: ' + name, tabs.length >= 4, tabs.map(t => t.replace('cmp-tabs-', '')).join(','), page);
-      for (const id of tabs) {
-        await page.click('#' + id);
-        await page.waitForTimeout(350);
-        const len = await page.evaluate(() => (document.querySelector('[role=tabpanel]') || { innerText: '' }).innerText.trim().length);
-        const errs = w.take();
-        await check(`campaign ${name} tab ${id.replace('cmp-tabs-', '')}`, len > 20 && !errs.length, `panel text ${len} chars` + (errs.length ? '; ' + errs.join(' / ') : ''), page);
-      }
-      await page.click('#cmp-back');
-      await page.waitForSelector('#cmp-modes-board');
-    }
-
-    /* planner */
-    const pname = 'E2E Planner Test';
-    await page.click('#cmp-plan');
-    await page.waitForSelector('#brief-name');
-    await page.fill('#brief-name', pname);
-    await page.fill('#brief-target', '5000');
-    await page.fill('#brief-budget', '3000');
-    await page.click('#plan-draft');
-    const drafted = await page.waitForSelector('#plan-audience-accept', { timeout: 10000 }).then(() => true, () => false);
-    await check('planner drafts a plan from the brief', drafted, drafted ? 'plan sections shown' : 'no plan draft appeared', page);
-    if (drafted) {
-      await page.click('#plan-create');
-      await page.waitForFunction(n => (document.querySelector('h1#page-title') || {}).textContent === n, pname, { timeout: 10000 }).catch(() => {});
-      const c = await ws(page, (w, n) => Object.values(w.campaigns.byId).filter(x => x.name === n).map(x => x.status), pname);
-      await check('planner creates a draft campaign', c.length === 1 && c[0] === 'draft', 'campaign status ' + JSON.stringify(c), page);
-      await page.click('#cmp-back');
-      await page.waitForSelector('#cmp-modes-board');
-      await page.click('#cmp-modes-board');
-      const under = await page.evaluate(n => {
-        const heads = [...document.querySelectorAll('h2')].filter(h => /^(Draft|Scheduled|Live|Completed|Always-on)/.test(h.textContent));
-        const el = [...document.querySelectorAll('main button, main a')].find(b => b.textContent.trim() === n);
-        if (!el) return 'card not on board';
-        let cur = null;
-        for (const h of heads) if (h.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING) cur = h.textContent.trim();
-        return cur;
-      }, pname);
-      await check('new campaign appears in the Draft column', /^Draft/.test(under || ''), 'under heading "' + under + '"', page);
-    }
+    await page.waitForTimeout(250);
+    await page.waitForFunction(() => !document.querySelector('.mr-ask'), null, { timeout: 4000 }).catch(() => {});
+    await check('asks: the mission room reflects the answer', (await page.locator('.mr-ask').count()) === 0, 'ask strip gone', page);
+    await tick(page, 3);
+    const m = await mission(page, SEED_LHW);
+    await check('asks: the mission moves on after a drawer answer', m.status !== 'waiting' && m.plan.every(s => s.status !== 'blocked'), `${m.status} ${steps(m)}`, page);
     const errs = w.take();
-    await check('campaigns no console errors', !errs.length, errs.join(' / ') || 'none', page);
+    await check('asks: no console errors', !errs.length, errs.join(' / ') || 'none', page);
     await page.close();
   } finally { await closeCtx(ctx); }
 }
 
-/* ============================== 6. Content ============================== */
-async function secContent() {
+/* ============================== 4. Team ============================== */
+async function secTeam() {
   const ctx = await newCtx();
   try {
-    const { page, w } = await openApp(ctx, 'content');
-    const vid = 'v-hgg-email-a';
-    await page.waitForSelector('#cs-lib-' + vid);
-    await page.click('#cs-lib-' + vid);
-    await page.waitForSelector('#cs-subject');
-    await page.waitForSelector('#cs-checks-headline');
-    const head0 = await page.innerText('#cs-checks-headline');
-    const bad = 'Best jacket EVER, guaranteed 100% waterproof!!!';
-    await page.fill('#cs-subject', bad);
-    await page.fill('#cs-body', 'The best, guaranteed lowest price. Act now');
-    await page.waitForTimeout(500);
-    const head1 = await page.innerText('#cs-checks-headline');
-    const fixes = await page.$$eval('[id^="cs-fix-"]:not(#cs-fix-all)', els => els.map(e => e.id));
-    await check('content: editing a field re-runs the checks', head1 !== head0 && fixes.length > 0, `"${head0}" -> "${head1}"; fixes ${fixes.join(',')}`, page);
-    if (fixes.includes('cs-fix-banned')) {
-      let clicks = 0;
-      while (clicks < 5 && await page.locator('#cs-fix-banned').count()) { await page.click('#cs-fix-banned'); clicks++; await page.waitForTimeout(300); }
-      const subj = await page.inputValue('#cs-subject'), body = await page.inputValue('#cs-body');
-      const still = await page.locator('#cs-fix-banned').count();
-      await check('content: Fix clears the banned-word failure', !/guaranteed/i.test(subj + ' ' + body) && still === 0, `after ${clicks} click(s) subject "${subj}", body "${body}"`, page);
-    } else if (fixes.length) {
-      await page.click('#' + fixes[0]);
-      await pass('content: Fix applied', fixes[0]);
-    } else await warn('content: Fix', 'no failing check with a Fix button appeared');
-    await page.fill('#cs-subject', 'A warm layer for the first cold morning');
-    await page.waitForTimeout(300);
-    if (await page.locator('#cs-save').isEnabled()) {
-      await page.click('#cs-save');
-      await page.waitForTimeout(500);
-      const saved = await ws(page, (w, id) => (w.variants.byId[id] || {}).fields && w.variants.byId[id].fields.subject, vid);
-      await check('content: saving persists the edited field', saved === 'A warm layer for the first cold morning', 'subject in state: ' + saved, page);
-    } else await warn('content: save', '#cs-save disabled (draft-live conflict UI or no change detected)');
-
-    /* generate variants (rules path, AI off) */
-    const n0 = await ws(page, w => Object.values(w.variants.byId).filter(v => v.campaignId === 'c-hgg').length);
-    await page.click('#cs-generate');
-    const gen = await page.waitForSelector('.cs-result', { timeout: 15000 }).then(() => true, () => false);
-    const count = await page.locator('.cs-result').count();
-    await check('content: generate variants returns results (rules path)', gen && count >= 3, count + ' results', page);
-    if (gen) {
-      await page.locator('.cs-result input[type=checkbox]').first().check();
-      await page.selectOption('#cs-add-campaign', 'c-hgg');
-      await page.click('#cs-add-go');
-      await page.waitForFunction(() => /Added \d+ variants?/.test(document.body.innerText), null, { timeout: 8000 }).catch(() => {});
-      const n1 = await ws(page, w => Object.values(w.variants.byId).filter(v => v.campaignId === 'c-hgg').length);
-      await check('content: add a generated variant to a campaign', n1 === n0 + 1, `variants in Holiday Gift Guide ${n0} -> ${n1}`, page);
-    }
-    await page.click('#cs-tab-voice');
-    const voice = await page.waitForSelector('#cs-v-pillars', { timeout: 5000 }).then(() => true, () => false);
-    await check('content: brand voice tab renders', voice, voice ? 'pillars present' : 'missing #cs-v-pillars', page);
-    const errs = w.take();
-    await check('content no console errors', !errs.length, errs.join(' / ') || 'none', page);
-    await page.close();
-  } finally { await closeCtx(ctx); }
-}
-
-/* ============================== 7. Audiences ============================== */
-async function secAudiences() {
-  const ctx = await newCtx();
-  try {
-    const { page, w } = await openApp(ctx, 'audiences');
-    await page.click('#aud-tabs-builder');
-    await page.waitForSelector('#aud-describe');
-    await page.fill('#aud-describe', 'people in the Pacific Northwest who bought in the last 60 days');
-    await page.click('#aud-describe-build');
-    await page.waitForFunction(() => /\d[\d,]* people/.test((document.querySelector('.aud-live') || { innerText: '' }).innerText), null, { timeout: 8000 }).catch(() => {});
-    const main = await page.innerText('main');
-    const live = await page.evaluate(() => (document.querySelector('.aud-live') || { innerText: '' }).innerText);
-    const cnt = /(\d[\d,]*) people/.exec(live);
-    await check('audiences: description becomes a rule', /Region is Pacific Northwest/.test(main) && /Last order/.test(main), (main.match(/Understood:[\s\S]{0,160}/) || ['no "Understood" text'])[0], page);
-    await check('audiences: live audience shows a count', !!cnt && +cnt[1].replace(/,/g, '') > 0, cnt ? cnt[0] : 'no count: ' + live.slice(0, 80), page);
-    const n0 = await ws(page, w => w.segments.order.length);
-    await page.fill('#seg-name', 'E2E PNW recent buyers');
-    await page.click('#aud-save');
-    await page.waitForTimeout(600);
-    const n1 = await ws(page, w => w.segments.order.length);
-    await check('audiences: save the described segment', n1 === n0 + 1, `segments ${n0} -> ${n1}`, page);
-    const errs = w.take();
-    await check('audiences no console errors', !errs.length, errs.join(' / ') || 'none', page);
-    await page.close();
-  } finally { await closeCtx(ctx); }
-}
-
-/* ============================== 8. Agents ============================== */
-async function secAgents() {
-  const ctx = await newCtx();
-  try {
-    const { page, w } = await openApp(ctx, 'agents');
-    await page.waitForSelector('#agents-roster');
-    const rows = await page.locator('[id^="agents-row-"]').count();
-    await check('agents: roster renders 8 agents', rows === 8, rows + ' rows', page);
-    const id = 'guard';
-    await page.click('#agents-row-' + id);
-    await page.waitForSelector('#agents-' + id + '-run');
-    const before = await ws(page, (w, id) => w.audit.entries.filter(e => e.agentId === id).length, id);
-    await page.click('#agents-' + id + '-run');
-    const queued = await page.waitForFunction(() => /Queued/.test(document.querySelector('#agents-detail').innerText), null, { timeout: 4000 }).then(() => true, () => false);
-    await page.evaluate(() => MC.engine.step(3));
-    await page.waitForTimeout(300);
-    const after = await ws(page, (w, id) => w.audit.entries.filter(e => e.agentId === id).length, id);
-    const asked = await ws(page, (w, id) => w.audit.entries.some(e => e.agentId === id && e.reason === 'runNow'), id);
-    await check('agents: Run now produces a run', after > before && asked, `${id} audit entries ${before} -> ${after}; runNow entry: ${asked}; queued message: ${queued}`, page);
-    await page.click('#agents-tabs-history');
-    await page.waitForTimeout(400);
-    const hist = await page.innerText('#agents-panel');
-    await check('agents: run shows in Run history', /you asked/.test(hist), /you asked/.test(hist) ? 'found "you asked"' : 'no "you asked" entry', page);
-    await page.click('#agents-tabs-roster');
-    await page.click('#agents-row-' + id);
-    for (const lvl of ['suggest', 'off', 'autopilot']) {
-      const r = page.locator('#agents-' + id + '-autonomy-' + lvl);
-      if (!(await r.count())) { await warn('agents: autonomy ' + lvl, 'radio not found'); continue; }
-      await r.click();
-      await page.waitForTimeout(250);
-      const a = await ws(page, (w, id) => w.agents.byId[id].autonomy, id);
-      await check('agents: autonomy -> ' + lvl, a === lvl, 'state ' + a, page);
-    }
+    const { page, w } = await openApp(ctx, 'team');
+    await page.waitForSelector('.tm-row');
+    const h1 = (await page.innerText('h1#page-title')).trim();
+    const rows = await page.$$eval('.tm-row', els => els.map(e => ({ id: e.id.replace('agents-row-', ''), name: e.querySelector('.tm-h').textContent.trim(), now: e.querySelector('.tm-now-text').textContent.trim(), state: e.querySelector('.tm-state').textContent.trim(),
+      toggle: !!e.querySelector('.tm-toggle'), link: !!e.querySelector('.tm-on a[href^="#missions/"]') })));
+    await check('team: nine agents listed', h1 === 'Your team of nine' && rows.length === 9 && new Set(rows.map(r => r.id)).size === 9, rows.map(r => r.name).join(', '), page);
+    await check('team: each agent shows what it is doing right now', rows.every(r => r.now.length > 3 && r.state.length > 1), rows.map(r => r.id + ': ' + r.now.slice(0, 28)).join(' | '), page);
+    await check('team: working agents link to their mission', rows.some(r => r.link), rows.filter(r => r.link).map(r => r.id).join(','), page);
+    await check('team: every agent has a settings disclosure', rows.every(r => r.toggle), rows.filter(r => !r.toggle).map(r => r.id).join(',') || 'all nine', page);
+    const id = 'scout', row = page.locator('#agents-row-' + id), tg = row.locator('.tm-toggle');
+    await check('team: settings start closed', (await tg.getAttribute('aria-expanded')) === 'false' && (await page.locator('#team-' + id + '-settings').count()) === 0, 'collapsed', page);
+    await tg.click();
+    await page.waitForSelector('#team-' + id + '-settings');
+    await check('team: settings open on click', (await tg.getAttribute('aria-expanded')) === 'true' && (await page.locator('#team-' + id + '-settings').isVisible()), 'expanded', page);
     for (const mode of ['rules', 'auto']) {
       const r = page.locator('#agents-' + id + '-reasoning-' + mode);
-      if (!(await r.count())) { await warn('agents: reasoning ' + mode, 'radio not found'); continue; }
+      if (!(await r.count())) { await fail('team: reasoning ' + mode, 'radio #agents-' + id + '-reasoning-' + mode + ' not found', page); continue; }
       await r.click();
       await page.waitForTimeout(250);
-      const m = await ws(page, (w, id) => w.agents.byId[id].aiMode || 'auto', id);
-      await check('agents: reasoning -> ' + mode, m === mode, 'state aiMode ' + m, page);
+      const aiMode = await ws(page, (w, id) => w.agents.byId[id].aiMode || 'auto', id);
+      const checked = await r.getAttribute('aria-checked');
+      await check('team: reasoning setting -> ' + mode, aiMode === mode && checked === 'true', `state aiMode ${aiMode}, radio aria-checked ${checked}`, page);
     }
+    await tg.click();
+    await check('team: settings close again', (await tg.getAttribute('aria-expanded')) === 'false', 'collapsed', page);
     const errs = w.take();
-    await check('agents no console errors', !errs.length, errs.join(' / ') || 'none', page);
+    await check('team: no console errors', !errs.length, errs.join(' / ') || 'none', page);
     await page.close();
   } finally { await closeCtx(ctx); }
 }
 
-/* ============================== 9. Connect (stubbed Anthropic) ============================== */
+/* ============================== 5. Artifacts ============================== */
+async function secArtifacts() {
+  const ctx = await newCtx();
+  try {
+    const { page, w } = await openApp(ctx, 'missions');
+    await page.click('#app-artifacts-btn');
+    await page.waitForSelector('#app-artifacts-menu', { state: 'visible' });
+    const links = await page.$$eval('#app-artifacts-menu a', els => els.map(e => e.getAttribute('href')));
+    await check('artifacts: menu lists campaigns, audiences, content, results', JSON.stringify(links) === JSON.stringify(['#campaigns', '#audiences', '#content', '#analytics']), links.join(','), page);
+    for (const [route, h1re] of [['campaigns', /^Campaigns/], ['audiences', /^Audiences/], ['content', /^Content/], ['analytics', /^Analytics/]]) {
+      if (!(await page.locator('#app-artifacts-menu').isVisible().catch(() => false))) await page.click('#app-artifacts-btn');
+      await page.click('#app-art-' + route);
+      await page.waitForFunction(re => (document.getElementById('page-title') || { textContent: '' }).textContent.trim().match(new RegExp(re)), h1re.source, { timeout: 8000 }).catch(() => {});
+      await page.waitForTimeout(500);
+      const info = await page.evaluate(() => ({ h1: document.querySelectorAll('h1#page-title').length, t: document.getElementById('page-title').textContent.trim(), hash: location.hash, len: document.getElementById('app-main').innerText.length, on: document.getElementById('app-artifacts-btn').classList.contains('is-on'), route: MC.uiStore.getState().route }));
+      const errs = w.take();
+      await check('artifacts: ' + route + ' loads from the menu', h1re.test(info.t) && info.hash === '#' + route && info.len > 200 && info.on && !errs.length, `h1 "${info.t.slice(0, 30)}", ${info.len} chars, menu marked ${info.on}${errs.length ? '; ' + errs.join(' / ') : ''}`, page);
+    }
+
+    /* a mission-made campaign and segment link back to their mission */
+    const made = await page.evaluate(() => { const m = MC.store.getState().missions.byId['m-lhw']; return { c: (m.artifacts.find(a => a.kind === 'campaign') || {}).id, s: (m.artifacts.find(a => a.kind === 'segment') || {}).id, goal: m.goalText }; });
+    await check('artifacts: the seeded mission has made a campaign and a segment', !!made.c && !!made.s, JSON.stringify(made), page);
+    await page.evaluate(id => MC.nav.go('campaigns', { mode: 'detail', id }), made.c);
+    await page.waitForSelector('.mc-madeby', { timeout: 8000 }).catch(() => {});
+    let mb = await page.$$eval('.mc-madeby', els => els.map(e => ({ t: e.textContent.replace(/\s+/g, ' ').trim(), h: e.querySelector('a') && e.querySelector('a').getAttribute('href') })));
+    await check('artifacts: a mission-made campaign says "Made by" and links to #missions/<id>', mb.length === 1 && /^Made by /.test(mb[0].t) && mb[0].h === '#missions/' + SEED_LHW && mb[0].t.indexOf(made.goal) >= 0, JSON.stringify(mb), page);
+    await page.evaluate(id => MC.nav.go('audiences', { tab: 'segments', segmentId: id }), made.s);
+    await page.waitForSelector('.mc-madeby', { timeout: 8000 }).catch(() => {});
+    mb = await page.$$eval('.mc-madeby', els => els.map(e => ({ t: e.textContent.replace(/\s+/g, ' ').trim(), h: e.querySelector('a') && e.querySelector('a').getAttribute('href') })));
+    await check('artifacts: a mission-made segment says "Made by" and links back', mb.length === 1 && mb[0].h === '#missions/' + SEED_LHW, JSON.stringify(mb), page);
+    if (mb.length) {
+      await page.click('.mc-madeby a');
+      await page.waitForFunction(g => (document.getElementById('page-title') || { textContent: '' }).textContent.trim() === g, made.goal, { timeout: 8000 }).catch(() => {});
+      await check('artifacts: the back-link opens the mission room', (await page.evaluate(() => location.hash)) === '#missions/' + SEED_LHW && (await page.innerText('h1#page-title')).trim() === made.goal, await page.evaluate(() => location.hash), page);
+    }
+    /* a hand-made object has no back-link */
+    await page.evaluate(() => MC.nav.go('campaigns', { mode: 'detail', id: 'c-hgg' }));
+    await page.waitForFunction(() => /Holiday/.test((document.getElementById('page-title') || { textContent: '' }).textContent), null, { timeout: 8000 }).catch(() => {});
+    const own = await page.evaluate(() => { const w = MC.store.getState(); return { has: w.missions.order.some(id => w.missions.byId[id].artifacts.some(a => a.kind === 'campaign' && a.id === 'c-hgg')), n: document.querySelectorAll('.mc-madeby').length, t: document.getElementById('page-title').textContent.trim() }; });
+    await check('artifacts: an object no mission made shows no "Made by"', own.has ? true : own.n === 0, `made by a mission: ${own.has}; back-links shown: ${own.n}; "${own.t.slice(0, 30)}"`, page);
+    await page.close();
+  } finally { await closeCtx(ctx); }
+}
+
+/* ---- stubbed Anthropic (shared by the connect group) ---- */
 function makeStub(state) {
   const cors = { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': 'POST, OPTIONS', 'access-control-expose-headers': '*' };
   const msg = (obj, stop) => ({ id: 'msg_e2e', type: 'message', role: 'assistant', model: 'claude-haiku-5-5', stop_reason: stop || 'end_turn',
@@ -507,6 +468,11 @@ function makeStub(state) {
       if (agent === 'scout') out.segments = [];
       return send(200, msg(out));
     }
+    if (props.includes('template')) return send(200, msg({ template: 'grow', metric: 'signups', target: 300, byInDays: 23, audience: 'trail runners', segmentId: '',
+      constraints: [{ kind: 'excludeChannel', value: 'sms' }],
+      steps: [{ kind: 'goal', title: 'Confirm the goal and limits', after: [] }, { kind: 'audience', title: 'Find the trail runners', after: [1] }, { kind: 'campaign', title: 'Draft the sign-up campaign', after: [2] },
+        { kind: 'copy', title: 'Write the messages', after: [3] }, { kind: 'guard', title: 'Rest over-messaged people', after: [3] }, { kind: 'sendtime', title: 'Choose send times', after: [3] },
+        { kind: 'pacer', title: 'Split the budget', after: [3] }, { kind: 'handoff', title: 'Hand over for sign-off', after: [4, 5, 6, 7] }, { kind: 'monitor', title: 'Track sign-ups daily', after: [8] }] }));
     if (props.includes('variants')) return send(200, msg({ variants: [1, 2, 3].map(i => ({ fields: Object.assign({}, blank, { subject: 'Trail-ready pick number ' + i, preheader: 'Fresh gear for the weekend', body: 'Gear up with Fernway.', cta: 'Shop now' }) })) }));
     if (props.includes('goalType')) return send(200, msg({ name: 'Winter camp push', goalType: 'conversions', goalTarget: 0, productId: 'nope', segmentId: 's-campers', budget: 4000, startInDays: 2, lengthDays: 10, channels: ['email', 'push'], tone: 'warm', offer: 'freeship', narrative: 'A warm push.' }));
     if (props.includes('conditions')) return send(200, msg({ name: 'Lapsed hikers in the Northwest', why: 'Reads the description as lapsed hikers.', combine: 'all', conditions: [{ attr: 'region', cmp: 'in', value: 'pnw' }, { attr: 'lastOrderDays', cmp: 'gt', value: '120' }] }));
@@ -521,53 +487,63 @@ async function connectVia(page, key) {
   await page.fill('#connect-key', key);
   await page.click('#connect-submit');
 }
+const stored = page => page.evaluate(() => ({ s: MC.ai.state(), l: localStorage.getItem('mc.ai.key'), se: sessionStorage.getItem('mc.ai.key') }));
+async function newGoalViaDrawer(page, goal) {
+  await page.click('#app-new-goal');
+  await page.waitForSelector('#goal-drawer #app-goal-text', { state: 'visible' });
+  await page.fill('#app-goal-text', goal);
+  await page.click('#app-goal-go');
+  await page.waitForFunction(g => MC.missions.list(MC.store.getState()).some(m => m.goalText === g), goal, { timeout: 20000 }).catch(() => {});
+  await page.waitForTimeout(400);
+  return page.evaluate(g => { const m = MC.missions.list(MC.store.getState()).find(m => m.goalText === g); return m ? JSON.parse(JSON.stringify(m)) : null; }, goal);
+}
+
+/* ============================== 6. Connect (stubbed Anthropic) ============================== */
 async function secConnect() {
-  /* good key */
   const st = { mode: 'ok', calls: 0, keys: [], kinds: [] };
   let ctx = await newCtx({ stub: makeStub(st) });
   try {
-    const { page, w } = await openApp(ctx, 'agents');
+    const { page, w } = await openApp(ctx, 'missions');
     const key = 'sk-ant-test-e2e-key-000000000001';
     const off0 = await page.evaluate(() => MC.ai.state());
     await check('connect: starts off with no key stored', off0 === 'off' && (await page.evaluate(() => localStorage.getItem('mc.ai.key') === null && sessionStorage.getItem('mc.ai.key') === null)), 'state ' + off0, page);
     await connectVia(page, key);
     const on = await page.waitForFunction(() => MC.ai.state() === 'on', null, { timeout: 10000 }).then(() => true, () => false);
-    await check('connect: typed key -> state on', on, 'state ' + await page.evaluate(() => MC.ai.state()) + ', calls ' + st.calls, page);
+    await check('connect: a good key (stubbed Haiku) turns Claude on', on, 'state ' + await page.evaluate(() => MC.ai.state()) + ', calls ' + st.calls, page);
     if (on) {
-      const stored = await page.evaluate(() => localStorage.getItem('mc.ai.key') || sessionStorage.getItem('mc.ai.key'));
-      await check('connect: key stored in the browser and sent in x-api-key', stored === key && st.keys[0] === key, 'stored ' + (stored ? 'yes' : 'no') + ', header ' + (st.keys[0] === key));
-      await page.waitForFunction(() => { const w = MC.store.getState(); return w.ai && w.ai.on; }, null, { timeout: 5000 }).catch(() => {});
+      const s = await page.evaluate(() => localStorage.getItem('mc.ai.key') || sessionStorage.getItem('mc.ai.key'));
+      await check('connect: key stored in the browser and sent in x-api-key', s === key && st.keys[0] === key, 'stored ' + (s ? 'yes' : 'no') + ', header ' + (st.keys[0] === key));
       await page.keyboard.press('Escape');
       await page.waitForTimeout(300);
       const lbl = await page.getAttribute('#app-connect-btn', 'aria-label');
       await check('connect: top bar shows connected', /connected/i.test(lbl), lbl, page);
 
-      /* run agents through the stub */
-      await page.click('#agents-tabs-roster');
-      const ids = await page.$$eval('[id^="agents-row-"]', els => els.map(e => e.id.replace('agents-row-', '')));
-      for (const id of ids) await page.evaluate(id => MC.store.dispatch({ type: 'agent/runNow', payload: { id } }), id);
-      await page.evaluate(() => MC.engine.step(3));
-      await page.waitForFunction(() => MC.runtime.awaiting(MC.store.getState()).length === 0, null, { timeout: 20000 }).catch(() => {});
-      await page.waitForTimeout(400);
-      const ai = await ws(page, w => w.audit.entries.filter(e => e.engine === 'ai').map(e => e.agentId + ':' + (e.ai || '')), null);
-      await check('connect: agent run uses Claude (audit engine ai)', ai.length > 0 && st.kinds.some(k => k.includes('decisions')), `${ai.length} ai entries [${[...new Set(ai)].slice(0, 6).join(', ')}], API calls ${st.calls}`, page);
-      await page.click('#agents-tabs-history');
-      await page.waitForTimeout(500);
-      const hist = await page.innerText('#agents-panel');
-      await check('connect: Run history labels the run Claude', /Claude/.test(hist), /Claude/.test(hist) ? 'label found' : 'no "Claude" label in history', page);
-      const bad = await ws(page, w => w.audit.entries.filter(e => e.ai === 'fallback').map(e => e.agentId + ':' + e.fallbackReason).slice(0, 3), null);
-      if (bad.length) await warn('connect: some AI runs fell back to rules', bad.join(', '));
-
+      const goal = 'Grow Trail runners by 300 sign-ups by Dec 20 with no SMS';
+      const nm = await newGoalViaDrawer(page, goal);
+      await check('connect: a mission created while connected records brain "claude"', !!nm && nm.brain === 'claude' && st.kinds.some(k => k.includes('template')), nm ? `brain ${nm.brain}, plan "${nm.plan.map(s => s.title).slice(0, 3).join(' / ')}", stub kinds [${st.kinds.slice(0, 3).join(' | ')}]` : 'mission missing', page);
+      if (nm) {
+        await check('connect: the Claude plan is the one on the board', nm.plan.length === 9 && nm.plan[1].title === 'Find the trail runners' && (await page.locator('.mr-blk').count()) === 9 && nm.objective.constraints.some(c => c.kind === 'excludeChannel'), nm.plan.length + ' steps', page);
+        await page.evaluate(() => MC.engine.setSpeed('pause'));
+        let done = false;
+        for (let i = 0; i < 60 && !done; i++) { await tick(page, 1); await page.waitForFunction(() => MC.runtime.awaiting(MC.store.getState()).length === 0, null, { timeout: 8000 }).catch(() => {}); const m = await mission(page, nm.id); done = m.plan.every(s => s.status === 'done' || s.status === 'skipped'); const o = m.asks.filter(a => a.status === 'open'); if (o.length) await page.locator('.mr-ask-btn.go').first().click().catch(() => {}); }
+        await check('connect: the Claude-planned mission runs to done across ticks', done, steps(await mission(page, nm.id)), page);
+        const still = await mission(page, nm.id);
+        await check('connect: the mission keeps its brain after running', still.brain === 'claude', still.brain);
+      }
       /* disconnect */
       await page.click('#app-connect-btn');
       await page.waitForSelector('#connect-disconnect', { state: 'visible' });
       await page.click('#connect-disconnect');
       await page.waitForFunction(() => MC.ai.state() === 'off', null, { timeout: 5000 }).catch(() => {});
-      const d = await page.evaluate(() => ({ s: MC.ai.state(), l: localStorage.getItem('mc.ai.key'), se: sessionStorage.getItem('mc.ai.key') }));
+      const d = await stored(page);
       await check('connect: disconnect clears storage and state', d.s === 'off' && d.l === null && d.se === null, JSON.stringify(d), page);
+      await page.keyboard.press('Escape');
+      await page.waitForTimeout(300);
+      const nm2 = await newGoalViaDrawer(page, 'Win back 200 lapsed campers by Dec 18 without discounting more than 10%');
+      await check('connect: a mission created after disconnecting records brain "rules"', !!nm2 && nm2.brain === 'rules', nm2 ? 'brain ' + nm2.brain : 'mission missing', page);
     }
     const errs = w.take().filter(e => !/Failed to load resource/.test(e));
-    await check('connect no console errors', !errs.length, errs.join(' / ') || 'none', page);
+    await check('connect: no console errors', !errs.length, errs.join(' / ') || 'none', page);
     await page.close();
   } finally { await closeCtx(ctx); }
 
@@ -575,38 +551,90 @@ async function secConnect() {
   const st2 = { mode: '401', calls: 0, keys: [], kinds: [] };
   ctx = await newCtx({ stub: makeStub(st2) });
   try {
-    const { page } = await openApp(ctx, 'home');
+    const { page } = await openApp(ctx, 'missions');
     await connectVia(page, 'sk-ant-test-e2e-key-bad');
     const shown = await page.waitForFunction(() => /That key didn['’]t work/.test((document.getElementById('connect-msg') || { innerText: '' }).innerText), null, { timeout: 8000 }).then(() => true, () => false);
-    const d = await page.evaluate(() => ({ s: MC.ai.state(), l: localStorage.getItem('mc.ai.key'), se: sessionStorage.getItem('mc.ai.key') }));
+    const d = await stored(page);
     await check('connect: 401 shows "That key didn’t work"', shown, shown ? 'message shown' : 'message missing; state ' + d.s, page);
-    await check('connect: 401 leaves AI off and stores nothing', d.s !== 'on' && d.l === null && d.se === null, JSON.stringify(d), page);
+    await check('connect: 401 leaves Claude off and stores nothing', d.s !== 'on' && d.l === null && d.se === null, JSON.stringify(d), page);
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(300);
+    const nm = await newGoalViaDrawer(page, 'Win back 200 lapsed campers by Dec 18 without discounting more than 10%');
+    await check('connect: a mission created after a rejected key records brain "rules"', !!nm && nm.brain === 'rules', nm ? 'brain ' + nm.brain : 'mission missing', page);
     await page.close();
   } finally { await closeCtx(ctx); }
 }
 
-/* ============================== 10. Determinism ============================== */
+/* ============================== 7. No theatre ============================== */
+async function secNoTheatre() {
+  const PLAYBACK = /\b(pause|replay|play|skip|rewind|fast[- ]forward|speed)\b/i, COUNTDOWN = /\b(in \d+\s*(s|sec|secs|seconds)|\d+\s*(s|sec|seconds) (left|remaining)|countdown|starts in|auto[- ]?(approv|default|proceed)\w* in)\b/i;
+  const ctx = await newCtx();
+  try {
+    const { page } = await openApp(ctx, 'missions/' + SEED_LHW);
+    /* the Lead steering chips ("Skip SMS", "Pause until Monday") and the composer are things you tell Lead, not playback controls */
+    const scan = () => page.evaluate(() => {
+      const ok = e => !e.closest('.mr-chips, .mr-compose, .mr-thread') && !e.classList.contains('app-skip');   // the "Skip to content" link is keyboard navigation, not playback
+      const nameOf = e => (e.getAttribute('aria-label') || e.getAttribute('title') || e.innerText || e.getAttribute('placeholder') || e.value || '').replace(/\s+/g, ' ').trim();
+      const els = [...document.querySelectorAll('button, a, summary, input, select, textarea, [role=button], [role=tab], [role=switch], [role=menuitem], [aria-label]')].filter(ok);
+      return { names: els.map(e => ({ n: nameOf(e), tag: e.tagName.toLowerCase() + (e.id ? '#' + e.id : '') + (e.className && typeof e.className === 'string' ? '.' + e.className.split(' ')[0] : '') })),
+        text: [...document.querySelectorAll('#app-main, header, nav, [role=banner]')].map(e => e.innerText).join('\n'), media: document.querySelectorAll('video, audio, progress, [role=progressbar], [role=slider]').length };
+    });
+    let s = await scan();
+    let bad = s.names.filter(x => PLAYBACK.test(x.n));
+    await check('no-theatre: no play/pause/replay/skip controls in the app chrome or mission room', !bad.length, bad.length ? bad.slice(0, 4).map(x => x.tag + ' "' + x.n.slice(0, 40) + '"').join(', ') : `${s.names.length} controls checked`, page);
+    await check('no-theatre: no countdown text in the room', !COUNTDOWN.test(s.text), (s.text.match(COUNTDOWN) || ['none'])[0], page);
+    await check('no-theatre: no playheads, scrubbers or progress widgets', s.media === 0, s.media + ' found', page);
+    /* the room still moves only because the engine moves: nothing changes with the clock alone */
+    const h0 = await page.evaluate(() => JSON.stringify(MC.store.getState().missions));
+    await page.waitForTimeout(2500);
+    const h1 = await page.evaluate(() => JSON.stringify(MC.store.getState().missions));
+    await check('no-theatre: a paused engine leaves the missions untouched (no timers moving things)', h0 === h1, h0 === h1 ? 'unchanged over 2.5 s' : 'missions changed with the engine paused', page);
+    /* the more-options menu and the drawers are chrome too */
+    await page.click('#app-more');
+    await page.waitForSelector('#app-more-menu', { state: 'visible' });
+    s = await scan();
+    bad = s.names.filter(x => PLAYBACK.test(x.n));
+    await check('no-theatre: nothing in the More menu is a playback control', !bad.length, bad.length ? bad.slice(0, 3).map(x => '"' + x.n.slice(0, 40) + '"').join(', ') : 'clean', page);
+    await page.keyboard.press('Escape');
+    await page.click('#app-asks-btn');
+    await page.waitForSelector('#approvals-drawer', { state: 'visible' });
+    s = await scan();
+    bad = s.names.filter(x => PLAYBACK.test(x.n));
+    await check('no-theatre: nothing in the Asks drawer is a playback control or countdown', !bad.length && !COUNTDOWN.test(s.text), bad.length ? bad.slice(0, 3).map(x => '"' + x.n.slice(0, 40) + '"').join(', ') : 'clean', page);
+    await page.keyboard.press('Escape');
+    await page.close();
+  } finally { await closeCtx(ctx); }
+}
+
+/* ============================== 8. Determinism ============================== */
 async function secDeterminism() {
-  const vals = [];
-  for (let i = 0; i < 2; i++) {
-    const ctx = await newCtx();
-    try {
-      const { page } = await openApp(ctx, 'home');
-      vals.push(await page.evaluate(() => JSON.stringify({ actual: MC.select.goalFor(MC.store.getState()).actual, tick: MC.store.getState().meta.tick, n: MC.store.getState().proposals.open.length })));
-      await page.close();
-    } finally { await closeCtx(ctx); }
-  }
-  await check('determinism: same date -> same goalFor(world).actual', vals[0] === vals[1] && /"actual":\d/.test(vals[0]), vals[0] + (vals[0] === vals[1] ? '' : ' vs ' + vals[1]));
+  const snaps = [], pages = [], ctxs = [];
+  try {
+    for (let i = 0; i < 2; i++) {
+      const ctx = await newCtx(); ctxs.push(ctx);
+      const { page } = await openApp(ctx, 'missions');
+      pages.push(page);
+    }
+    /* same engine tick on both, then the same ticks and the same answer */
+    const ticks = await Promise.all(pages.map(p => p.evaluate(() => MC.store.getState().meta.tick)));
+    const hi = Math.max(...ticks);
+    for (let i = 0; i < 2; i++) if (ticks[i] < hi) await tick(pages[i], hi - ticks[i]);
+    const snap = p => p.evaluate(() => { const w = MC.store.getState(); return JSON.stringify({ tick: w.meta.tick, missions: MC.select.missions(w).map(m => ({ id: m.id, status: m.status, phase: m.phase, progress: m.progress, steps: m.steps, asks: m.openAsks })), asks: MC.select.missionAsks(w).length, open: w.proposals.open.length }); });
+    for (const p of pages) snaps.push(await snap(p));
+    await check('determinism: same date -> same MC.select.missions(world) progress values', snaps[0] === snaps[1] && /"value":\d/.test(snaps[0]), snaps[0] === snaps[1] ? (JSON.parse(snaps[0]).missions.map(m => m.id + ' ' + m.progress.value + '/' + m.progress.target).join(', ')) : 'load 1 ' + snaps[0].slice(0, 160) + ' vs load 2 ' + snaps[1].slice(0, 160), pages[0]);
+    for (const p of pages) { await p.locator('.mr-ask-btn.go').first().click().catch(() => {}); await tick(p, 15); }
+    const after = [];
+    for (const p of pages) after.push(await snap(p));
+    await check('determinism: same answer and 15 ticks later -> same mission state', after[0] === after[1] && after[0] !== snaps[0], after[0] === after[1] ? 'identical at tick ' + JSON.parse(after[0]).tick : 'diverged: ' + after[0].slice(0, 160) + ' vs ' + after[1].slice(0, 160), pages[0]);
+  } finally { for (const p of pages) await p.close().catch(() => {}); for (const c of ctxs) await closeCtx(c); }
 }
 
 /* ============================== main ============================== */
 (async () => {
   const srv = await startServer().catch(e => { console.error('server failed: ' + e.message); process.exit(2); });
   browser = await chromium.launch();
-  const secs = [['boot', secBoot], ['dates', secDates], ['home', secHome], ['approvals', secApprovals], ['campaigns', secCampaigns], ['content', secContent],
-    ['audiences', secAudiences], ['agents', secAgents], ['connect', secConnect], ['determinism', secDeterminism]];
+  const secs = [['boot', secBoot], ['missions', secMissions], ['asks', secAsks], ['team', secTeam], ['artifacts', secArtifacts], ['connect', secConnect], ['no-theatre', secNoTheatre], ['determinism', secDeterminism]];
   for (const [n, f] of secs) await section(n, f);
-  if (!ONLY || ONLY.includes('boot')) { /* network audit covers every section that ran */ }
   await check('network: no request left localhost (except stubbed api.anthropic.com)', externals.length === 0, externals.length ? [...new Set(externals)].slice(0, 5).join(', ') : 'none');
   await browser.close();
   srv.close();

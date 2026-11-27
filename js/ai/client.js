@@ -12,6 +12,9 @@
   var VERSION = '2026-10-21';
   var MODEL = 'claude-haiku-5-5';
   var LS_KEY = 'mc.ai.key';
+  var TOKEN_KEY = 'mc.ai.token';      // bearer tokens: sessionStorage only, never localStorage
+  var EXPIRING_MS = 120000;           // at T-120s the state becomes 'expiring'
+  var MAX_TIMER = 2147483647;
   var MAX_CONCURRENT = 3;
   // USD per million tokens. Cache reads bill at 0.1x input; 5-minute cache writes at 1.25x input.
   var PRICE = { input: 0.10, output: 0.50, cacheRead: 0.01, cacheWrite: 0.125 };
@@ -21,16 +24,19 @@
   AI.DATA_POLICY = 'Only aggregated campaign and audience numbers are sent to Anthropic — never individual customer records.';
   AI.MODEL_LABEL = 'Haiku 5.5';
   AI.KEY_URL = 'https://platform.claude.com/settings/keys';
+  AI.EXPIRING_MS = EXPIRING_MS;
   AI.PRICE = PRICE;
   AI.MAX_CONCURRENT = MAX_CONCURRENT;
 
   function report(e) { if (window.console && console.error) console.error(e); }
+  function wall() { return Date.now(); }   // token lifetimes are real time, never the simulated clock
   function clock() { try { return MC.util && MC.util.now ? MC.util.now() : Date.now(); } catch (e) { return Date.now(); } }
   function assign(a, b) { return Object.assign(a, b); }
 
   /* ---------------- state ---------------- */
   var st = { state: 'off', message: '', remember: true, verifiedAt: null };
-  var key = null;
+  // key = the secret in use (API key or bearer token); auth = how it is presented: {kind:'apiKey', key} | {kind:'bearer', token, expiresAt, source}
+  var key = null, auth = null, expiryTimer = null;
   var usage = { calls: 0, agentRuns: 0, tasks: 0, fallbacks: 0, errors: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, ms: 0 };
   var subs = [];
 
@@ -48,10 +54,11 @@
     subs.push(fn);
     return function () { var i = subs.indexOf(fn); if (i >= 0) subs.splice(i, 1); };
   };
-  AI.isOn = function () { return st.state === 'on' && !!key; };
-  AI.state = function () { return st.state; };
+  AI.isOn = function () { checkExpiry(); return (st.state === 'on' || st.state === 'expiring') && !!key; };
+  AI.state = function () { checkExpiry(); return st.state; };
   AI.getState = function () {
     return { state: st.state, message: st.message, remember: st.remember, hasKey: !!key, model: MODEL, modelLabel: AI.MODEL_LABEL,
+      authKind: AI.authKind(), expiresAt: AI.expiresAt(), source: auth && auth.kind === 'bearer' ? auth.source : null, expiredSource: st.expiredSource || null,
       usage: AI.usage(), inFlight: active, queued: queue.length };
   };
   AI.usage = function () { return assign({}, usage); };
@@ -83,8 +90,53 @@
   function clearKey() {
     ['localStorage', 'sessionStorage'].forEach(function (n) { var s = store(n); try { if (s) s.removeItem(LS_KEY); } catch (e) { /* blocked */ } });
   }
-  AI.isKeyLike = function (s) { return typeof s === 'string' && /^sk-ant-[A-Za-z0-9_\-]{8,}$/.test(s.trim()); };
+  // Bearer tokens are short-lived credentials: sessionStorage (this tab) only.
+  function writeToken(a) {
+    var s = store('sessionStorage');
+    try { if (s) s.setItem(TOKEN_KEY, JSON.stringify({ token: a.token, expiresAt: a.expiresAt || null, source: a.source })); } catch (e) { report(e); }
+  }
+  function readToken() {
+    var s = store('sessionStorage'), v = null;
+    try { v = s && s.getItem(TOKEN_KEY); v = v ? JSON.parse(v) : null; } catch (e) { v = null; }
+    if (!v || !AI.isTokenLike(v.token)) return null;
+    return { kind: 'bearer', token: v.token, expiresAt: typeof v.expiresAt === 'number' ? v.expiresAt : null, source: v.source === 'federated' ? 'federated' : 'pasted' };
+  }
+  function clearToken() {
+    ['localStorage', 'sessionStorage'].forEach(function (n) { var s = store(n); try { if (s) s.removeItem(TOKEN_KEY); } catch (e) { /* blocked */ } });
+  }
+  AI.isTokenLike = function (s) { return typeof s === 'string' && /^sk-ant-oat[0-9]{2}-[A-Za-z0-9_\-]{8,}$/.test(s.trim()); };
+  AI.isKeyLike = function (s) { return typeof s === 'string' && !AI.isTokenLike(s) && /^sk-ant-[A-Za-z0-9_\-]{8,}$/.test(s.trim()); };
   AI.keyHint = function () { return key ? key.slice(0, 10) + '…' + key.slice(-4) : ''; };
+  AI.authKind = function () { return auth ? auth.kind : null; };
+  AI.expiresAt = function () { return auth && auth.kind === 'bearer' && auth.expiresAt ? auth.expiresAt : null; };
+
+  /* ---------------- bearer expiry: on -> expiring (T-120s) -> expired (agents fall back to rules) ---------------- */
+  function checkExpiry() {
+    if (!auth || auth.kind !== 'bearer' || !auth.expiresAt) return;
+    if (st.state !== 'on' && st.state !== 'expiring') return;
+    var left = auth.expiresAt - wall();
+    if (left <= 0) { expire(); }
+    else if (left <= EXPIRING_MS && st.state === 'on') setState('expiring', 'This token expires soon.');
+  }
+  function expire() {
+    var a = auth;
+    key = null; auth = null; clearToken(); armExpiry();
+    queue.forEach(function (j) { j.cancelled = true; });
+    st.expiredSource = a ? a.source : null;
+    setState('expired', 'Your access token expired. Agents are using rules until you renew it.');
+  }
+  function armExpiry() {
+    if (expiryTimer) { clearTimeout(expiryTimer); expiryTimer = null; }
+    if (!auth || auth.kind !== 'bearer' || !auth.expiresAt) return;
+    var left = auth.expiresAt - wall();
+    var next = left <= EXPIRING_MS ? left : left - EXPIRING_MS;
+    expiryTimer = setTimeout(function () { expiryTimer = null; checkExpiry(); armExpiry(); }, Math.min(Math.max(next, 0) + 5, MAX_TIMER));
+  }
+  function parseExpiry(v) {
+    if (v === undefined || v === null || v === '') return null;
+    var t = typeof v === 'number' ? v : (v instanceof Date ? v.getTime() : Date.parse(String(v)));
+    return isFinite(t) ? t : NaN;
+  }
 
   /* ---------------- raw request ---------------- */
   function cleanSystem(sys) {
@@ -100,26 +152,26 @@
     usage.cost += (inp * PRICE.input + out * PRICE.output + cr * PRICE.cacheRead + cw * PRICE.cacheWrite) / 1e6;
   }
 
-  function authFailure(status, msg) {
+  function authFailure(status, msg, kind) {
     if (status !== 401) return null;
     if (/^CORS requests are not allowed/i.test(msg || '')) return { state: 'blocked', text: 'Your organization doesn’t allow browser access' };
+    if (kind === 'bearer') return { state: 'invalid', text: 'That token didn’t work. It may have expired, or your organization may not allow it.' };
     return { state: 'invalid', text: 'That key didn’t work' };
   }
+  function authOf(k) { return k && typeof k === 'object' ? k : { kind: 'apiKey', key: k }; }
 
   // One HTTP attempt. Resolves {ok, status, json?, error?, retryAfter?}; never rejects.
-  function attempt(k, body, timeoutMs) {
+  function attempt(a, body, timeoutMs) {
+    a = authOf(a);
     return new Promise(function (resolve) {
       var done = false, ctl = null, timer = null;
       function finish(r) { if (done) return; done = true; if (timer) clearTimeout(timer); resolve(r); }
       if (typeof fetch !== 'function') { finish({ ok: false, status: 0, error: 'offline' }); return; }
       try { ctl = typeof AbortController === 'function' ? new AbortController() : null; } catch (e) { ctl = null; }
       timer = setTimeout(function () { try { if (ctl) ctl.abort(); } catch (e) { /* ignore */ } finish({ ok: false, status: 0, error: 'timeout' }); }, timeoutMs);
-      var init = {
-        method: 'POST',
-        headers: { 'x-api-key': k, 'anthropic-version': VERSION, 'content-type': 'application/json',
-          'anthropic-dangerous-direct-browser-access': 'true' },
-        body: JSON.stringify(body)
-      };
+      var headers = { 'anthropic-version': VERSION, 'content-type': 'application/json', 'anthropic-dangerous-direct-browser-access': 'true' };
+      if (a.kind === 'bearer') headers.authorization = 'Bearer ' + a.token; else headers['x-api-key'] = a.key;
+      var init = { method: 'POST', headers: headers, body: JSON.stringify(body) };
       if (ctl) init.signal = ctl.signal;
       var p;
       try { p = fetch(URL, init); } catch (e) { finish({ ok: false, status: 0, error: 'network' }); return; }
@@ -140,15 +192,15 @@
   function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
 
   // Request with the §12.2 error policy: 401 -> invalid/blocked; 429 -> honour retry-after once; 5xx/network -> fail.
-  function request(k, body, opts) {
+  function request(a, body, opts) {
     var deadline = clock() + (opts.timeoutMs || 30000);
     function left() { return Math.max(1, deadline - clock()); }
-    return attempt(k, body, left()).then(function (r) {
+    return attempt(a, body, left()).then(function (r) {
       if (r.ok || r.status !== 429 || opts.noRetry) return r;
       var wait = parseFloat(r.retryAfter);
       wait = isFinite(wait) && wait >= 0 ? wait * 1000 : 1000;
       if (wait >= left() - 200) return r;
-      return sleep(wait).then(function () { return attempt(k, body, left()); });
+      return sleep(wait).then(function () { return attempt(a, body, left()); });
     });
   }
 
@@ -181,7 +233,8 @@
     return new Promise(function (resolve) {
       function fail(err) { resolve({ ok: false, error: err, usage: null, ms: clock() - t0 }); }
       if (!AI.isOn()) { fail('off'); return; }
-      var k = key;
+      checkExpiry();
+      var a = auth;
       var body = { model: MODEL, max_tokens: opts.maxTokens || (opts.kind === 'agent' ? 4000 : 2000),
         output_config: { effort: opts.effort || 'low' } };
       if (opts.schema) body.output_config.format = { type: 'json_schema', schema: opts.schema };
@@ -192,14 +245,18 @@
         run: function () {
           var total = Math.max(1, (opts.timeoutMs || 30000) - (clock() - t0));
           var timeout = opts.requestMs ? Math.min(opts.requestMs, total) : total;   // requestMs: the request's own budget, queue wait not counted
-          return request(k, body, { timeoutMs: timeout }).then(function (r) {
+          return request(a, body, { timeoutMs: timeout }).then(function (r) {
             usage.calls++;
             usage.ms += clock() - t0;
             if (!r.ok) {
               usage.errors++;
-              var auth = authFailure(r.status, r.error);
-              if (auth && k === key) { key = null; clearKey(); setState(auth.state, auth.text); } else emit();
-              fail(r.status === 429 ? 'rate-limited' : (auth ? auth.state : (r.status >= 500 ? 'server' : (r.error === 'timeout' ? 'timeout' : (r.status ? 'http-' + r.status : 'network')))));
+              var af = authFailure(r.status, r.error, a.kind);
+              if (af && a === auth) {
+                var bearer = a.kind === 'bearer';
+                key = null; auth = null; clearKey(); clearToken(); armExpiry();
+                setState(bearer && af.state === 'invalid' ? 'expired' : af.state, bearer && af.state === 'invalid' ? 'Your access token was refused or has expired. Agents are using rules until you renew it.' : af.text);
+              } else emit();
+              fail(r.status === 429 ? 'rate-limited' : (af ? af.state : (r.status >= 500 ? 'server' : (r.error === 'timeout' ? 'timeout' : (r.status ? 'http-' + r.status : 'network')))));
               return;
             }
             addUsage(r.json && r.json.usage);
@@ -218,62 +275,113 @@
   };
 
   /* ---------------- connect / verify / disconnect ---------------- */
-  // verifyKey(key) -> Promise<{ok, state, error?}>: one tiny Haiku call (max_tokens 16). Does not store the key.
-  AI.verifyKey = function (k) {
-    k = typeof k === 'string' ? k.trim() : '';
-    if (!AI.isKeyLike(k)) return Promise.resolve({ ok: false, state: 'invalid', error: 'That doesn’t look like an Anthropic key (they start with sk-ant-).' });
+  function verifyAuth(a) {
     var body = { model: MODEL, max_tokens: 16, output_config: { effort: 'low' }, messages: [{ role: 'user', content: 'Reply with OK.' }] };
-    return request(k, body, { timeoutMs: 15000 }).then(function (r) {
+    return request(a, body, { timeoutMs: 15000 }).then(function (r) {
       if (r.ok) { addUsage(r.json && r.json.usage); usage.calls++; return { ok: true, state: 'on' }; }
-      var auth = authFailure(r.status, r.error);
-      if (auth) return { ok: false, state: auth.state, error: auth.text };
+      var af = authFailure(r.status, r.error, a.kind);
+      if (af) return { ok: false, state: af.state, error: af.text };
       if (r.status === 429) return { ok: false, state: 'off', error: 'Anthropic is busy right now. Try again in a minute.' };
       if (!r.status) return { ok: false, state: 'off', error: 'Couldn’t reach Anthropic. Check your connection and try again.' };
       return { ok: false, state: 'off', error: 'Anthropic answered with an error (' + r.status + '). Try again in a minute.' };
     });
+  }
+  // A failed new credential never disturbs a working connection.
+  function failed(r, prev) {
+    setState(key && (prev === 'on' || prev === 'expiring') ? prev : (r.state === 'blocked' || r.state === 'invalid' ? r.state : 'off'), r.error);
+    return r;
+  }
+
+  // verifyKey(key) -> Promise<{ok, state, error?}>: one tiny Haiku call (max_tokens 16). Does not store the key.
+  AI.verifyKey = function (k) {
+    k = typeof k === 'string' ? k.trim() : '';
+    if (!AI.isKeyLike(k)) return Promise.resolve({ ok: false, state: 'invalid', error: 'That doesn’t look like an Anthropic key (they start with sk-ant-).' });
+    return verifyAuth({ kind: 'apiKey', key: k });
+  };
+  // verifyToken(token) -> same tiny call with Authorization: Bearer. Does not store the token.
+  AI.verifyToken = function (t) {
+    t = typeof t === 'string' ? t.trim() : '';
+    if (!AI.isTokenLike(t)) return Promise.resolve({ ok: false, state: 'invalid', error: 'That doesn’t look like a federated access token (they start with sk-ant-oat).' });
+    return verifyAuth({ kind: 'bearer', token: t });
   };
 
+  function adopt(a) {
+    key = a.kind === 'bearer' ? a.token : a.key; auth = a;
+    st.verifiedAt = clock(); st.expiredSource = null;
+    armExpiry();
+  }
+
   // connect(key, {remember=true}) -> Promise<{ok, state, error?}>: verify, then store and switch on.
+  // A federated access token (sk-ant-oat…) given here is routed to connectToken.
   AI.connect = function (k, opts) {
     opts = opts || {};
-    var remember = opts.remember !== false;
     k = typeof k === 'string' ? k.trim() : '';
+    if (AI.isTokenLike(k)) return AI.connectToken(k, opts);
+    var remember = opts.remember !== false, prev = st.state;
     setState('connecting');
     return AI.verifyKey(k).then(function (r) {
-      if (r.ok) {
-        key = k; st.remember = remember; st.verifiedAt = clock();
-        writeKey(k, remember);
-        setState('on');
-      } else {
-        // A failed new key never disturbs a working connection.
-        setState(AI.isOn() ? 'on' : (r.state === 'blocked' || r.state === 'invalid' ? r.state : 'off'), r.error);
-      }
+      if (!r.ok) return failed(r, prev);
+      adopt({ kind: 'apiKey', key: k }); st.remember = remember;
+      clearToken(); writeKey(k, remember);
+      setState('on');
+      return r;
+    });
+  };
+
+  // connectToken(token, {expiresAt?, source?='pasted'}) -> Promise<{ok, state, error?}>: verify, keep in sessionStorage only, switch on.
+  // expiresAt: epoch ms, Date or ISO string; unknown is allowed (a 401 later ends the connection).
+  AI.connectToken = function (t, opts) {
+    opts = opts || {};
+    t = typeof t === 'string' ? t.trim() : '';
+    var exp = parseExpiry(opts.expiresAt);
+    if (exp !== null && isNaN(exp)) return Promise.resolve({ ok: false, state: 'invalid', error: 'That expiry time isn’t a valid date.' });
+    if (exp !== null && exp <= wall()) return Promise.resolve({ ok: false, state: 'expired', error: 'That token has already expired.' });
+    var prev = st.state;
+    setState('connecting');
+    return AI.verifyToken(t).then(function (r) {
+      if (!r.ok) return failed(r, prev);
+      var a = { kind: 'bearer', token: t, expiresAt: exp, source: opts.source === 'federated' ? 'federated' : 'pasted' };
+      adopt(a); st.remember = false;
+      clearKey(); writeToken(a);
+      setState('on');
+      checkExpiry();
       return r;
     });
   };
 
   AI.setRemember = function (remember) {
     st.remember = !!remember;
-    if (key) writeKey(key, st.remember);
+    if (key && auth && auth.kind === 'apiKey') writeKey(key, st.remember);
     emit();
   };
 
   AI.disconnect = function () {
-    key = null;
-    clearKey();
+    key = null; auth = null; st.expiredSource = null;
+    clearKey(); clearToken(); armExpiry();
     queue.forEach(function (j) { j.cancelled = true; });
     setState('off');
   };
 
-  // Reads a stored key at load and re-verifies it quietly.
+  // Reads a stored key (or this tab's token) at load and re-verifies it quietly.
   AI.restore = function () {
+    var tok = readToken();
+    if (tok && !readKey()) {
+      if (tok.expiresAt && tok.expiresAt <= wall()) { clearToken(); setState('expired', 'Your access token expired. Agents are using rules until you renew it.'); return Promise.resolve({ ok: false, state: 'expired' }); }
+      setState('connecting');
+      return verifyAuth(tok).then(function (r) {
+        if (r.ok) { adopt(tok); st.remember = false; setState('on'); checkExpiry(); }
+        else if (r.state === 'invalid' || r.state === 'blocked') { clearToken(); setState(r.state === 'invalid' ? 'expired' : r.state, r.state === 'invalid' ? 'Your access token was refused or has expired. Agents are using rules until you renew it.' : r.error); }
+        else { adopt(tok); st.remember = false; setState('on'); checkExpiry(); }
+        return r;
+      });
+    }
     var k = readKey();
     if (!k) return Promise.resolve({ ok: false, state: 'off' });
     setState('connecting');
     return AI.verifyKey(k).then(function (r) {
-      if (r.ok) { key = k; setState('on'); }
+      if (r.ok) { adopt({ kind: 'apiKey', key: k }); setState('on'); }
       else if (r.state === 'invalid' || r.state === 'blocked') { setState(r.state, r.error); }
-      else { key = k; setState('on'); }    // offline/busy at load: keep the key; calls fall back until it answers
+      else { adopt({ kind: 'apiKey', key: k }); setState('on'); }    // offline/busy at load: keep the key; calls fall back until it answers
       return r;
     });
   };
@@ -282,5 +390,7 @@
     setTimeout(function () { AI.restore().catch(report); }, 0);
   }
 
-  AI._test = { parseResponse: parseResponse, setKey: function (k) { key = k; setState(k ? 'on' : 'off'); } };
+  AI._test = { parseResponse: parseResponse, setKey: function (k) { key = k; auth = k ? { kind: 'apiKey', key: k } : null; armExpiry(); setState(k ? 'on' : 'off'); },
+    setToken: function (t, exp) { var a = { kind: 'bearer', token: t, expiresAt: exp || null, source: 'pasted' }; adopt(a); setState('on'); checkExpiry(); },
+    checkExpiry: checkExpiry };
 })();

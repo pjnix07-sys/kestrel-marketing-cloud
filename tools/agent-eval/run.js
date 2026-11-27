@@ -5,7 +5,7 @@ const fs = require('fs'), path = require('path'), vm = require('vm');
 const root = path.join(__dirname, '..', '..');
 const VERBOSE = process.argv.includes('--verbose');
 const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
-const srcs = [...html.matchAll(/src="(js\/[^"]+)"/g)].map(m => m[1]).filter(s => /^js\/(core|ai|agents)\//.test(s));
+const srcs = [...html.matchAll(/src="(js\/[^"?]+)(?:\?v=[^"]*)?"/g)].map(m => m[1]).filter(s => /^js\/(core|ai|agents)\//.test(s));
 const spec = JSON.parse(fs.readFileSync(path.join(__dirname, 'cases.json'), 'utf8'));
 
 // ---- fake Anthropic: only the 16-token verify call answers; agent calls are held until released ----
