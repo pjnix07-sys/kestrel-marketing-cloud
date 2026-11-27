@@ -181,13 +181,14 @@
     var c = useSel(function (w) { return w.content; });
     var vrs = useSel(function (w) { return w.variants; });
     var st = React.useState(0), bump = st[0], setBump = st[1];
-    var xs = React.useState(function () { return memo.openBlock || null; }), open = xs[0], setOpen = xs[1];
+    var xs = React.useState(function () { var b = p.openBlock || null; return b; }), open = xs[0], setOpen = xs[1];
+    // A link to a block (search, another screen) opens it in the list and brings it into view.
     React.useEffect(function () {
-      if (!memo.openBlock) return undefined;
-      var id = memo.openBlock; memo.openBlock = null; setOpen(id);
-      var raf = window.requestAnimationFrame(function () { var el = document.getElementById('ct-blk-' + id); if (el && el.scrollIntoView) { try { el.scrollIntoView({ block: 'center' }); } catch (e) { /* ignore */ } } });
+      if (!p.openBlock) return undefined;
+      setOpen(p.openBlock);
+      var raf = window.requestAnimationFrame(function () { var el = document.getElementById('ct-blk-' + p.openBlock); if (el && el.scrollIntoView) { try { el.scrollIntoView({ block: 'center' }); } catch (e) { /* ignore */ } } });
       return function () { window.cancelAnimationFrame(raf); };
-    }, [p.focusKey]);
+    }, [p.openKey]);
     var w = world(), KK = K();
     function set(patch) { assign(memo, patch); setBump(bump + 1); }
     if (!w || !c) return h`<p className="ct-empty">Loading the library${ELL}</p>`;
@@ -702,7 +703,8 @@
     var ts = React.useState(memo.tab), tab = ts[0], setTab0 = ts[1];
     var ms = React.useState(memo.msgId), msgId0 = ms[0], setMsg0 = ms[1];
     var wide = MC.hooks.useMedia ? MC.hooks.useMedia('(min-width: 720px)') : true;
-    var fkey = [focus.messageId, focus.variantId, focus.tab, focus.blockId].join('|');
+    var fkey = [focus.messageId, focus.variantId, focus.tab, focus.blockId, focus.n].join('|');
+    var kk = React.useState(0), kick = kk[0], setKick = kk[1];
     var seen = React.useRef('');
     // Links from the rest of the app arrive as focus: a message, or a channel version (variant).
     React.useEffect(function () {
@@ -710,7 +712,7 @@
       seen.current = fkey;
       var w = world(), id = focus.messageId;
       if (!id && focus.variantId && w && w.variants.byId[focus.variantId]) id = w.variants.byId[focus.variantId].messageId || null;
-      if (focus.blockId) { memo.openBlock = focus.blockId; memo.q = ''; memo.show = 'all'; memo.kind = ''; memo.angle = ''; memo.tone = ''; memo.review = ''; memo.channel = ''; memo.tab = 'library'; setTab0('library'); }
+      if (focus.blockId) { memo.q = ''; memo.show = 'all'; memo.kind = ''; memo.angle = ''; memo.tone = ''; memo.review = ''; memo.channel = ''; memo.tab = 'library'; setTab0('library'); setKick(function (k) { return k + 1; }); }
       else if (id) { memo.msgId = id; setMsg0(id); memo.tab = 'compose'; setTab0('compose'); }
       else if (focus.tab && TABS.some(function (t) { return t[0] === focus.tab; })) { memo.tab = focus.tab; setTab0(focus.tab); }
     }, [fkey, ready]);
@@ -736,7 +738,7 @@
       </header>
       <div id="ct-panel" role="tabpanel" aria-labelledby=${'ct-tab-' + tab}>
         ${!ready ? h`<p className="ct-empty">Loading Fernway content${ELL}</p>`
-          : tab === 'library' ? h`<${Library} onOpenMessage=${openMessage} focusKey=${fkey} />`
+          : tab === 'library' ? h`<${Library} onOpenMessage=${openMessage} openBlock=${focus.blockId || null} openKey=${fkey + '|' + kick} />`
           : tab === 'compose' ? h`<div>
               <label className="ct-filter ct-pick"><span>Message</span>
                 <select id="ct-msg" className="ct-select" value=${msgId || ''} onChange=${function (e) { openMessage(e.target.value); }}>${(msgs ? msgs.order : EMPTY).map(function (id) { return h`<option key=${id} value=${id}>${msgs.byId[id].name}</option>`; })}</select></label>

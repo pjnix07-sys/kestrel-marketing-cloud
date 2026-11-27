@@ -64,10 +64,11 @@ function suite(MC, w, label) {
     const m = M.mission(w, id), row = S.missions(w).filter(r => r.id === id)[0], det = S.mission(w, id);
     eq(L(id + ' mission row value'), row.progress.value, m.value);
     eq(L(id + ' mission detail value'), det.progress.value, m.value);
-    eq(L(id + ' mission forecast'), row.progress.forecast, m.forecast);
+    eq(L(id + ' mission forecast'), row.progress.forecast, m.forecast.value);
+    check(L(id + ' verdict enum'), ['on pace', 'behind', 'ahead', 'too early'].includes(m.verdict), m.verdict);
     if (m.metric === 'revenue') eq(L(id + ' mission = sum of campaigns'), m.value, Math.round(m.campaignIds.reduce((a, c) => a + M.campaign(w, c).revenue, 0)));
     eq(L(id + ' mission revenue field'), m.revenue, m.campaignIds.reduce((a, c) => a + M.campaign(w, c).revenue, 0), 1e-6);
-    check(L(id + ' forecast range ordered'), m.lo <= m.forecast + 1e-9 && m.forecast <= m.hi + 1e-9 && m.value <= m.forecast + 1e-9, JSON.stringify([m.value, m.lo, m.forecast, m.hi]));
+    check(L(id + ' forecast range ordered'), m.forecast.lo <= m.forecast.value + 1e-9 && m.forecast.value <= m.forecast.hi + 1e-9 && m.value <= m.forecast.value + 1e-9, JSON.stringify([m.value, m.forecast]));
     const mp = w.missions.byId[id].progress;   // stored daily snapshot may lag, never lead, the live value for revenue
     if (m.metric === 'revenue' && mp) check(L(id + ' snapshot not ahead of live'), mp.value <= m.value + 1, mp.value + ' vs ' + m.value);
   });

@@ -696,7 +696,7 @@
         return html`<span><button type="button" className="an-link" onClick=${function () { goTo('missions', r.id); }}>${r.title}</button><span className="an-sub-num">${(r.m.campaignIds || EMPTY).map(function (cid) { var c = camps && camps.byId[cid]; return c ? c.name : cid; }).join(', ') || 'No campaign yet'}</span></span>`; } },
       { key: 'progress', label: 'Progress', align: 'right', sortValue: function (r) { return r.m.pct; }, render: function (r) {
         var f = missionFmt(r.m.metric);
-        return html`<span><strong className="num">${f(r.m.value)}</strong> of <span className="num">${f(r.m.target)}</span><span className="an-sub-num">${r.m.verdict || 'Too early to call'}</span></span>`; } },
+        return html`<span><strong className="num">${f(r.m.value)}</strong> of <span className="num">${f(r.m.target)}</span><span className="an-sub-num">${r.m.text || 'Too early to call'}</span></span>`; } },
       { key: 'revenue', label: 'Revenue', align: 'right', sortValue: function (r) { return r.m.revenue; }, render: function (r) { return moneyC(r.m.revenue); } },
       { key: 'cost', label: 'Spend', align: 'right', sortValue: function (r) { return r.m.cost; }, render: function (r) { return moneyC(r.m.cost); } },
       { key: 'roas', label: 'Return', align: 'right', sortValue: function (r) { return r.m.roas; }, render: function (r) { return ratio(r.m.roas); } },

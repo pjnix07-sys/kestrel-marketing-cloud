@@ -12,7 +12,9 @@
   A.ANGLES = ['trail-season', 'warmth', 'gifting', 'utility', 'urgency'];
   A.ANGLE_LABEL = { 'trail-season': 'Trail season', warmth: 'Warmth and comfort', gifting: 'Gifting', utility: 'Practical', urgency: 'Urgency with a deadline' };
   A.OWNED = ['email', 'sms', 'push'];
-  var NA = 5, NC = 3, Z95 = 1.96, TASTE_K = 1.2, TASTE_MIN = -1, TASTE_MAX = 3.5;   // taste = 1 + K z (z standardised): mean about 1, and some people actively dislike an angle
+  var NA = 5, NC = 3, Z95 = 1.96, TASTE_K = 1.4, TASTE_MIN = -1, TASTE_MAX = 3.5;
+  // Offsets so the people who actually receive each angle in the seeded campaigns average taste 1 (calibrated against the sample world's sends).
+  var TASTE_OFFSET = [0.25, -0.42, 0, -0.31, -0.04];   // taste = 1 + K z (z standardised): mean about 1, and some people actively dislike an angle
   var HALF_LIFE = { headline: 2, body: 3, offer: 6, cta: 5, image: 3, product: 8, claim: 10, signoff: 20 };
   var RANKED_KINDS = ['headline', 'body', 'offer', 'cta', 'image'];
   A.angleIndex = function (angle) { return A.ANGLES.indexOf(angle === 'practical' ? 'utility' : angle); };
@@ -34,23 +36,23 @@
       raw[i * NA + 4] = (P.age[i] < 32 ? 0.9 : 0) + (P.tenure[i] < 365 ? 0.7 : 0) - 0.4 * P.tier[i] + 0.4 * ps;
       for (a = 0; a < NA; a++) raw[i * NA + a] += rng.normal(0, 0.45);
     }
-    // Standardise over the people campaigns actually message (the union of campaign audiences), so "trail-season beats the rest" still holds
-    // for the typical recipient and only deviates for audiences that care more or less.
-    var rec = new Uint8Array(n), nrec = 0;
+    // Standardise over the people campaigns message, counting a person once per campaign that includes them (so the typical send, not
+    // the typical customer, has mean taste 1 and "trail-season beats the rest" still holds on average).
+    var rec = new Float64Array(n), nrec = 0;
     (world.campaigns && world.campaigns.order || []).forEach(function (cid) {
-      var sg = world.segments && world.segments.byId[world.campaigns.byId[cid].segmentId];
-      if (!sg) return;
+      var cc = world.campaigns.byId[cid], sg = world.segments && world.segments.byId[cc.segmentId];
+      if (!sg || cc.status === 'completed') return;
       var bits = MC.segments.evaluate(world, sg.rule).bits;
-      for (var q = 0; q < n; q++) if (bits[q]) rec[q] = 1;
+      for (var q = 0; q < n; q++) if (bits[q]) rec[q] += 1;
     });
     for (i = 0; i < n; i++) nrec += rec[i];
     if (!nrec) { for (i = 0; i < n; i++) rec[i] = 1; nrec = n; }
     var taste = new Float32Array(n * NA);
     for (a = 0; a < NA; a++) {
       var s = 0, s2 = 0;
-      for (i = 0; i < n; i++) { if (!rec[i]) continue; var x = raw[i * NA + a]; s += x; s2 += x * x; }
+      for (i = 0; i < n; i++) { if (!rec[i]) continue; var x = raw[i * NA + a]; s += rec[i] * x; s2 += rec[i] * x * x; }
       var mu = s / nrec, sd = Math.sqrt(Math.max(1e-9, s2 / nrec - mu * mu));
-      for (i = 0; i < n; i++) taste[i * NA + a] = Math.max(TASTE_MIN, Math.min(TASTE_MAX, 1 + TASTE_K * (raw[i * NA + a] - mu) / sd));
+      for (i = 0; i < n; i++) taste[i * NA + a] = Math.max(TASTE_MIN, Math.min(TASTE_MAX, 1 + TASTE_OFFSET[a] + TASTE_K * (raw[i * NA + a] - mu) / sd));
     }
     L.taste = taste;
     return taste;

@@ -1045,7 +1045,7 @@
     else if (kind === 'campaign') nav('campaigns', { mode: 'detail', id: id, tab: 'overview' });
     else if (kind === 'segment') nav('audiences', { tab: 'segments', segmentId: id });
     else if (kind === 'message') nav('content', { messageId: id, variantId: null, tab: 'compose' });
-    else if (kind === 'block') nav('content', { blockId: id, tab: 'library' });
+    else if (kind === 'block') nav('content', { blockId: id, tab: 'library', n: (X._n = (X._n || 0) + 1) });
     else if (kind === 'agent') nav('agents', { tab: 'activity', agentId: id });
   };
   X.href = function (kind, id) {
@@ -1070,7 +1070,9 @@
     var camp = kind === 'campaign' ? w.campaigns.byId[id] : null;
     var seg = camp && camp.segmentId && w.segments.byId[camp.segmentId];
     var msgs = kind === 'campaign' ? X.messagesOfCampaign(w, id) : [];
-    var cams = kind === 'message' ? X.campaignsOfMessage(w, id) : [];
+    var cams = kind === 'message' ? X.campaignsOfMessage(w, id)
+      : kind === 'segment' ? (w.campaigns.order || Object.keys(w.campaigns.byId)).filter(function (cid) { return w.campaigns.byId[cid] && w.campaigns.byId[cid].segmentId === id; }) : [];
+    if (kind === 'segment') cams.forEach(function (cid) { X.messagesOfCampaign(w, cid).forEach(function (x) { if (!msgs.some(function (y) { return y.id === x.id; })) msgs.push(x); }); });
     function L(lab, items) { if (items.length) parts.push(html`<span key=${lab} className="xref-part"><span className="xref-k">${lab}</span> ${items}</span>`); }
     function join(arr) { var out = []; arr.forEach(function (x, i) { if (i) out.push(', '); out.push(x); }); return out; }
     L(ms.length === 1 ? 'Mission' : 'Missions', join(ms.slice(0, 3).map(function (m) { return html`<${U.Xlink} key=${m.id} kind="mission" id=${m.id}>${trunc(X.missionTitle(m), 46)}<//>`; })));

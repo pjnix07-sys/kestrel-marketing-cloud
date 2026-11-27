@@ -1171,12 +1171,17 @@
     if (n0 < C_MIN_DELIV || k0 < C_MIN_HITS) return 'Not enough other content on ' + chWord(ch) + ' to compare with yet.';
     return null;
   }
+  // Revenue per send with the conversion-rate interval scaled by order value; the interval always brackets the observed value.
+  function rps(g, cv, a) {
+    var v = g[0] > 0 ? g[5] / g[0] : 0, aa = g[4] > 0 ? g[5] / g[4] : (a || 0);
+    return { value: v, lo: Math.min(v, cv.lo * aa), hi: Math.max(v, cv.hi * aa) };
+  }
   function ccell(ch, g, within, aov, metric) {
     var m = metric || C_LIFT_METRIC[ch] || 'click';
     var cv = crate(g[4], g[0]), a = g[4] >= 5 ? g[5] / g[4] : aov;
     var cell = { channel: ch, metric: m, sent: g[0], delivered: g[1], opens: g[2], clicks: g[3], conversions: g[4], revenue: cr2(g[5]),
       rates: { open: crate(g[2], g[1]), click: crate(g[3], g[1]), conv: crate(g[4], g[1]) },
-      revPerSend: { value: g[0] > 0 ? g[5] / g[0] : 0, lo: cv.lo * (a || 0), hi: cv.hi * (a || 0) },
+      revPerSend: rps(g, cv, a),
       lift: null, enough: false, reason: null };
     if (!(g[1] > 0)) { cell.reason = 'Not sent on ' + chWord(ch) + ' yet.'; return cell; }
     var x = cwithinCell(ch, within, m);
@@ -1314,8 +1319,7 @@
           var po = cvec(), cnt = 0;
           cells.forEach(function (ch) { if (ch !== 'sms') { po[1] += byCh[ch].delivered; po[2] += byCh[ch].opens; } });
           row.rates = { open: crate(po[2], po[1]), click: crate(sum[3], sum[1]), conv: crate(sum[4], sum[1]) };
-          var cv = crate(sum[4], sum[0]), aov = sum[4] >= 5 ? sum[5] / sum[4] : 0;
-          row.revPerSend = { value: sum[0] > 0 ? sum[5] / sum[0] : 0, lo: cv.lo * aov, hi: cv.hi * aov };
+          row.revPerSend = rps(sum, crate(sum[4], sum[0]), 0);
           row.metric = o.metric || 'engagement';
           row.lift = null; row.enough = false;
           var allx = wk['*'], x = null;
@@ -1581,6 +1585,7 @@
   function mAgentName(id) { return MC.lead && MC.lead.agentName ? MC.lead.agentName(id) : agentName(id); }
   function mList(w) { var s = w.missions; return s ? s.order.map(function (id) { return s.byId[id]; }).filter(Boolean) : EMPTY; }
   function stepText(st) { return st.title; }
+  function fcv(pr) { return pr.forecast && typeof pr.forecast === 'object' ? pr.forecast.value : pr.forecast; }
   function missionRow(w, m) {
     var o = m.objective, L = MC.lead, pr = (MC.metrics && MC.metrics.mission(w, m.id)) || m.progress || { value: 0, target: o.target, forecast: 0, lo: 0, hi: 0 };
     var open = (m.asks || []).filter(function (a) { return a.status === 'open'; });
@@ -1605,7 +1610,7 @@
     return {
       id: m.id, title: m.title, goalText: m.goalText, status: m.status, phase: m.phase, brain: m.brain, createdTick: m.createdTick,
       objective: { metric: o.metric, target: o.target, by: o.by, deadlineText: o.deadlineText, direction: o.direction || 'atLeast', constraints: cons, text: L ? L.objectiveText(o) : '' },
-      progress: { value: pr.value, target: pr.target, forecast: pr.forecast, lo: pr.lo, hi: pr.hi, pct: pr.target > 0 ? pr.value / pr.target : 0, forecastPct: pr.target > 0 ? pr.forecast / pr.target : 0, band: pr.band && pr.band !== 'early' ? pr.band : band, verdict: pr.verdict || '' },
+      progress: { value: pr.value, target: pr.target, forecast: fcv(pr), lo: pr.lo, hi: pr.hi, by: o.by, pct: pr.target > 0 ? pr.value / pr.target : 0, forecastPct: pr.target > 0 ? fcv(pr) / pr.target : 0, band: pr.band && pr.band !== 'early' ? pr.band : band, verdict: pr.verdict || '', text: pr.text || '' },
       steps: { done: done, total: m.plan.length }, agents: agents, now: now,
       nextAsk: blocking[0] || open[0] || null, openAsks: open.length, blockingAsks: blocking.length, artifacts: (m.artifacts || []).length, replans: m.replans || 0,
       lastBeat: lastBeat ? { tick: lastBeat.tick, agentId: lastBeat.agentId, kind: lastBeat.kind, text: lastBeat.text } : null
@@ -1631,12 +1636,12 @@
       var plan = m.plan.map(function (st) {
         var ask = st.status === 'blocked' ? (m.asks || []).filter(function (a) { return a.stepId === st.id && a.status === 'open'; })[0] : null;
         return { id: st.id, kind: st.kind, agentId: st.agentId, agentName: mAgentName(st.agentId), title: st.title, needs: st.needs.slice(), status: st.status, note: st.note || '',
-          startedTick: st.startedTick, doneTick: st.doneTick, artifact: st.artifact || null, askId: ask ? ask.id : null };
+          startedTick: st.startedTick, doneTick: st.doneTick, artifact: st.artifact || null, askId: ask ? ask.id : null, decision: st.decision || null };
       });
       var art = (m.artifacts || []).map(function (a) { return artifactRow(w, a); });
       var open = (m.asks || []).filter(function (a) { return a.status === 'open'; });
       var answered = (m.asks || []).filter(function (a) { return a.status === 'answered'; });
-      var beats = m.log.map(function (b) { return { tick: b.tick, agentId: b.agentId, agentName: mAgentName(b.agentId), kind: b.kind, text: b.text, ref: b.ref || null }; });
+      var beats = m.log.map(function (b) { return { tick: b.tick, agentId: b.agentId, agentName: mAgentName(b.agentId), kind: b.kind, text: b.text, ref: b.ref || null, stepId: b.stepId || null, diff: b.diff || null, sides: b.sides || null, resolution: b.resolution || null }; });
       return assign({}, row, { plan: plan, asks: { open: open, answered: answered }, beats: beats, artifacts: art, steers: (m.steers || []).slice(), data: m.data || {} });
     });
   };

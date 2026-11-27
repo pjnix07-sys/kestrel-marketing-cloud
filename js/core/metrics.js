@@ -6,7 +6,7 @@
                                   holdoutPct, holdoutLabel, definition }
                                 revenue = orders by people enrolled in the campaign, enrolment to campaign end, credited last-touch
                                 (within 7 days of a touch) to this campaign. `direct` = orders placed straight from its own clicks.
-     mission(w, id)          -> { id, metric, value, target, forecast, lo, hi, band, pct, forecastPct, verdict, campaignIds[],
+     mission(w, id)          -> { id, metric, value, target, by, forecast:{value,lo,hi}, lo, hi, band, pct, forecastPct, verdict:"on pace"/"behind"/"ahead"/"too early", text, campaignIds[],
                                   revenue, conversions, reactivations, cost, roas, sent, delivered, reached }
      lift(w, {campaignId|missionId|segmentId|blockId}) -> { ready, scope, metric, treated, control, liftPct (percent units), lo, hi,
                                   nTreated, nControl, holdoutPct:5, label:'5% held out', note }
@@ -251,11 +251,12 @@
       value = r1(o.metric, value); forecast = r1(o.metric, forecast); lo = r1(o.metric, lo); hi = r1(o.metric, hi);
       var fm = function (x) { return o.metric === 'revenue' ? MC.fmt.money(x, { compact: true }) : MC.fmt.num(Math.round(x)); };
       var byTxt = MC.time && MC.time.dayLabel && isNum(o.by) ? MC.time.dayLabel(o.by) : '';
-      var verdict = (band === 'early' || !(forecast > 0)) ? '' :
+      var text = (band === 'early' || !(forecast > 0)) ? '' :
         'On pace for ' + fm(forecast) + ' of ' + fm(target) + ' (' + fm(lo) + ' to ' + fm(hi) + ')' + (byTxt ? ' by ' + byTxt : '') + '.';
+      var verdict = { early: 'too early', on: 'on pace', behind: 'behind', ahead: 'ahead' }[band] || 'too early';
       return {
-        id: id, metric: o.metric, direction: o.direction || 'atLeast', value: value, target: target, forecast: forecast, lo: lo, hi: hi, band: band,
-        pct: target > 0 ? value / target : 0, forecastPct: target > 0 ? forecast / target : 0, verdict: verdict,
+        id: id, metric: o.metric, direction: o.direction || 'atLeast', value: value, target: target, by: o.by, forecast: { value: forecast, lo: lo, hi: hi }, lo: lo, hi: hi, band: band,
+        pct: target > 0 ? value / target : 0, forecastPct: target > 0 ? forecast / target : 0, verdict: verdict, text: text,
         daysLeft: pr ? pr.daysLeft : null, campaignIds: cids, campaigns: rows,
         revenue: tot.revenue, conversions: tot.conversions, reactivations: tot.reactivations, cost: tot.cost, roas: tot.cost > 0 ? tot.revenue / tot.cost : null,
         sent: tot.sent, delivered: tot.delivered, reached: tot.reached
