@@ -30,6 +30,7 @@
 
   /* ---------------- state ---------------- */
   var st = { state: 'off', message: '', remember: true, verifiedAt: null };
+  var lastError = '';  // Anthropic's own explanation for the latest rejected (400) request, shown in the Connect panel
   var key = null;
   var usage = { calls: 0, agentRuns: 0, tasks: 0, fallbacks: 0, errors: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, ms: 0 };
   var subs = [];
@@ -51,7 +52,7 @@
   AI.isOn = function () { return st.state === 'on' && !!key; };
   AI.state = function () { return st.state; };
   AI.getState = function () {
-    return { state: st.state, message: st.message, remember: st.remember, hasKey: !!key, model: MODEL, modelLabel: AI.MODEL_LABEL,
+    return { state: st.state, message: st.message, lastError: lastError, remember: st.remember, hasKey: !!key, model: MODEL, modelLabel: AI.MODEL_LABEL,
       usage: AI.usage(), inFlight: active, queued: queue.length };
   };
   AI.usage = function () { return assign({}, usage); };
@@ -144,6 +145,11 @@
     var deadline = clock() + (opts.timeoutMs || 30000);
     function left() { return Math.max(1, deadline - clock()); }
     return attempt(k, body, left()).then(function (r) {
+      if (r.status === 400) {
+        lastError = r.error || 'Request rejected';
+        try { if (window.console && console.warn) console.warn('[Claude] request rejected: ' + lastError); } catch (e) { /* no console */ }
+        emit();
+      }
       if (r.ok || r.status !== 429 || opts.noRetry) return r;
       var wait = parseFloat(r.retryAfter);
       wait = isFinite(wait) && wait >= 0 ? wait * 1000 : 1000;
@@ -222,14 +228,31 @@
   AI.verifyKey = function (k) {
     k = typeof k === 'string' ? k.trim() : '';
     if (!AI.isKeyLike(k)) return Promise.resolve({ ok: false, state: 'invalid', error: 'That doesn’t look like an Anthropic key (they start with sk-ant-).' });
-    var body = { model: MODEL, max_tokens: 16, output_config: { effort: 'low' }, messages: [{ role: 'user', content: 'Reply with OK.' }] };
-    return request(k, body, { timeoutMs: 15000 }).then(function (r) {
-      if (r.ok) { addUsage(r.json && r.json.usage); usage.calls++; return { ok: true, state: 'on' }; }
-      var auth = authFailure(r.status, r.error);
-      if (auth) return { ok: false, state: auth.state, error: auth.text };
-      if (r.status === 429) return { ok: false, state: 'off', error: 'Anthropic is busy right now. Try again in a minute.' };
-      if (!r.status) return { ok: false, state: 'off', error: 'Couldn’t reach Anthropic. Check your connection and try again.' };
-      return { ok: false, state: 'off', error: 'Anthropic answered with an error (' + r.status + '). Try again in a minute.' };
+    // Verify with a model lookup instead of a generation: it costs nothing, and it confirms both that the key works
+    // and that this account can use the model. (A tiny generation can be rejected with a 400 by models that think
+    // by default, which is what made valid keys fail here before.)
+    return new Promise(function (resolve) {
+      var done = false, ctl = null, timer = null;
+      function finish(r) { if (done) return; done = true; if (timer) clearTimeout(timer); resolve(r); }
+      if (typeof fetch !== 'function') { finish({ ok: false, state: 'off', error: 'This browser can’t reach Anthropic.' }); return; }
+      try { ctl = typeof AbortController === 'function' ? new AbortController() : null; } catch (e) { ctl = null; }
+      timer = setTimeout(function () { try { if (ctl) ctl.abort(); } catch (e) { /* ignore */ } finish({ ok: false, state: 'off', error: 'Anthropic didn’t answer in time. Try again in a minute.' }); }, 15000);
+      var init = { method: 'GET', headers: { 'x-api-key': k, 'anthropic-version': VERSION, 'anthropic-dangerous-direct-browser-access': 'true' } };
+      if (ctl) init.signal = ctl.signal;
+      fetch('https://api.anthropic.com/v1/models/' + MODEL, init).then(function (res) {
+        return res.text().then(function (txt) {
+          var json = null; try { json = txt ? JSON.parse(txt) : null; } catch (e) { json = null; }
+          var msg = json && json.error && json.error.message ? String(json.error.message) : '';
+          if (res.status >= 200 && res.status < 300) { usage.calls++; finish({ ok: true, state: 'on' }); return; }
+          var auth = authFailure(res.status, msg);
+          if (auth) { finish({ ok: false, state: auth.state, error: auth.text }); return; }
+          if (res.status === 403) { finish({ ok: false, state: 'invalid', error: 'This key isn’t allowed to use the Claude API' + (msg ? ': ' + msg : '.') }); return; }
+          if (res.status === 404) { finish({ ok: false, state: 'invalid', error: 'Your key works, but this account can’t use ' + AI.MODEL_LABEL + ' yet' + (msg ? ' (' + msg + ')' : '.') }); return; }
+          if (res.status === 429) { finish({ ok: false, state: 'off', error: 'Anthropic is busy right now. Try again in a minute.' }); return; }
+          // Show Anthropic's own explanation instead of a bare status code.
+          finish({ ok: false, state: 'off', error: 'Anthropic said: ' + (msg || ('error ' + res.status)) });
+        });
+      }, function (e) { finish({ ok: false, state: 'off', error: (e && e.name === 'AbortError') ? 'Anthropic didn’t answer in time. Try again in a minute.' : 'Couldn’t reach Anthropic. Check your connection and try again.' }); });
     });
   };
 
