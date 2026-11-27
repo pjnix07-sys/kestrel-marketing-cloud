@@ -20,7 +20,7 @@
   var KIND_LABEL = {
     'traffic-shift': 'Traffic shift', 'pause-variant': 'Pause variant', 'send-time': 'Send time', 'adaptive-send': 'Adaptive send time',
     'budget-shift': 'Budget shift', 'fatigue-suppress': 'Fatigue rest', 'pause-channel': 'Pause channel', 'extend-campaign': 'Extend campaign',
-    'new-variant': 'New variant', 'new-segment': 'New segment', 'retarget': 'Add audience', 'campaign-draft': 'Campaign draft'
+    'new-variant': 'New variant', 'new-segment': 'New segment', 'retarget': 'Add audience', 'campaign-draft': 'Campaign draft', 'retire-block': 'Retire a tired block', 'block-test': 'Test a headline across channels', 'block-verdict': 'Move traffic off a losing headline', 'new-blocks': 'New content blocks'
   };
   var RISK = {
     low: { label: 'Low risk', bg: 'var(--good-soft)', fg: 'var(--good)' },

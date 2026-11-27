@@ -108,6 +108,7 @@
     var art = s.artifact, c = campaignOf(w, m), seg, vs;
     if (art && art.kind === 'segment' && w.segments.byId[art.id]) { seg = w.segments.byId[art.id]; return { short: num(seg.count) + ' people', full: seg.name + ': ' + num(seg.count) + ' people' }; }
     if (art && art.kind === 'campaign' && w.campaigns.byId[art.id]) { return { short: 'Campaign draft', full: w.campaigns.byId[art.id].name }; }
+    if (s.kind === 'copy' && m.data && m.data.content && m.data.content.summary) return { short: m.data.content.summary, full: m.data.content.summary + (c ? ' for ' + c.name : '') };
     if (c && (s.kind === 'copy' || s.kind === 'rewrite')) {
       vs = MC.catalog.variantsOf(w, c.id);
       var mids = {}, chs = {};

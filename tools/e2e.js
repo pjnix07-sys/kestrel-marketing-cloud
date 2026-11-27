@@ -72,7 +72,7 @@ const externals = [];           // every non-localhost request that is not api.a
 const FORBIDDEN = [/kestrel/i, /sim day/i, /simulat/i, /\bseeds?\b/i, /\bticks?\b/i];
 /* [hash, ui route, h1 prefix (null = a mission goal sentence)] */
 const ROUTES = [['missions', 'missions', null], ['missions/m-lhw', 'missions', null], ['team', 'agents', 'Your team of nine'], ['campaigns', 'campaigns', 'Campaigns'],
-  ['content', 'content', 'Content Studio'], ['audiences', 'audiences', 'Audiences'], ['analytics', 'analytics', 'Analytics']];
+  ['content', 'content', 'Content'], ['audiences', 'audiences', 'Audiences'], ['analytics', 'analytics', 'Analytics']];
 
 let browser;
 const live = new Set();
@@ -203,7 +203,7 @@ async function secMissions() {
     const batons = await page.$$eval('.mr-baton', els => els.map(e => e.getAttribute('title')));
     await check('missions: finished steps show hand-off batons', batons.length >= 1 && batons.every(t => /handed .+ to /.test(t)), batons.slice(0, 2).join(' | ') || 'none', page);
     const panels = await page.$$eval('.mr-art h3', els => els.map(e => e.textContent.trim()));
-    await check('missions: artifact panels Segment, Email, Journey, Budget', JSON.stringify(panels) === JSON.stringify(['Segment', 'Email', 'Journey', 'Budget']), panels.join(','), page);
+    await check('missions: artifact panels Segment, Message, Journey, Budget', JSON.stringify(panels) === JSON.stringify(['Segment', 'Message', 'Journey', 'Budget']), panels.join(','), page);
     const filled = await page.locator('.mr-art:not(.is-wait)').count();
     await check('missions: artifact panels hold real objects', filled >= 3, filled + ' of 4 filled', page);
     const narr = await page.locator('.mr-narr li').count(), narrH = await page.innerText('.mr-narr h2');

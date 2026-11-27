@@ -8,7 +8,7 @@
   MC.VERSION = '1.0.0';
   // Cache-busting build id. Bump it on every deploy and update the ?v= on each script and stylesheet in index.html to match
   // (tools/smoke.js fails if they differ).
-  MC.BUILD = '2026.11.27-1';
+  MC.BUILD = '2026.11.28-1';
   MC.SEED = 20261107;
   MC.TENANT = 'Fernway Outfitters';
 

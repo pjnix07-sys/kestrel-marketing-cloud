@@ -13,6 +13,7 @@ let mode = 'hold', held = [];
 const resp = (status, json) => Promise.resolve({ status, headers: { get: () => null }, text: () => Promise.resolve(JSON.stringify(json)) });
 const msg = (text, stop) => ({ type: 'message', stop_reason: stop || 'end_turn', content: [{ type: 'text', text }], usage: { input_tokens: 900, output_tokens: 300, cache_read_input_tokens: 6000 } });
 function fakeFetch(url, init) {
+  if (/\/v1\/models\//.test(url)) return resp(200, { type: 'model', id: 'claude-haiku-5-5' });   // key verification
   const body = JSON.parse(init.body);
   if (body.max_tokens === 16) return resp(200, msg('OK'));
   if (mode === 'hold') return new Promise((_, rej) => held.push(rej));
