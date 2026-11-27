@@ -1,8 +1,8 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="t">
   <title id="t">Marketing Cloud</title>
-  <!-- A customer journey drawn as an M: touchpoints rise, dip, then climb higher.
-       The highest touchpoint is where an agent acted (agent colour). -->
-  <rect width="64" height="64" rx="15" fill="#1F5C46"/>
-  <path d="M14 47 L20 23 L32 37 L44 17 L50 47" fill="none" stroke="#FFFFFF" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
-  <circle cx="44" cy="17" r="5.2" fill="#FF5A1F"/>
+  <!-- Converge: several agents' strands bending into one point, the goal. -->
+  <g fill="none" stroke="#112019" stroke-width="5" stroke-linecap="round">
+    <path d="M6 12c22 0 26 20 42 20"/><path d="M6 25c18 0 24 7 42 7"/><path d="M6 39c18 0 24-7 42-7"/><path d="M6 52c22 0 26-20 42-20"/>
+  </g>
+  <circle cx="52" cy="32" r="7" fill="#FF5A1F"/>
 </svg>

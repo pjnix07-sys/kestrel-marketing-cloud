@@ -296,9 +296,11 @@
   function openGoal() { setUi({ drawer: 'goal' }); }
   function Mark(p) {
     return html`<a className="app-mark" href="#missions" aria-label="Marketing Cloud, Missions" onClick=${function (e) { e.preventDefault(); go('missions'); }}>
-      <svg className="app-mark-glyph" viewBox="0 0 28 22" width="28" height="22" fill="none" aria-hidden="true">
-        <path d="M2.5 18.5 8 5l6 8.5L20 3l5 15.5" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
-        <circle className="app-mark-node" cx="20" cy="3.6" r="2.6" />
+      <svg className="app-mark-glyph" viewBox="0 0 64 64" width="26" height="26" fill="none" aria-hidden="true">
+        <g stroke="currentColor" strokeWidth="5" strokeLinecap="round">
+          <path d="M6 12c22 0 26 20 42 20" /><path d="M6 25c18 0 24 7 42 7" /><path d="M6 39c18 0 24-7 42-7" /><path d="M6 52c22 0 26-20 42-20" />
+        </g>
+        <circle className="app-mark-node" cx="52" cy="32" r="7" />
       </svg>
       ${p.compact ? null : html`<span className="app-mark-word">Marketing Cloud</span>`}
     </a>`;

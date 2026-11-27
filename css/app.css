@@ -77,7 +77,7 @@ svg g[tabindex]:focus-visible > :first-child { stroke: var(--focus); stroke-widt
 }
 .app-mark { display: inline-flex; align-items: center; gap: 10px; text-decoration: none; color: var(--ink); min-height: 40px; flex: 0 0 auto; border-radius: var(--radius-sm); }
 .app-mark-glyph { display: block; overflow: visible; }
-.app-mark-node { fill: var(--moss); }
+.app-mark-node { fill: var(--signal); }  /* the goal the agents converge on */
 .app-mark-word { font-weight: 700; font-size: 15px; letter-spacing: -0.01em; white-space: nowrap; }
 .app-topbar-rule { width: 1px; height: 22px; background: var(--line); flex: 0 0 auto; }
 
