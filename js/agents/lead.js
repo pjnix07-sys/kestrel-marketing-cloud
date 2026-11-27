@@ -526,8 +526,10 @@
     if (ms) budget = Math.max(500, Math.min(budget, Math.floor(ms.value / 100) * 100 || ms.value));
     if (isNum(ov.budget)) budget = Math.max(500, ov.budget);
     var aud = d.audience || {};
-    var names = { winback: 'Win-back: ' + (aud.label || 'lapsed customers'), launch: 'Launch: ' + (d.productName || 'new arrivals'),
-      event: d.event ? d.event.label + ' push' : 'Revenue push: ' + dayShort(endDay), grow: 'Grow: ' + (aud.label || 'new members') };
+    function upFirst(x) { x = String(x || ''); return x.charAt(0).toUpperCase() + x.slice(1); }
+    // Campaign names read like a marketer named them: "Trail runners sign-up push", "Lapsed hikers win-back".
+    var names = { winback: upFirst(aud.label || 'lapsed customers') + ' win-back to ' + dayShort(endDay), launch: upFirst(d.productName || 'new arrivals') + ' launch',
+      event: d.event ? d.event.label + ' push' : 'Revenue push to ' + dayShort(endDay), grow: upFirst(aud.label || 'new members') + ' sign-up push' };
     var goalType = L.GOAL_TYPE[o.metric] || 'revenue';
     var offer = ov.offer || offerFor(template, cons);
     return {
