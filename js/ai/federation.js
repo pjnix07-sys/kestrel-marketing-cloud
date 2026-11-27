@@ -140,7 +140,7 @@
     if (ctl) timer = setTimeout(function () { try { ctl.abort(); } catch (e) { /* ignore */ } }, 15000);
     var init = { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body), credentials: 'omit', referrerPolicy: 'no-referrer' };
     if (ctl) init.signal = ctl.signal;
-    return window.fetch(c.relayUrl, init).then(function (res) {
+    return Promise.resolve().then(function () { return window.fetch(c.relayUrl, init); }).then(function (res) {
       if (timer) clearTimeout(timer);
       return res.text().then(function (txt) {
         if (res.status === 401 || res.status === 403) return { ok: false, error: 'denied' };
