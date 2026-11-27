@@ -241,3 +241,7 @@
 @media (prefers-reduced-motion: reduce) {
   .v-missions *, .v-missions *::before, .v-missions *::after { animation: none !important; transition: none !important; }
 }
+
+.v-missions .mr-goal-h:focus, .v-missions .mr-goal-h:focus-visible { outline: none; box-shadow: none; }
+/* the top bar carries the mission switcher; keep only a compact strip in the page on phones */
+@media (min-width: 761px) { .mr-switch { display: none; } .mr-main { padding-top: 22px; } }
