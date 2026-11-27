@@ -92,6 +92,7 @@
       origin: origin, tick: tick, user: origin === 'user', by: meta.by || null, note: meta.note || null,
       agent: origin.indexOf('agent:') === 0,
       agentId: origin.indexOf('agent:') === 0 ? origin.slice(6) : null,
+      mission: meta.mission === true,   // a mission step acting for an agent (may work on its own drafts)
       created: []
     };
   }
@@ -195,7 +196,7 @@
         if (dn2 && dn2[payload.id] !== undefined) { var nn = assign({}, dn2); delete nn[payload.id]; MC.uiStore.set({ decisionNotes: nn }); }
       } catch (e) { /* no ui */ }
     }
-    var silent = action.type.indexOf('proposal/') === 0 || action.type === 'insight/dismiss' ||
+    var silent = action.type.indexOf('proposal/') === 0 || action.type.indexOf('mission/') === 0 || action.type === 'insight/dismiss' ||
       action.type === 'agent/aiRun' || action.type.indexOf('ai/') === 0;
     if (!silent) {
       var ent = def.entity ? def.entity(payload, r.created) : null;
@@ -250,7 +251,7 @@
     var c = camp(world, id);
     if (!c) return 'That campaign no longer exists.';
     opts = opts || {};
-    if (ctx.agent && c.status === 'draft' && !opts.allowDraftForAgent) return 'Agents never change draft campaigns.';
+    if (ctx.agent && !ctx.mission && c.status === 'draft' && !opts.allowDraftForAgent) return 'Agents never change draft campaigns.';
     if (c.status === 'completed' && !opts.allowCompleted) return 'Completed campaigns can’t be changed.';
     return null;
   }
@@ -585,12 +586,13 @@
 
   var UPDATE_KEYS = ['name', 'goal', 'startTick', 'endTick', 'tone', 'offer', 'productFocus', 'brief', 'eventDay'];
   C.define('campaign/update', {
-    by: ['user'],
+    by: ['user', 'agent:planner'],
     label: 'Edit campaign',
     entity: function (p) { return feedEntity('campaign', p.id); },
     validate: function (world, p, ctx) {
       var c = camp(world, p.id);
       if (!c) return 'That campaign no longer exists.';
+      if (ctx.agent && !ctx.mission) return 'Agents can’t edit campaigns directly.';
       if (!isObj(p.patch) || !Object.keys(p.patch).length) return 'Nothing to change.';
       var ks = Object.keys(p.patch);
       for (var i = 0; i < ks.length; i++) if (UPDATE_KEYS.indexOf(ks[i]) < 0) return 'Field ' + ks[i] + ' can’t be edited here.';
@@ -818,7 +820,7 @@
         next[ks[i]] = p.byChannel[ks[i]];
       }
       var tot = 0; sortedKeys(next).forEach(function (k) { tot += next[k]; });
-      if (ctx.agent && Math.abs(tot - c.budget.total) > 1) return 'Agents must keep the campaign total unchanged.';
+      if (ctx.agent && !ctx.mission && Math.abs(tot - c.budget.total) > 1) return 'Agents must keep the campaign total unchanged.';
       return null;
     },
     reduce: function (world, p, ctx) {
@@ -1817,4 +1819,26 @@
     inverse: function () { return []; },
     describe: function () { return 'You dismissed an insight'; }
   });
+  /* ================= missions (docs/AGENTIC.md) =================
+     State lives in world.missions {byId, order}. Logic is in MC.missions (js/core/missions.js) and MC.lead; these are the
+     typed, validated entry points. User actions are logged and replayed; the engine applies the same actions with origin
+     'mission' as deterministic consequences of ticks. */
+  function missionsLib() { return MC.missions; }
+  function missionAction(name, label, byList, describe) {
+    C.define('mission/' + name, {
+      by: byList,
+      label: label,
+      entity: function (p, created) { return feedEntity('mission', (created && created[0]) || p.id); },
+      validate: function (world, p, ctx) { var M = missionsLib(); return M ? M.validate(name, world, p || {}, ctx) : 'Missions aren’t available.'; },
+      reduce: function (world, p, ctx) { return missionsLib().reduce(name, world, p, ctx); },
+      inverse: function () { return []; },
+      describe: describe
+    });
+  }
+  missionAction('create', 'Start a mission', ['user'], function (world, p) { return 'You started a mission: ' + String(p.goalText || '').slice(0, 80); });
+  missionAction('step', 'Update a mission step', ['user', 'mission'], function () { return 'A mission step changed'; });
+  missionAction('ask', 'Ask the marketer', ['user', 'mission'], function () { return 'A mission asked a question'; });
+  missionAction('answer', 'Answer a mission question', ['user'], function () { return 'You answered a mission question'; });
+  missionAction('steer', 'Steer a mission', ['user'], function (world, p) { return 'You steered a mission: ' + String(p.text || '').slice(0, 80); });
+  missionAction('setStatus', 'Change mission status', ['user', 'mission'], function (world, p) { return 'You changed a mission to ' + p.status; });
 })();
