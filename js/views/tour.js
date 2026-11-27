@@ -1,4 +1,6 @@
-/* Marketing Cloud - guided first run (docs/DEMO.md part 2). Six small anchored notes, one at a time, no overlay.
+/* Marketing Cloud - guided first run for missions. Four small anchored notes, one at a time, no overlay, no timed
+   sequence: each note points at a real thing on screen right now (the goal sentence and lanes, an ask, the Lead
+   column, New goal). Views mark those things with data-tour="goal|lanes|ask|lead"; the shell supplies fallbacks.
    State lives in uiStore.firstRun (persisted with the other UI conveniences), never in the world or action log.
    Exposes MC.tour = { Host, Inline, start }. Loaded by app.js only when the guide can start or is asked for. */
 (function () {
@@ -9,22 +11,24 @@
   var html = MC.html || window.htm.bind(React.createElement);
   var useState = React.useState, useEffect = React.useEffect, useLayoutEffect = React.useLayoutEffect, useRef = React.useRef;
 
-  var IDLE_MS = 3000, MANUAL_IDLE_MS = 1200, ZERO_MS = 60000;
+  var IDLE_MS = 3000, MANUAL_IDLE_MS = 1200;
   var D = document;
   var WEBDRIVER = false;
   try { WEBDRIVER = !!navigator.webdriver && !window.MC_TOUR_FORCE; } catch (e) { /* ignore */ }
-  var DEEPLINK = (function () { var h = String(window.location.hash || '').replace(/^#/, ''); return !!h && h !== 'home'; })();
+  var DEEPLINK = (function () { var h = String(window.location.hash || '').replace(/^#/, ''); return !!h && h !== 'home' && h !== 'missions'; })();
+  var TOTAL = 4;
   var FRESH = { step: 1, done: false, skipped: false, resumes: 0, shown: 0 };
 
   var STEPS = {
-    1: { route: 'home', sel: ['.hm-figs', '.hm-hero'], where: 'before', copy: 'This is Fernway Outfitters, a sample brand. Four numbers show how the season is going.' },
-    2: { route: 'home', sel: ['#home-changes h2', '#home-changes'], where: 'before', copy: 'Eight agents work in the background. Their changes appear here, with View and Undo.' },
-    3: { route: 'home', sel: ['#app-approvals-btn'], where: 'after', copy: "Changes agents can't make alone wait here. Open one to see the reason and the exact change.",
-      zeroCopy: 'Nothing waiting now. Proposals from agents will land here.' },
-    4: { inline: true, copy: 'Check the reason and guardrails, then approve or dismiss. Dismissing pauses similar proposals.' },
-    5: { route: 'home', sel: ['#app-nav-agents'], phoneSel: ['#app-menu-btn'], where: 'after', side: 'right', copy: 'Set each agent to Off, Suggest or Autopilot. Guardrails stay on either way.',
-      phoneCopy: 'Open Menu, then Agents, to set each agent to Off, Suggest or Autopilot. Guardrails stay on either way.' },
-    6: { route: 'agents', sel: ['#app-connect-btn'], where: 'after', copy: 'Optional: add your own Anthropic key and the agents use Claude. Without one, rules run everything.' }
+    1: { route: 'missions', sel: ['[data-tour="goal"]', '#page-title', '#app-mission-tabs', '#app-mission-menu'], where: 'after',
+      copy: 'This is a goal, in one sentence. Each agent works it on its own lane: finished work fills in, queued work waits, and hand-offs show who passed what to whom.' },
+    2: { route: 'missions', sel: ['[data-tour="ask"]', '#app-asks-btn'], where: 'after',
+      copy: 'When the team needs a decision only you can make, it lands here as an ask with the reason and what each answer changes.',
+      zeroCopy: 'Nothing is waiting on you right now. When an agent needs a decision, it appears under Asks with the reason and the impact.' },
+    3: { route: 'missions', sel: ['[data-tour="lead"]', '#app-mission-tabs', '#app-mission-menu'], where: 'after',
+      copy: 'Steer in plain language in the Lead column, for example "keep it under 10%" or "skip SMS". The Lead answers and the plan re-forms on the board.' },
+    4: { route: 'missions', sel: ['#app-new-goal'], where: 'after',
+      copy: 'Give the team a new goal in one sentence. It joins the missions here and the Lead starts planning.' }
   };
 
   /* ---------------- runtime (not persisted) ---------------- */
@@ -49,6 +53,15 @@
     var a = D.activeElement;
     return !!a && (/^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName) || a.isContentEditable);
   }
+  function openCount() {
+    var w = MC.store.getState(), n = 0;
+    if (!w) return 0;
+    if (w.proposals && w.proposals.open) n += w.proposals.open.length;
+    var ms = w.missions;
+    if (ms && ms.order) ms.order.forEach(function (id) { var m = ms.byId[id]; if (m && m.status !== 'done' && m.status !== 'stopped') (m.asks || []).forEach(function (a) { if (a.status === 'open') n++; }); });
+    return n;
+  }
+  function routeKey() { var r = ui().route; return r === 'home' ? 'missions' : r; }
   function pendingIds() {
     var w = MC.store.getState();
     var p = w && w.proposals;
@@ -66,8 +79,7 @@
   }
   function copyFor(n) {
     var def = stepDef(n);
-    if (n === 3 && R.zeroSince !== null && Date.now() - R.zeroSince >= ZERO_MS) return def.zeroCopy;
-    if (n === 5 && phone()) return def.phoneCopy;
+    if (n === 2 && openCount() === 0) return def.zeroCopy;
     return def.copy;
   }
 
@@ -76,18 +88,18 @@
     var a = D.activeElement;
     if (!a || !a.closest || !a.closest('.tour-note')) return;
     if (D.documentElement.getAttribute('data-input') !== 'keyboard') return;
-    var t = anchor && /^(BUTTON|A)$/.test(anchor.tagName) ? anchor : (D.getElementById('approvals-drawer') || D.getElementById('page-title'));
+    var t = anchor && /^(BUTTON|A)$/.test(anchor.tagName) ? anchor : D.getElementById('page-title');
     if (t && t.focus) { try { t.focus({ preventScroll: true }); } catch (e) { t.focus(); } }
   }
   function hide() {
     if (R.shown === null) return;
-    var anchor = R.shown === 4 ? null : anchorFor(R.shown);
+    var anchor = anchorFor(R.shown);
     refocus(anchor);
     R.shown = null; R.copy = ''; emit();
   }
   function advance(from) {
     hide();
-    if (from >= 6) write({ step: 6, done: true }); else write({ step: from + 1 });
+    if (from >= TOTAL) write({ step: TOTAL, done: true }); else write({ step: from + 1 });
   }
   function skip() { hide(); write({ skipped: true }); }
   function show(n) {
@@ -99,7 +111,7 @@
   function start() {
     R.shown = null; R.sawDrawer = false; R.pending = null; R.manual = true; R.lastInput = 0;
     MC.uiStore.set({ firstRun: Object.assign({}, FRESH), drawer: null });
-    if (ui().route !== 'home') MC.nav.go('home');
+    if (routeKey() !== 'missions') MC.nav.go('missions');
     emit();
   }
 
@@ -108,36 +120,15 @@
     var s = ui(), f = current();
     if (!isActive(f)) { if (R.shown !== null) hide(); return; }
     var step = f.step;
-    if (s.drawer === 'approvals') {
-      if (step <= 3) { hide(); step = 4; write({ step: 4 }); return; }   // opening Approvals on their own marks step 3 done
-      if (step === 4) { R.sawDrawer = true; if (!R.pending) R.pending = pendingIds(); }
-    } else if (step === 4 && R.sawDrawer) {                                // closed without a decision: go on to step 5
-      R.sawDrawer = false; R.pending = null; hide(); write({ step: 5 }); return;
-    }
-    if (step === 5 && s.route === 'agents') { hide(); write({ step: 6 }); return; }   // they opened Agents themselves
-    if (step === 6 && s.drawer === 'connect') { hide(); write({ step: 6, done: true }); return; }
-    if (R.shown !== null && R.shown !== 4) {
+    if (s.drawer === 'approvals' && step === 2) { hide(); write({ step: 3 }); return; }   // opening Asks on their own marks step 2 done
+    if (s.drawer === 'goal' && step === 4) { hide(); write({ step: 4, done: true }); return; }
+    if (R.shown !== null) {
       var def = stepDef(R.shown);
-      if (s.route !== def.route) advance(R.shown);                         // navigating away marks the step done
+      if (routeKey() !== def.route) advance(R.shown);                      // navigating away marks the step done
       else if (layerOpen()) hide();                                        // a drawer or menu took over: wait for it to close
     }
   }
-  function onWorld() {
-    var w = MC.store.getState();
-    if (!w || !w.proposals) return;
-    var n = w.proposals.open ? w.proposals.open.length : 0;
-    if (n === 0) { if (R.zeroSince === null) R.zeroSince = Date.now(); } else R.zeroSince = null;
-    var f = current();
-    if (isActive(f) && f.step === 4 && R.pending && R.pending.length) {
-      for (var i = 0; i < R.pending.length; i++) {
-        var p = w.proposals.byId[R.pending[i]];
-        if (p && (p.status === 'applied' || p.status === 'rejected')) {
-          R.pending = null; R.sawDrawer = false; hide(); write({ step: 5 });
-          return;
-        }
-      }
-    }
-  }
+  function onWorld() { /* the copy for step 2 is read from the live state when the note is shown */ }
 
   /* ---------------- when to show ---------------- */
   function inView(el) {
@@ -152,15 +143,9 @@
     if (typing()) return;
     var wait = R.manual ? MANUAL_IDLE_MS : IDLE_MS;
     if (Date.now() - R.lastInput < wait) return;
-    if (n === 4) {
-      if (s.drawer !== 'approvals') return;
-      if (!pendingIds().length) { R.sawDrawer = false; R.pending = null; write({ step: 5 }); return; }
-      if (!D.getElementById('tour-inline')) return;
-      show(4); return;
-    }
     if (layerOpen()) return;
     var def = stepDef(n);
-    if (s.route !== def.route) return;
+    if (routeKey() !== def.route) return;
     if (n === 1 && !R.manual && !s.sampleDismissed) return;
     var a = anchorFor(n);
     if (!a) return;
@@ -173,9 +158,9 @@
 
   /* ---------------- components ---------------- */
   function Note(p) {
-    var n = p.step, last = n === 6;
-    return html`<div className=${'tour-note ' + (p.cls || '')} style=${p.style} role="group" aria-label=${'Guide, step ' + n + ' of 6'} ref=${p.boxRef}>
-      <p className="tour-step">${'Step ' + n + ' of 6'}</p>
+    var n = p.step, last = n === TOTAL;
+    return html`<div className=${'tour-note ' + (p.cls || '')} style=${p.style} role="group" aria-label=${'Guide, step ' + n + ' of ' + TOTAL} ref=${p.boxRef}>
+      <p className="tour-step">${'Step ' + n + ' of ' + TOTAL}</p>
       <p className="tour-copy">${p.copy}</p>
       <div className="tour-actions">
         <button type="button" className="k-link tour-skip" onClick=${skip}>Skip guide</button>
@@ -230,13 +215,8 @@
       cls=${'tour-note--float' + (pos ? ' tour-note--' + pos.side : ' is-pending')} />`, host);
   }
 
-  // The note for step 4 sits inside the approvals drawer, above the first proposal, so it is inside the dialog's focus trap.
-  function Inline() {
-    var r = useRuntime();
-    return html`<div id="tour-inline" role="status" aria-live="polite">
-      ${r.shown === 4 ? html`<${Note} step=${4} copy=${r.copy} cls="tour-note--inline" />` : null}
-    </div>`;
-  }
+  // Kept for the shell's contract; the first run no longer places a note inside the Asks drawer.
+  function Inline() { return null; }
 
   function Host() {
     var r = useRuntime();
@@ -249,8 +229,7 @@
         if (e.key !== 'Escape' || e.defaultPrevented || R.shown === null) return;
         var t = e.target, inNote = !!(t && t.closest && t.closest('.tour-note'));
         if (t && /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)) return;
-        if (R.shown === 4) { if (!inNote) return; }
-        else if (layerOpen() && !inNote) return;
+        if (layerOpen() && !inNote) return;
         e.preventDefault(); e.stopPropagation(); skip();
       }
       D.addEventListener('keydown', onKey, true);
@@ -263,10 +242,10 @@
         window.clearInterval(iv);
       };
     }, []);
-    var live = r.shown !== null ? 'Guide, step ' + r.shown + ' of 6. ' + r.copy + ' Press Escape to skip the guide.' : '';
+    var live = r.shown !== null ? 'Guide, step ' + r.shown + ' of ' + TOTAL + '. ' + r.copy + ' Press Escape to skip the guide.' : '';
     return html`<div>
-      <div className="tour-live" role="status" aria-live="polite">${r.shown !== null && r.shown !== 4 ? live : ''}</div>
-      ${r.shown !== null && r.shown !== 4 ? html`<${Floating} key=${r.shown} step=${r.shown} copy=${r.copy} />` : null}
+      <div className="tour-live" role="status" aria-live="polite">${r.shown !== null ? live : ''}</div>
+      ${r.shown !== null ? html`<${Floating} key=${r.shown} step=${r.shown} copy=${r.copy} />` : null}
     </div>`;
   }
 

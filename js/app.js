@@ -466,6 +466,7 @@
       return html`<header className="app-topbar app-topbar--compact">
         <${Mark} compact=${true} />
         <${MissionMenu} />
+        <${NewGoalButton} compact=${true} />
         <${AsksButton} />
         ${IB ? html`<${IB} id="app-menu-btn" icon="menu" label="Menu" onClick=${function () { setUi({ drawer: 'menu' }); }} />` : null}
       </header>`;
