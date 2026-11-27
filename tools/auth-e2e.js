@@ -84,10 +84,16 @@ const shot = (page, name) => page.screenshot({ path: path.join(OUT, name + '.png
   try {
     /* ---------- paste a federated token ---------- */
     {
-      const { ctx, page, st } = await newPage(browser, false);
+      {   // Individuals (no federation config): API key only, no choices shown at all.
+        const p0 = await newPage(browser, false);
+        await p0.page.goto(BASE); await p0.page.waitForSelector('#app-connect-btn');
+        await open(p0.page);
+        check('unconfigured: API key only (no sign-in or token choice)', (await p0.page.locator('#connect-mode-signin').count()) === 0 && (await p0.page.locator('#connect-mode-token').count()) === 0);
+        await p0.ctx.close();
+      }
+      const { ctx, page, st } = await newPage(browser, true);
       await page.goto(BASE); await page.waitForSelector('#app-connect-btn');
       await open(page);
-      check('token: without federation config there is no sign-in choice', (await page.locator('#connect-mode-signin').count()) === 0 && (await page.locator('#connect-mode-key').isChecked()));
       await page.check('#connect-mode-token');
       check('token: form explains the source in one line', /Workload Identity Federation/.test(await page.innerText('#connect-panel')) && /ant auth print-credentials/.test(await page.innerText('#connect-panel')));
       await page.fill('#connect-token', 'sk-ant-api03-notatoken-123456');

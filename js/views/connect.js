@@ -170,7 +170,8 @@
     var items = [];
     if (F) items.push({ id: 'signin', label: 'Sign in with ' + F.idpName(), hint: 'Your company sign-in. Nothing to copy.' });
     items.push({ id: 'key', label: 'Anthropic API key', hint: 'Your own key from the Anthropic Console.' });
-    items.push({ id: 'token', label: 'Federated access token', hint: 'A short-lived token you paste in.' });
+    // Federated options are for organisations and stay dormant unless js/config.js sets MC.CONFIG.federation.
+    if (F) items.push({ id: 'token', label: 'Federated access token', hint: 'A short-lived token you paste in.' });
 
     var tokenForm = html`<form className="cx-form" onSubmit=${submitToken}>
       <p className="cx-hint">A short-lived token from your organisation’s Workload Identity Federation, e.g. from your CI or <code>ant auth print-credentials --access-token</code>.</p>
@@ -208,7 +209,7 @@
         ${Button ? html`<${Button} kind="secondary" size="md" id="connect-disconnect" onClick=${disconnect}>Disconnect<//>` : null}
       </div>` : html`<div className="cx-off">
         <p className="cx-line">Optional. With Claude connected, agents write and explain their decisions with it instead of fixed rules.</p>
-        <${Choices} items=${items} mode=${mode} onPick=${pick} />
+        ${items.length > 1 ? html`<${Choices} items=${items} mode=${mode} onPick=${pick} />` : null}
         ${connecting || fs0.phase === 'finishing' ? html`<p className="cx-state"><span className="cx-spin" aria-hidden="true"></span><span>${checking || 'Finishing sign-in…'}</span></p>` : null}
         ${!connecting && mode === 'key' ? html`<ol className="cx-steps">
           <li className="cx-step">
