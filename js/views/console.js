@@ -274,18 +274,30 @@
     else if (st === 'running' && fin(row.nextRun)) bits.push('next ' + rel(row.nextRun, tick));
     return bits.join(MID);
   }
+  // One honest summary of an agent's measured dollars: only results whose interval excludes zero are summed; the rest read "not enough data yet".
+  function impactRecord(impact, id) {
+    var o = { conc: 0, thin: 0, real: 0, exp: 0, lo: 0, hi: 0, measuring: 0 };
+    ((impact && impact.rows) || EMPTY).forEach(function (r) {
+      if (r.agentId !== id || r.unit !== '$') return;
+      if (r.status === 'realized' && fin(r.realized)) {
+        if (r.conclusive) { o.conc++; o.real += r.realized; o.lo += fin(r.realizedLo) ? r.realizedLo : r.realized; o.hi += fin(r.realizedHi) ? r.realizedHi : r.realized; if (fin(r.expected)) o.exp += r.expected; }
+        else o.thin++;
+      } else if (r.status === 'measuring') o.measuring++;
+    });
+    return o;
+  }
+  function impactText(o) {
+    if (o.conc) return 'realised ' + money(o.real, true) + ' (' + money(o.lo, true) + ' to ' + money(o.hi, true) + ') of ' + money(o.exp, true) + ' expected' + (o.thin ? ', ' + o.thin + ' too close to call' : '');
+    if (o.thin) return 'not enough data yet to measure impact';
+    return '';
+  }
   function trackRecord(row, impact) {
     var s = row.stats || {};
     var applied = (s.applied || 0) + (s.auto || 0), undone = s.undone || 0;
-    var exp = 0, real = 0, nReal = 0, measuring = 0;
-    ((impact && impact.rows) || EMPTY).forEach(function (r) {
-      if (r.agentId !== row.id || r.unit !== '$') return;
-      if (r.status === 'realized' && fin(r.realized)) { real += r.realized; if (fin(r.expected)) exp += r.expected; nReal++; }
-      else if (r.status === 'measuring') measuring++;
-    });
+    var ir = impactRecord(impact, row.id), it = impactText(ir), measuring = ir.measuring;
     var parts = [plural(applied, 'change') + ' applied'];
     if (undone) parts.push(undone + ' undone');
-    if (nReal) parts.push('realized ' + money(real, true) + ' of expected ' + money(exp, true));
+    if (it) parts.push(it);
     else if (measuring) parts.push(measuring + ' still measuring');
     return { text: parts.join(MID), applied: applied };
   }
@@ -1156,7 +1168,7 @@
       <span className="tm-hand-who"><span className="tm-wire" aria-hidden="true">${out ? '→' : '←'}</span>
         <span className="sr-only tm-sr">${out ? 'To ' : 'From '}</span>${other}</span>
       <span className="tm-hand-text">${h.b.text}</span>
-      <span className="tm-hand-meta num">${rel(h.b.tick, p.tick)}${h.m ? html` · <a href=${missionHref(h.m)}>${shortGoal(h.m)}</a>` : null}</span>
+      <span className="tm-hand-meta num">${when(h.b.tick, p.tick)}${h.m ? html` · <a href=${missionHref(h.m)}>${shortGoal(h.m)}</a>` : null}</span>
     </li>`;
   }
 
@@ -1213,10 +1225,7 @@
     var role = (row && (row.short || (agentDef(id) || {}).short)) || ROLE[id] || AGENT_SHORT[id] || '';
     var sid = 'team-' + id + '-settings';
     var tr = row ? trackRecord(row, p.impact) : null, stat = row ? (row.stats || {}) : {};
-    var realized = 0, expected = 0, nReal = 0;
-    if (row) ((p.impact && p.impact.rows) || EMPTY).forEach(function (r) {
-      if (r.agentId === id && r.unit === '$' && r.status === 'realized' && fin(r.realized)) { realized += r.realized; if (fin(r.expected)) expected += r.expected; nReal++; }
-    });
+    var irec = row ? impactRecord(p.impact, id) : null, itext = irec ? impactText(irec) : '';
     var applied = row ? (stat.applied || 0) + (stat.auto || 0) : w.done;
     var undone = row ? (stat.undone || 0) : 0;
     var nowText = w.text || (row && row.awaiting ? 'Thinking' + ELL : (role || 'Nothing on right now.'));
@@ -1230,7 +1239,7 @@
         <p className="tm-k">Right now</p>
         <p className="tm-now-text">${nowText}</p>
         ${w.where ? html`<p className="tm-on">${state === 'work' || state === 'wait' || state === 'watch' ? 'On ' : 'On '}<a href=${missionHref(w.where)}>${shortGoal(w.where)}</a></p>` : html`<p className="tm-on">${state === 'idle' ? 'Not on a mission' : ''}</p>`}
-        ${w.voice && firstSentence(w.voice.b.text) !== firstSentence(nowText) ? html`<p className="tm-voice">“${firstSentence(w.voice.b.text)}” <span className="tm-voice-t num">${rel(w.voice.b.tick, tick)}</span></p>` : null}
+        ${w.voice && firstSentence(w.voice.b.text) !== firstSentence(nowText) ? html`<p className="tm-voice">“${firstSentence(w.voice.b.text)}” <span className="tm-voice-t num">${when(w.voice.b.tick, tick)}</span></p>` : null}
       </div>
       <div className="tm-hands">
         <p className="tm-k">Hand-offs</p>
@@ -1239,7 +1248,7 @@
       <div className="tm-rec">
         <p className="tm-k">Record</p>
         <p className="tm-rec-main"><span className="tm-big num">${applied}</span> <span>${id === LEAD_ID ? 'steps handed out' : (applied === 1 ? 'change applied' : 'changes applied')}</span></p>
-        <p className="tm-rec-sub num">${row ? (undone ? undone + ' undone' : 'None undone') : plural(w.asks, 'ask') + ' raised'}${nReal ? MID + 'realised ' + money(realized) + ' of ' + money(expected) + ' expected' : (row && tr && /measuring/.test(tr.text) ? MID + 'impact still measuring' : '')}</p>
+        <p className="tm-rec-sub num">${row ? (undone ? undone + ' undone' : 'None undone') : plural(w.asks, 'ask') + ' raised'}${itext ? MID + itext : (row && tr && /measuring/.test(tr.text) ? MID + 'impact still measuring' : '')}</p>
         ${row && row.pending > 0 ? html`<p className="tm-rec-sub"><${Link} onClick=${function () { openAsks(); }}>${plural(row.pending, 'suggestion') + ' waiting for you'}<//></p>` : null}
       </div>
       <div className="tm-foot">
@@ -1303,8 +1312,9 @@
     var tab = focus.tab === 'audit' ? 'history' : focus.tab;
     if (tab === 'roster' || TABS.indexOf(tab) < 0) tab = 'team';
     var missions = missionsOf(ms);
-    var working = 0, asking = 0;
-    ORDER.forEach(function (id) { var s = deriveWork(missions, id, tick).state; if (s === 'work') working++; if (s === 'wait') asking++; });
+    var working = 0, watching = 0, asking = 0;
+    ORDER.forEach(function (id) { var s = deriveWork(missions, id, tick).state; if (s === 'work') working++; else if (s === 'watch') watching++; else if (s === 'wait') asking++; });
+    var liveMissions = missions.filter(function (m) { return m.status !== 'stopped' && m.status !== 'done'; }).length;
     var body;
     if (ready === undefined) body = html`<p className="cn-muted">Loading the team${ELL}</p>`;
     else if (tab === 'team') body = html`<${TeamBoard} roster=${roster} tick=${tick} focusId=${focus.agentId || null} auditId=${focus.auditId || null} />`;
@@ -1312,8 +1322,13 @@
     else if (tab === 'approvals') body = html`<${ApprovalsTab} roster=${roster} tick=${tick} />`;
     else if (tab === 'guardrails') body = html`<${GuardrailsTab} />`;
     else body = html`<${HistoryTab} roster=${roster} tick=${tick} />`;
-    var sub = (working ? working + ' working now' : 'Nothing running right now') + (asking ? MID + plural(asking, 'teammate') + ' waiting on you' : '') +
-      (openCount ? MID + plural(openCount, 'suggestion') + ' to review' : '');
+    var subBits = [];
+    if (liveMissions) subBits.push(plural(liveMissions, 'mission') + ' running');
+    if (working) subBits.push(plural(working, 'teammate') + ' working');
+    if (watching) subBits.push(plural(watching, 'teammate') + ' watching');
+    if (asking) subBits.push(asking + ' waiting on you');
+    if (openCount) subBits.push(plural(openCount, 'suggestion') + ' to review');
+    var sub = subBits.length ? subBits.join(MID) : 'No missions running. Give the team a goal in Missions.';
     return html`<section className="v-agents v-team">
       <header className="tm-head">
         <h1 id="page-title" tabIndex="-1" className="tm-title">Your team of nine</h1>

@@ -152,7 +152,9 @@ const mission = (MC, id) => MC.store.getState().missions.byId[id];
   const da = dig(A), db = dig(B);
   check('deterministic digests', da.s === db.s && da.m === db.m, JSON.stringify([da, db]));
   const live = A.store.getState();
-  const rep = await A.replay.run({ seed: live.meta.seed, log: live.log.slice(), toTick: live.meta.tick });
+  check('state digest covers missions', A.replay.digestWorld(live).parts.entities !== undefined && JSON.stringify(Object.keys(live.meta)).indexOf('seedTarget') >= 0);
+  A.data.seedTarget = 0; // a different boot date must not change replay
+  const rep = await A.replay.run({ seed: live.meta.seed, seedTarget: live.meta.seedTarget, log: live.log.slice(), toTick: live.meta.tick });
   const dr = { s: A.replay.digestWorld(rep).state, m: A.util.digest(rep.missions) };
   check('replay equality', dr.s === da.s && dr.m === da.m, JSON.stringify([dr, da]));
   console.log(fails ? 'missions-test: ' + fails + ' FAIL, ' + passes + ' pass' : 'missions-test: all ' + passes + ' pass');

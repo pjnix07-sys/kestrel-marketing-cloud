@@ -22,7 +22,7 @@
       profiles: d(w.profiles), latent: d(w.latent), metrics: d(w.metrics), enroll: d(w.enroll),
       entities: d({ meta: w.meta, seq: w.seq, catalog: w.catalog, modelState: w.modelState, segments: w.segments,
         campaigns: w.campaigns, variants: w.variants, content: w.content, agents: w.agents, proposals: w.proposals, feed: w.feed,
-        insights: w.insights, guardrails: w.guardrails }),
+        insights: w.insights, guardrails: w.guardrails, missions: w.missions }),
       log: d(w.log)
     };
     var state = U().hex8(U().fnv1a(PART_KEYS.map(function (k) { return parts[k]; }).join('|')));
@@ -31,11 +31,17 @@
 
   /* ======================= replay ======================= */
   // Fresh world from seed; for t = 1..toTick apply log entries stamped t−1, then advance; finally apply toTick.
+  // Seeded missions are dated from the catch-up target stored in world.meta.seedTarget; replay must generate with the same one.
+  function genAt(seed, seedTarget) {
+    var D = MC.data, prev = D.seedTarget;
+    if (isFinite(seedTarget)) D.seedTarget = seedTarget;
+    try { return D.generate(seed); } finally { D.seedTarget = prev; }
+  }
   R.run = function (opts) {
     opts = opts || {};
     return new Promise(function (resolve, reject) {
       var w;
-      try { w = MC.engine.prepare(MC.data.generate(opts.seed === undefined ? MC.SEED : opts.seed)); }
+      try { w = MC.engine.prepare(genAt(opts.seed === undefined ? MC.SEED : opts.seed, opts.seedTarget)); }
       catch (e) { reject(e); return; }
       var log = opts.log || [], N = Math.max(0, opts.toTick | 0), chunk = Math.max(1, opts.chunk || 20);
       var cps = opts.checkpoints || null, i = 0, first = null, diverged = null, t = 1;
@@ -111,7 +117,7 @@
       if (prevSpeed !== 'pause' && MC.engine.getSpeed() === 'pause') MC.engine.setSpeed(prevSpeed);
     }
     running = R.run({
-      seed: live.meta.seed, log: log, toTick: N, checkpoints: cps, chunk: opts.chunk || 20,
+      seed: live.meta.seed, seedTarget: live.meta.seedTarget, log: log, toTick: N, checkpoints: cps, chunk: opts.chunk || 20,
       onProgress: function (done, total) {
         setVerifying({ done: done, total: total });
         if (typeof opts.onProgress === 'function') opts.onProgress(done, total);

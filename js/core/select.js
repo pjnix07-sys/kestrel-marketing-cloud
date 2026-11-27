@@ -860,14 +860,16 @@
         else if (p.realized) status = 'realized';
         else if (NOT_MEASURED[p.kind] || !dollars) status = 'not-measured';
         else { status = 'measuring'; hoursLeft = Math.max(0, p.appliedTick + (p.horizon || 0) - t); }
+        var conc = !!p.realized && (p.realized.method === 'window' || (p.realized.lo > 0 || p.realized.hi < 0));
         var row = {
+          conclusive: conc,
           proposalId: p.id, agentId: p.agentId, kind: p.kind, title: p.title, appliedTick: p.appliedTick,
           expected: imp.delta !== undefined ? imp.delta : null, unit: imp.unit || null,
           realized: p.realized ? p.realized.delta : null, realizedLo: p.realized ? p.realized.lo : null, realizedHi: p.realized ? p.realized.hi : null,
           method: p.realized ? p.realized.method : null, status: status, hoursLeft: hoursLeft
         };
         if (dollars && status !== 'undone' && isFinite(row.expected)) te += row.expected;
-        if (dollars && status === 'realized' && isFinite(row.realized)) tr += row.realized;
+        if (dollars && status === 'realized' && conc && isFinite(row.realized)) tr += row.realized;
         rows.push(row);
       });
       return { rows: rows, totals: { expected: te, realized: tr } };

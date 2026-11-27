@@ -675,7 +675,7 @@
 
   function skeleton(seed) {
     return {
-      meta: { seed: seed, tick: 0, tenant: 'Fernway Outfitters', sample: true, day0: DAY0, monthGoal: clone(D.MONTH_GOAL), universalHoldoutPct: 5 },
+      meta: { seed: seed, tick: 0, tenant: 'Fernway Outfitters', sample: true, seedTarget: D.seedTarget || 0, day0: DAY0, monthGoal: clone(D.MONTH_GOAL), universalHoldoutPct: 5 },
       modelState: { coef: new Float64Array(8), snap: null, snapDay: -8 },
       seq: 0,
       rev: { profiles: 0, metrics: 0, enroll: 0, segCounts: 0 },
