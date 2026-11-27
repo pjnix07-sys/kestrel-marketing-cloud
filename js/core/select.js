@@ -1059,6 +1059,49 @@
     });
   };
 
+  /* ---------------- content ----------------
+     whereUsed(w, blockId) -> { blockId, found, count, messages:[{id, name, ver, review, placements:[{slot, channel}], campaigns:[id]}],
+       campaigns:[{id, name, status, channels:[ch], variants:[variantId]}], channels:[ch], missions:[{id, title}],
+       variants:[{id, campaignId, channel, status, renderedVer, currentVer, newer}] }
+     A message is "used" by a block when the block is in one of its slots or channel overrides; campaigns, channels and variants
+     come from the variants published from those messages; missions are the ones that carry one of those campaigns. */
+  SEL.whereUsed = function (w, blockId) {
+    return memo('whereUsed', [w, w.content, w.variants, w.campaigns, w.missions], blockId, function () {
+      var K = MC.content, blk = K && K.block(w, blockId), out = { blockId: blockId, found: !!blk, count: 0, messages: [], campaigns: [], channels: [], missions: [], variants: [] };
+      if (!blk) return out;
+      var msgs = K.messagesUsing(w, blockId), mids = {}, cids = {}, chs = {};
+      msgs.forEach(function (m) { mids[m.id] = m; });
+      var byId = w.variants.byId, vids = sortedKeys(byId), perMsgCamp = {};
+      vids.forEach(function (id) {
+        var v = byId[id], m = v.messageId && mids[v.messageId];
+        if (!m) return;
+        // a channel override only matters on its own channel
+        var hit = K.placements(m, blockId).some(function (pl) { return !pl.channel || pl.channel === v.channel; });
+        if (!hit) return;
+        var st = K.variantState(w, v);
+        out.variants.push({ id: id, campaignId: v.campaignId, channel: v.channel, status: v.status, messageId: m.id, renderedVer: v.renderedVer, currentVer: st.currentVer, newer: !!st.newer });
+        var c = cids[v.campaignId] || (cids[v.campaignId] = { id: v.campaignId, name: (camp(w, v.campaignId) || {}).name || v.campaignId, status: (camp(w, v.campaignId) || {}).status, channels: [], variants: [] });
+        if (c.channels.indexOf(v.channel) < 0) c.channels.push(v.channel);
+        c.variants.push(id);
+        chs[v.channel] = true;
+        (perMsgCamp[m.id] = perMsgCamp[m.id] || {})[v.campaignId] = true;
+      });
+      out.messages = msgs.map(function (m) {
+        return { id: m.id, name: m.name, ver: m.ver, review: m.review, placements: K.placements(m, blockId), campaigns: sortedKeys(perMsgCamp[m.id] || {}) };
+      });
+      out.count = msgs.length;
+      out.campaigns = sortedKeys(cids).map(function (id) { cids[id].channels.sort(function (a, b) { return MC.CH.IDX[a] - MC.CH.IDX[b]; }); return cids[id]; });
+      out.channels = MC.CH.ALL.filter(function (ch) { return chs[ch]; });
+      var ms = w.missions;
+      if (ms) ms.order.forEach(function (id) {
+        var m = ms.byId[id], linked = (m.data && m.data.campaignId) || null;
+        var hit = out.campaigns.some(function (c) { return c.id === linked || (m.artifacts || []).some(function (a) { return a.kind === 'campaign' && a.id === c.id; }); });
+        if (hit) out.missions.push({ id: id, title: m.title });
+      });
+      return out;
+    });
+  };
+
   /* ---------------- missions (docs/AGENTIC.md) ----------------
      missions(w)                  -> row[]: one per mission, newest first (see missionRow)
      mission(w, id)               -> detail: row + plan[], asks{open,answered}, beats[], artifacts[], steers[]
