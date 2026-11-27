@@ -966,4 +966,125 @@
       ${toasts.slice(-3).map(function (t) { return html`<${Toast} key=${t.id} toast=${t} onAction=${p && p.onAction} />`; })}
     </div>`;
   };
+
+  /* ======================= MC.xref: how the objects of the product relate (docs/CONSISTENCY.md section 4) =======================
+     Pure reads over the world. mission <-> campaign <-> segment <-> message <-> block, and the agent that made or last
+     changed each. No numbers live here: counts and money come from MC.metrics. */
+  var X = MC.xref = MC.xref || {};
+  var NONE = [];
+  function wld() { return MC.store && MC.store.getState ? MC.store.getState() : null; }
+  X.missions = function (w) { var ms = w && w.missions; return ms && ms.order ? ms.order.map(function (id) { return ms.byId[id]; }).filter(Boolean) : NONE; };
+  X.campaignIds = function (w, m) {
+    var out = [];
+    (m.artifacts || NONE).forEach(function (a) { if (a.kind === 'campaign' && w.campaigns.byId[a.id] && out.indexOf(a.id) < 0) out.push(a.id); });
+    if (m.data && m.data.campaignId && w.campaigns.byId[m.data.campaignId] && out.indexOf(m.data.campaignId) < 0) out.push(m.data.campaignId);
+    return out;
+  };
+  X.segmentIds = function (w, m) {
+    var out = [];
+    function add(id) { if (id && w.segments.byId[id] && out.indexOf(id) < 0) out.push(id); }
+    (m.artifacts || NONE).forEach(function (a) { if (a.kind === 'segment') add(a.id); });
+    if (m.data && m.data.audience) { add(m.data.audience.segmentId); add(m.data.audience.resolvedId); }
+    X.campaignIds(w, m).forEach(function (cid) { add(w.campaigns.byId[cid].segmentId); });
+    return out;
+  };
+  X.messagesOfCampaign = function (w, cid) {
+    var by = {}, out = [], vs = MC.catalog && MC.catalog.variantsOf ? MC.catalog.variantsOf(w, cid) : NONE;
+    vs.forEach(function (v) {
+      if (!v.messageId || v.status === 'retired') return;
+      var e = by[v.messageId];
+      if (!e) { var msg = MC.content && MC.content.message ? MC.content.message(w, v.messageId) : null; e = by[v.messageId] = { id: v.messageId, name: msg ? msg.name : v.messageId, channels: [] }; out.push(e); }
+      if (e.channels.indexOf(v.channel) < 0) e.channels.push(v.channel);
+    });
+    return out;
+  };
+  X.campaignsOfMessage = function (w, mid) {
+    var out = [];
+    Object.keys(w.variants.byId).sort().forEach(function (id) { var v = w.variants.byId[id]; if (v.messageId === mid && v.status !== 'retired' && out.indexOf(v.campaignId) < 0 && w.campaigns.byId[v.campaignId]) out.push(v.campaignId); });
+    return out;
+  };
+  X.missionsOf = function (w, kind, id) {
+    var ms = X.missions(w), out = [];
+    if (!w || !id) return out;
+    if (kind === 'block' && MC.select && MC.select.whereUsed) {
+      var wu = MC.select.whereUsed(w, id), ids = (wu.missions || NONE).map(function (m) { return m.id; });
+      return ms.filter(function (m) { return ids.indexOf(m.id) >= 0; });
+    }
+    ms.forEach(function (m) {
+      var hit = false;
+      if (kind === 'campaign') hit = X.campaignIds(w, m).indexOf(id) >= 0;
+      else if (kind === 'segment') hit = X.segmentIds(w, m).indexOf(id) >= 0;
+      else if (kind === 'message') hit = X.campaignIds(w, m).some(function (cid) { return X.messagesOfCampaign(w, cid).some(function (x) { return x.id === id; }); });
+      else if (kind === 'agent') hit = (m.plan || NONE).some(function (s) { return s.agentId === id; });
+      if (hit) out.push(m);
+    });
+    return out;
+  };
+  // Who made it (the mission step that produced it, else the stored author) and who last changed it (newest agent action on it).
+  X.agentsOf = function (w, kind, id) {
+    var made = null, changed = null, tick = null;
+    X.missions(w).forEach(function (m) {
+      (m.plan || NONE).forEach(function (s) { if (!made && s.artifact && s.artifact.kind === kind && s.artifact.id === id) made = s.agentId; });
+    });
+    var rec = kind === 'campaign' ? w.campaigns.byId[id] : kind === 'segment' ? w.segments.byId[id]
+      : kind === 'block' && MC.content ? MC.content.block(w, id) : kind === 'message' && MC.content ? MC.content.message(w, id) : null;
+    function clean(a) { a = String(a || ''); if (a.indexOf('agent:') === 0) a = a.slice(6); return a && a !== 'user' && a !== 'sim' ? a : null; }
+    if (!made && rec) made = clean(rec.createdBy || rec.author);
+    var feed = w.feed || NONE;
+    for (var i = 0; i < feed.length && i < 600; i++) {
+      var f = feed[i];
+      if (f.kind === 'agent-applied' && f.entity && f.entity.kind === kind && f.entity.id === id) { changed = f.agentId; tick = f.tick; break; }
+    }
+    if (!changed && rec) { changed = clean(rec.updatedBy); tick = rec.updatedTick; }
+    return { made: made, changed: changed, tick: tick };
+  };
+  // Where a click on an object of this kind should land.
+  X.go = function (kind, id) {
+    var nav = MC.nav && MC.nav.go; if (!nav) return;
+    if (kind === 'mission') nav('missions', id);
+    else if (kind === 'campaign') nav('campaigns', { mode: 'detail', id: id, tab: 'overview' });
+    else if (kind === 'segment') nav('audiences', { tab: 'segments', segmentId: id });
+    else if (kind === 'message') nav('content', { messageId: id, variantId: null, tab: 'compose' });
+    else if (kind === 'block') nav('content', { blockId: id, tab: 'library' });
+    else if (kind === 'agent') nav('agents', { tab: 'activity', agentId: id });
+  };
+  X.href = function (kind, id) {
+    return kind === 'mission' ? '#missions/' + encodeURIComponent(id) : kind === 'campaign' ? '#campaigns' : kind === 'segment' ? '#audiences'
+      : kind === 'agent' ? '#team' : '#content';
+  };
+  X.missionTitle = function (m) { return m ? (m.goalText || m.title || 'Untitled goal') : ''; };
+
+  // <Xlink kind id>label</Xlink>: a real link that navigates in place.
+  U.Xlink = function Xlink(p) {
+    var html = H();
+    return html`<a href=${X.href(p.kind, p.id)} className=${cx('xlink', p.className)} data-xref=${p.kind + ':' + p.id}
+      onClick=${function (e) { if (e.metaKey || e.ctrlKey || e.shiftKey) return; e.preventDefault(); if (p.onGo) p.onGo(); X.go(p.kind, p.id); }}>${p.children}</a>`;
+  };
+  /* <Xref kind id /> shows the object's place in the story as one quiet line of links:
+     Mission, made / changed by agent, audience, messages. Hides parts that do not apply. */
+  U.Xref = function Xref(p) {
+    var html = H(), w = MC.hooks.useSelect(function (x) { return x; });
+    if (!w || !p.id) return null;
+    var kind = p.kind, id = p.id, parts = [];
+    var ms = X.missionsOf(w, kind, id), ag = X.agentsOf(w, kind, id);
+    var camp = kind === 'campaign' ? w.campaigns.byId[id] : null;
+    var seg = camp && camp.segmentId && w.segments.byId[camp.segmentId];
+    var msgs = kind === 'campaign' ? X.messagesOfCampaign(w, id) : [];
+    var cams = kind === 'message' ? X.campaignsOfMessage(w, id) : [];
+    function L(lab, items) { if (items.length) parts.push(html`<span key=${lab} className="xref-part"><span className="xref-k">${lab}</span> ${items}</span>`); }
+    function join(arr) { var out = []; arr.forEach(function (x, i) { if (i) out.push(', '); out.push(x); }); return out; }
+    L(ms.length === 1 ? 'Mission' : 'Missions', join(ms.slice(0, 3).map(function (m) { return html`<${U.Xlink} key=${m.id} kind="mission" id=${m.id}>${trunc(X.missionTitle(m), 46)}<//>`; })));
+    if (ag.made || ag.changed) {
+      var items = [];
+      if (ag.made) items.push(html`<span key="m">made by <${U.Xlink} kind="agent" id=${ag.made}>${agentName(ag.made)}<//></span>`);
+      if (ag.changed && ag.changed !== ag.made) items.push(html`<span key="c">${ag.made ? ', ' : ''}last changed by <${U.Xlink} kind="agent" id=${ag.changed}>${agentName(ag.changed)}<//></span>`);
+      parts.push(html`<span key="agent" className="xref-part">${items}</span>`);
+    }
+    if (seg) L('Audience', [html`<${U.Xlink} key=${seg.id} kind="segment" id=${seg.id}>${seg.name}<//>`]);
+    if (msgs.length) L(msgs.length === 1 ? 'Message' : 'Messages', join(msgs.slice(0, 3).map(function (x) { return html`<${U.Xlink} key=${x.id} kind="message" id=${x.id}>${trunc(x.name, 40)}<//>`; })).concat(msgs.length > 3 ? [' +' + (msgs.length - 3)] : []));
+    if (cams.length) L(cams.length === 1 ? 'Campaign' : 'Campaigns', join(cams.slice(0, 3).map(function (cid) { return html`<${U.Xlink} key=${cid} kind="campaign" id=${cid}>${w.campaigns.byId[cid].name}<//>`; })));
+    if (!parts.length) return null;
+    return html`<p className=${cx('xref', p.className)} aria-label="Where this fits">${parts.map(function (x, i) { return html`<span key=${i} className="xref-w">${i ? html`<span className="xref-sep" aria-hidden="true"> ${DOT} </span>` : null}${x}</span>`; })}</p>`;
+  };
+  function trunc(s, n) { s = String(s || ''); return s.length > n ? s.slice(0, n - 1).replace(/\s+\S*$/, '') + '…' : s; }
 })();

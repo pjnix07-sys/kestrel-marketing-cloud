@@ -65,12 +65,18 @@ const mission = (MC, id) => MC.store.getState().missions.byId[id];
   check('create ok', r.ok && r.id, JSON.stringify(r));
   let m = mission(MC, r.id);
   check('plan forms over ticks, not at once', m.plan.every(s => s.status === 'queued' || s.status === 'blocked') && m.phase !== 'monitoring');
+  // §2 clock: one dependency level per tick; independent steps together
+  check('world pace is one hour per 5 s', MC.engine.PACE_MS === 5000 && MC.engine.SPEEDS['1x'] === 5000);
   adv(MC, 1); m = mission(MC, r.id);
-  check('claim then run on separate ticks', m.plan[0].status === 'working');
+  check('level 1 (goal) claimed and run in one tick', m.plan[0].status === 'done' && m.plan[1].status === 'queued', m.plan.map(s => s.status).join());
   adv(MC, 1); m = mission(MC, r.id);
-  check('step done next tick, next claimed', m.plan[0].status === 'done' && m.plan[1].status === 'queued');
+  check('level 2 (audience) next tick, not the same tick', m.plan[1].status === 'done' && m.plan[2].status === 'queued');
   adv(MC, 1); m = mission(MC, r.id);
-  check('dependents claimed after dependency done', m.plan[1].status === 'working');
+  check('level 3 (campaign)', m.plan[2].status === 'done' && m.plan[3].status === 'queued');
+  adv(MC, 1); m = mission(MC, r.id);
+  check('independent steps run together in one tick', [3, 4, 5, 6].every(i => m.plan[i].status === 'done') && new Set([3, 4, 5, 6].map(i => m.plan[i].doneTick)).size === 1 && m.plan[7].status === 'queued', m.plan.map(s => s.status).join());
+  adv(MC, 2); m = mission(MC, r.id);
+  check('whole plan in six levels (six ticks)', m.phase === 'monitoring' && m.plan.every(s => s.status === 'done' || s.status === 'skipped'), m.phase);
   adv(MC, 40); m = mission(MC, r.id);
   check('reaches monitoring event-driven', m.phase === 'monitoring' && m.status === 'running' && m.plan.every(s => s.status === 'done' || s.status === 'skipped'), JSON.stringify(m.plan.map(s => s.kind + ':' + s.status)));
   const cid = (m.artifacts.filter(a => a.kind === 'campaign')[0] || {}).id;
@@ -120,7 +126,7 @@ const mission = (MC, id) => MC.store.getState().missions.byId[id];
   check('steer constraints', m.objective.constraints.some(c => c.kind === 'excludeChannel' && c.value === 'sms') && m.objective.constraints.some(c => c.kind === 'maxDiscountPct' && c.value === 10));
   w = MC.store.getState();
   const c3 = w.campaigns.byId[c2.id];
-  check('steer acts on artifacts', c3.channelPaused.sms && (MC.lead.OFFER_PCT[c3.offer] || 0) <= 10, JSON.stringify([c3.channelPaused, c3.offer]));
+  check('steer acts on artifacts', c3.channels.indexOf('sms') < 0 && (MC.lead.OFFER_PCT[c3.offer] || 0) <= 10, JSON.stringify([c3.channels, c3.offer]));
   MC.missions.steer(m.id, 'pause until Monday');
   check('pause', mission(MC, m.id).status === 'paused');
 
@@ -135,6 +141,108 @@ const mission = (MC, id) => MC.store.getState().missions.byId[id];
   const lhw = mission(MC, 'm-lhw');
   check('seed ask answered runs to monitoring', lhw.phase === 'monitoring', JSON.stringify(lhw.plan.map(s => s.kind + ':' + s.status)));
   adv(MC, 24 * 5);
+
+
+  // ---- §5 decisions: every executed step records what the agent weighed
+  const decOk = d => d && Array.isArray(d.options) && d.options.length >= 1 && d.options.every(o => o.label && typeof o.value === 'string' && typeof o.note === 'string') && typeof d.chose === 'string' && d.chose && typeof d.why === 'string' && d.why.length > 5;
+  {
+    let M2 = await boot(), rr = M2.missions.createSync('Win back 400 lapsed hikers before Dec 15 without discounting more than 15%');
+    adv(M2, 14);
+    const mm = M2.store.getState().missions.byId[rr.id];
+    check('every finished step has a decision', mm.plan.every(s => decOk(s.decision)), JSON.stringify(mm.plan.filter(s => !decOk(s.decision)).map(s => s.kind)));
+    const dk = k => (mm.plan.filter(s => s.kind === k)[0] || {}).decision;
+    check('scout weighs candidate audiences with sizes', dk('audience').options.length >= 2 && dk('audience').options.every(o => /people/.test(o.value)));
+    check('copy weighs angles with lift or history', dk('copy').options.length >= 2 && dk('copy').options.every(o => typeof o.value === 'string' && o.value.length));
+    check('guard weighs thresholds with people affected', dk('guard').options.length >= 3 && dk('guard').options.every(o => /\d/.test(o.value)));
+    check('send-time weighs hours with open shares', dk('sendtime').options.filter(o => /% of opens/.test(o.value)).length >= 2);
+    check('pacer weighs channels by next-dollar return', dk('pacer').options.length >= 2 && dk('pacer').options.every(o => /next dollar/.test(o.value)));
+    check('decision on the step is linked from its beat', mm.log.some(b => b.stepId && mm.plan.some(s => s.id === b.stepId && s.decision)));
+    check('no $0.00 return beat', !mm.log.some(b => /\$0\.00/.test(b.text)) && !mm.plan.some(s => /\$0\.00/.test(JSON.stringify(s.decision))), mm.log.filter(b => /\$0\.00/.test(b.text)).map(b => b.text).join('|'));
+    // §5 forecast verdict on mission progress
+    const v = M2.missions.verdict(M2.store.getState(), mm);
+    check('verdict shape', v && ['value', 'target', 'forecast', 'lo', 'hi', 'by'].every(k => typeof v[k] === 'number') && ['on pace', 'behind', 'ahead', 'too early'].includes(v.verdict) && v.by === mm.objective.by, JSON.stringify(v));
+    check('verdict stored on progress by the monitor step', mm.progress && ['on pace', 'behind', 'ahead', 'too early'].includes(mm.progress.verdict) && mm.progress.by === mm.objective.by, JSON.stringify(mm.progress));
+    M2.metrics.mission = () => ({ value: 100, forecast: { value: 312, lo: 260, hi: 365 } });
+    const v2 = M2.missions.verdict(M2.store.getState(), mm);
+    check('verdict reads MC.metrics.mission when present', v2.value === 100 && v2.forecast === 312 && v2.lo === 260 && v2.hi === 365 && /312/.test(v2.text) && /260/.test(v2.text), JSON.stringify(v2));
+    // §5 asks count: MC.metrics.asks wins when present
+    const wA = M2.store.getState(), cnt = M2.missions.openAskCount(wA), real = M2.metrics.asks;
+    check('open asks come from MC.metrics.asks when present', typeof real !== 'function' || cnt === real(wA).count, cnt);
+    M2.metrics.asks = () => ({ count: 7 });
+    check('openAskCount follows the metrics selector', M2.missions.openAskCount(wA) === 7);
+    M2.metrics.asks = real; if (typeof real !== 'function') delete M2.metrics.asks;
+    delete M2.metrics.mission;
+    // waiting for sign-off always has an ask behind it
+    const launchOpen = () => mission(M2, rr.id).asks.some(a => a.kind === 'launch' && a.status === 'open');
+    check('draft campaign has an open sign-off ask', launchOpen());
+    const la = mission(M2, rr.id).asks.filter(a => a.kind === 'launch')[0];
+    M2.missions.answer(rr.id, la.id, 'Not yet');
+    check('answered "not yet" has no open ask right away', !launchOpen());
+    adv(M2, 24 * 4);
+    check('sign-off ask comes back after a "not yet"', launchOpen());
+    // a plan with no hand-off step still raises the ask
+    const w3 = M2.store.getState(), base = M2.lead.plan(w3, 'Hit $9k in revenue by Dec 9');
+    const pl = base.plan.filter(s => s.kind !== 'handoff').map(s => Object.assign({}, s, { needs: s.needs.filter(n => base.plan.find(x => x.id === n).kind !== 'handoff') }));
+    const cr = M2.store.dispatch({ type: 'mission/create', payload: { goalText: 'Hit $9k in revenue by Dec 9', title: base.title, objective: base.objective, plan: pl, asks: [], data: base.data, brain: 'rules' } });
+    check('plan without hand-off created', cr.ok, cr.error);
+    adv(M2, 12);
+    const m3 = mission(M2, cr.created[0]), beat3 = m3.log.filter(b => /waiting for your sign-off/.test(b.text))[0];
+    check('no hand-off step still raises the sign-off ask', m3.phase === 'monitoring' && m3.asks.some(a => a.kind === 'launch' && a.status === 'open'), m3.phase + JSON.stringify(m3.asks.map(a => a.kind + a.status)));
+    check('"waiting for sign-off" appears only with an open ask', !beat3 || m3.asks.some(a => a.kind === 'launch'));
+  }
+
+  // ---- §5 steering: diff beats; removing a channel removes it everywhere
+  {
+    let M3 = await boot(), rr = M3.missions.createSync('Hit $12k in revenue by Dec 8 with a Cyber Monday push');
+    adv(M3, 10);
+    let mm = mission(M3, rr.id), c0 = M3.store.getState().campaigns.byId[mm.data.campaignId];
+    check('campaign starts with sms', c0.channels.indexOf('sms') >= 0 && M3.catalog.variantsOf(M3.store.getState(), c0.id, 'sms').length > 0);
+    M3.missions.steer(rr.id, 'skip SMS, spend under $2k and discounts under 10%');
+    adv(M3, 10);
+    const w4 = M3.store.getState(); mm = mission(M3, rr.id); const c1 = w4.campaigns.byId[c0.id];
+    check('sms gone from campaign channels', c1.channels.indexOf('sms') < 0);
+    check('sms gone from budget, alloc, send hours, paused map', !('sms' in c1.budget.byChannel) && !('sms' in c1.alloc) && !('sms' in c1.sendHour) && !('sms' in c1.channelPaused));
+    check('sms gone from the journey', !c1.journey.steps.some(s => s.channel === 'sms') && JSON.stringify(c1.journey.steps).indexOf('sms') < 0);
+    check('sms gone from published messages', M3.catalog.variantsOf(w4, c1.id).every(v => v.channel !== 'sms'));
+    check('sms gone from mission notes', (mm.data.channels || []).indexOf('sms') < 0 && ((mm.data.content || {}).channels || []).indexOf('sms') < 0 && (!mm.data.optimalSplit || !('sms' in mm.data.optimalSplit)));
+    check('budget total respects the spend limit', c1.budget.total <= 2000, c1.budget.total);
+    check('later steps (rewrite) do not bring sms back', M3.catalog.variantsOf(w4, c1.id).every(v => v.channel !== 'sms') && mm.plan.every(s => s.status === 'done' || s.status === 'skipped'));
+    const diffs = mm.log.filter(b => b.diff && b.diff.length);
+    check('steering beats carry diffs {what, from, to}', diffs.length >= 3 && diffs.every(b => b.diff.every(d => d.what && typeof d.from === 'string' && typeof d.to === 'string')), JSON.stringify(diffs.map(b => b.diff)));
+    check('channel diff names the removal', diffs.some(b => b.diff.some(d => d.what === 'Channels' && /SMS/.test(d.from) && !/SMS/.test(d.to))));
+    check('offer and budget diffs', diffs.some(b => b.diff.some(d => d.what === 'Offer')) && diffs.some(b => b.diff.some(d => /udget/.test(d.what) && /\$2,000/.test(d.to))));
+    check('pacer pushes back on the spend cut (disagree beat with both sides + resolution)', mm.log.some(b => b.kind === 'disagree' && b.agentId === 'pacer' && b.sides.length === 2 && b.sides.every(x => x.position) && b.resolution), JSON.stringify(mm.log.filter(b => b.kind === 'disagree')));
+    check('no sms mention in later beats about the campaign channels', !mm.log.slice(-3).some(b => /email, sms/i.test(b.text)));
+    // "no SMS" given in the goal itself never puts sms in
+    let r4 = M3.missions.createSync('Hit $10k in revenue by Dec 8, skip SMS'); adv(M3, 10);
+    const m4 = mission(M3, r4.id), c4 = M3.store.getState().campaigns.byId[m4.data.campaignId];
+    check('goal-time "skip SMS" keeps sms out', c4.channels.indexOf('sms') < 0 && M3.catalog.variantsOf(M3.store.getState(), c4.id, 'sms').length === 0 && !JSON.stringify(c4.journey.steps).includes('sms'));
+    // the new catalog action refuses to empty a campaign
+    const w6 = M3.store.getState(), cd = w6.campaigns.byId[c1.id];
+    const ra = M3.catalog.apply(w6, { type: 'campaign/dropChannel', payload: { id: cd.id, channel: 'email' } }, { origin: 'agent:planner' });
+    check('agents may not drop channels outside a mission', !ra.ok, ra.error);
+    let rl = null;
+    cd.channels.slice().forEach(ch => { rl = M3.catalog.apply(M3.store.getState(), { type: 'campaign/dropChannel', payload: { id: cd.id, channel: ch } }, { origin: 'agent:planner', mission: true }); });
+    check('a campaign always keeps one channel', M3.store.getState().campaigns.byId[cd.id].channels.length === 1 && rl && !rl.ok);
+  }
+
+  // ---- §5 disagreement: Fatigue Guard vs the send
+  {
+    let M4 = await boot(), w5 = M4.store.getState();
+    const P = w5.profiles;
+    for (let i = 0; i < P.n; i++) for (let k = 0; k < 21; k++) P.sent7[i * 21 + k] = i % 3 === 0 ? 2 : 0;   // a third of everyone is over a 3 a week limit
+    let rr = M4.missions.createSync('Win back 400 lapsed hikers before Dec 15, no more than 3 emails a week');
+    adv(M4, 10);
+    const mm = mission(M4, rr.id), dis = mm.log.filter(b => b.kind === 'disagree' && b.agentId === 'guard')[0];
+    check('Fatigue Guard disagrees with the proposed send', !!dis && dis.sides.length === 2 && dis.sides.some(x => x.agentId === 'guard') && dis.sides.some(x => x.agentId === 'copy' || x.agentId === 'planner') && /rest|Guard/i.test(dis.resolution), JSON.stringify(mm.log.filter(b => b.agentId === 'guard')));
+    check('the disagreement is resolved by real suppression', mm.plan.filter(s => s.kind === 'guard')[0].actions.some(a => a.type === 'profiles/suppress' && a.count > 0));
+    // Budget Pacer pushes back on asking for more budget
+    const rm = M4.lead.remediate(M4.store.getState(), mm, { pace: 0.5, forecast: 200, target: 400, daysLeft: 6, campaignId: null, replans: 2, linked: false, pacer: { marginal: 0.4, lowCh: 'push', hiCh: 'email' } });
+    const pd = rm.beats.filter(b => b.kind === 'disagree')[0];
+    check('Pacer pushes back on an over-budget ask', pd && pd.agentId === 'pacer' && pd.sides.length === 2 && pd.resolution && rm.asks.length === 1 && /Budget Pacer/.test(rm.asks[0].why), JSON.stringify(rm));
+    const rm2 = M4.lead.remediate(M4.store.getState(), mm, { pace: 0.5, forecast: 200, target: 400, daysLeft: 6, campaignId: null, replans: 2, linked: false, pacer: { marginal: 1.8, lowCh: 'push', hiCh: 'email' } });
+    check('Pacer agrees when more budget pays back', !rm2.beats.some(b => b.kind === 'disagree') && /agrees/.test(rm2.asks[0].why));
+  }
 
   // ---- determinism + replay
   async function scenario() {

@@ -170,3 +170,7 @@
 }
 @media (prefers-reduced-motion: reduce) { .v-content * { transition: none !important; animation: none !important; } }
 .v-content .mc-art-tag { display: block; margin-top: 6px; font-size: 15px; font-weight: 500; letter-spacing: 0; color: var(--muted, #53645A); }
+
+/* cross-links: missions, agents and campaigns that use this message or block */
+.v-content .ct-xref { margin: 6px 0 0; font-size: 13px; color: var(--ink-3, #53645A); line-height: 1.5; overflow-wrap: anywhere; }
+.v-content .xlink { color: var(--ink); font-weight: 600; text-decoration: underline; text-decoration-color: var(--line-strong, #B4C0B5); text-underline-offset: 3px; }

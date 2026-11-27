@@ -177,7 +177,8 @@
   function selAudit(w) { return (w.audit && w.audit.entries) || EMPTY; }
   function selFeed(w) { return w.feed || EMPTY; }
   function selProposals(w) { return w.proposals || null; }
-  function selOpenCount(w) { return w.proposals && w.proposals.open ? w.proposals.open.length : 0; }
+  // One Asks count (MC.metrics.asks): agent proposals waiting on a person, not superseded or expired.
+  function selOpenCount(w) { try { return MC.metrics && MC.metrics.asks ? MC.metrics.asks(w).proposals.length : 0; } catch (e) { return 0; } }
   function selGuardrails(w) { return w.guardrails || null; }
   function selImpact(w) { return call('agentImpact', w); }
   function selInsights(w) { return w.insights || EMPTY; }
@@ -1238,7 +1239,8 @@
       <div className="tm-now">
         <p className="tm-k">Right now</p>
         <p className="tm-now-text">${nowText}</p>
-        ${w.where ? html`<p className="tm-on">${state === 'work' || state === 'wait' || state === 'watch' ? 'On ' : 'On '}<a href=${missionHref(w.where)}>${shortGoal(w.where)}</a></p>` : html`<p className="tm-on">${state === 'idle' ? 'Not on a mission' : ''}</p>`}
+        ${!w.where && w.recent ? html`<p className="tm-on">Recently on <a href=${missionHref(w.recent)}>${shortGoal(w.recent)}</a></p>` : null}
+        ${w.where ? html`<p className="tm-on">${state === 'work' || state === 'wait' || state === 'watch' ? 'On ' : 'On '}<a href=${missionHref(w.where)}>${shortGoal(w.where)}</a></p>` : (w.recent ? null : html`<p className="tm-on">${state === 'idle' ? 'Not on a mission' : ''}</p>`)}
         ${w.voice && firstSentence(w.voice.b.text) !== firstSentence(nowText) ? html`<p className="tm-voice">“${firstSentence(w.voice.b.text)}” <span className="tm-voice-t num">${when(w.voice.b.tick, tick)}</span></p>` : null}
       </div>
       <div className="tm-hands">
@@ -1263,6 +1265,49 @@
     try { if (MC.uiStore && typeof MC.uiStore.set === 'function') MC.uiStore.set({ drawer: 'approvals' }); } catch (e) { /* noop */ }
   }
 
+  // Team grouped by mission: for each running mission, who is on it and what each one is doing there.
+  function missionAgentState(m, aid) {
+    var mine = (m.plan || EMPTY).filter(function (s) { return s.agentId === aid; });
+    var cur = mine.filter(function (s) { return s.status === 'working'; })[0], bl = mine.filter(function (s) { return s.status === 'blocked'; })[0];
+    if (bl) return { cls: 'wait', word: 'waiting on you', title: bl.title };
+    if (cur) return { cls: 'work', word: 'working', title: cur.title };
+    if (mine.every(function (s) { return s.status === 'done' || s.status === 'skipped'; })) return { cls: 'ok', word: 'done', title: mine.length ? mine[mine.length - 1].title : '' };
+    var q = mine.filter(function (s) { return s.status === 'queued'; })[0];
+    return { cls: 'idle', word: 'up next', title: q ? q.title : '' };
+  }
+  function ByMission(p) {
+    var live = p.missions.filter(function (m) { return m.status !== 'stopped' && m.status !== 'done'; });
+    if (!live.length) return null;
+    return html`<section className="tm-bym" aria-label="Who is on each mission">
+      <h2 className="tm-bym-h">By mission</h2>
+      <ul className="tm-bym-list">${live.map(function (m) {
+        var seen = {}, agents = [], asks = (m.asks || EMPTY).filter(function (a) { return a.status === 'open'; }).length;
+        (m.plan || EMPTY).forEach(function (s) { if (!seen[s.agentId]) { seen[s.agentId] = 1; agents.push(s.agentId); } });
+        return html`<li key=${m.id} className="tm-bym-m" data-mission=${m.id}>
+          <p className="tm-bym-t"><a href=${missionHref(m)}>${m.goalText || shortGoal(m)}</a>${asks ? html` <span className="tm-bym-ask">${plural(asks, 'ask')} waiting on you</span>` : null}</p>
+          <ul className="tm-bym-agents">${agents.map(function (aid) {
+            var st = missionAgentState(m, aid);
+            return html`<li key=${aid} className=${'is-' + st.cls}><a href=${'#team'} onClick=${function (e) { e.preventDefault(); setFocus({ tab: 'roster', agentId: aid, auditId: null }); var el = document.getElementById('agents-row-' + aid); if (el && el.scrollIntoView) el.scrollIntoView({ block: 'center' }); }}><${Mark} id=${aid} />${agentName(aid)}</a>
+              <span className="tm-bym-w">${st.word}${st.title ? MID + st.title : ''}</span></li>`;
+          })}</ul>
+        </li>`;
+      })}</ul>
+    </section>`;
+  }
+
+  // The mission an agent last changed something for (its applied changes name a campaign or audience a mission made).
+  function recentMission(wld, id) {
+    var X = MC.xref, feed = wld && wld.feed || EMPTY, i, f, ms;
+    if (!X) return null;
+    for (i = 0; i < feed.length && i < 600; i++) {
+      f = feed[i];
+      if (f.agentId !== id || f.kind !== 'agent-applied' || !f.entity) continue;
+      ms = X.missionsOf(wld, f.entity.kind, f.entity.id);
+      if (ms.length) return ms[0];
+    }
+    ms = X.missionsOf(wld, 'agent', id);
+    return ms.length ? ms[0] : null;
+  }
   function TeamBoard(p) {
     var ms = useSel(selMissionState);
     var entries = useSel(selAudit) || EMPTY;
@@ -1275,12 +1320,15 @@
       return out;
     }, [p.roster]);
     var byId = {}; p.roster.forEach(function (r) { byId[r.id] = r; });
-    return html`<ol className="tm-list" aria-label="Your agents">
+    return html`<div><${ByMission} missions=${missions} />
+    <ol className="tm-list" aria-label="Your agents">
       ${ids.map(function (id) {
-        return html`<${TeamRow} key=${id} id=${id} row=${byId[id] || null} work=${deriveWork(missions, id, p.tick)} tick=${p.tick}
+        var wk = deriveWork(missions, id, p.tick);
+        if (!wk.where) wk.recent = recentMission(MC.store.getState(), id);
+        return html`<${TeamRow} key=${id} id=${id} row=${byId[id] || null} work=${wk} tick=${p.tick}
           impact=${impact} entries=${entries} open=${p.focusId === id} auditId=${p.focusId === id ? p.auditId : null} />`;
       })}
-    </ol>`;
+    </ol></div>`;
   }
 
   /* ================= View ================= */

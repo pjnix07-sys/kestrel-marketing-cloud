@@ -201,13 +201,30 @@
     var B = L.blocks || (L.blocks = {});
     return B[id] || (B[id] = SIM.latentForBlock(world, id));
   }
-  // Static [o, c, v] effect of one pinned block for a channel on a day (no fatigue): what a fresh person would see.
-  SIM.blockEffect = function (world, blockId, ver, ch, d, daysLeft) {
+  // A pinned block's effect on a channel on a day, split into the part that is the block's own quality (noise: n) and the
+  // wording's angle part (a), which is scaled by each person's taste for that angle (see MC.affinity).
+  // Taste sensitivity per channel [open, click, convert]: how far one unit of taste above (below) average moves an angle's effect on that
+  // channel. Block effect for person i = noise + angle effect + sensitivity x (taste_i - 1); taste has mean 1, so averages are unchanged.
+  var TASTE_SENS = { email: [0.60, 0.40, 0.10], push: [0.52, 0.36, 0.08], sms: [0, 0.20, 0.08], social: [0, 0.16, 0.04], web: [0, 0.16, 0.04] };
+  function tasteScale(angle, d, daysLeft) {   // taste only matters while the angle is in play: gifting after Dec 1, urgency near a real deadline
+    if (angle === 'gifting') return clamp01((d - GIFT_DAY + 1) / 10);
+    if (angle === 'urgency') return daysLeft === null ? 0.3 : 0.3 + 0.7 * clamp01(1 - daysLeft / URGENCY_WINDOW);
+    return 1;
+  }
+  SIM.blockParts = function (world, blockId, ver, ch, d, daysLeft) {
     var C = world.content, blk = C && C.blocks.byId[blockId];
-    if (!blk) return [0, 0, 0];
+    if (!blk) return { n: ZERO3, a: ZERO3, dev: ZERO3, angle: -1 };
     var tags = (MC.content ? MC.content.blockAt(blk, ver) : blk).tags || {}, W = KIND_W[blk.kind] || KIND_W.signoff;
     var N = blockNoise(world, blockId), ak = ANGLE_K[blk.kind] || 0, af = ak ? angleFx(tags.angle, ch, d, daysLeft) : ZERO3;
-    return [W.o * (N.o + ak * af[0]), W.c * (N.c + ak * af[1]), W.v * (N.v + ak * af[2])];
+    var ai = ak ? (MC.affinity ? MC.affinity.angleIndex(tags.angle) : -1) : -1;
+    var ts = ak ? tasteScale(tags.angle, d, daysLeft) : 0, sn = TASTE_SENS[ch] || ZERO3;
+    return { n: [W.o * N.o, W.c * N.c, W.v * N.v], a: [W.o * ak * af[0], W.c * ak * af[1], W.v * ak * af[2]],
+      dev: [W.o * ak * ts * sn[0], W.c * ak * ts * sn[1], W.v * ak * ts * sn[2]], angle: ai };
+  };
+  // Static [o, c, v] effect of one pinned block for a channel on a day (no fatigue, average taste): what a typical person sees.
+  SIM.blockEffect = function (world, blockId, ver, ch, d, daysLeft) {
+    var p = SIM.blockParts(world, blockId, ver, ch, d, daysLeft);
+    return [p.n[0] + p.a[0], p.n[1] + p.a[1], p.n[2] + p.a[2]];
   };
 
   function expOf(world, id) {
@@ -226,13 +243,17 @@
     var c = camp(world, v.campaignId), ch = v.channel, dl = null;
     if (c && ((c.offer && c.offer !== 'none') || (c.eventDay !== undefined && c.eventDay !== null))) dl = c.endTick;
     var daysLeft = dl === null ? null : Math.max(0, (dl - (d * 24 + 12)) / 24);
-    pl = { v: v, ch: ch, n: 0, ids: [], eo: [], ec: [], ev: [], to: [], tc: [], tv: [], g: [], exp: [], ki: [], perf: [], fat: [], sumC: 0 };
+    pl = { v: v, ch: ch, n: 0, ids: [], eo: [], ec: [], ev: [], ao: [], ac: [], av: [], do: [], dc: [], dv: [], ai: [], to: [], tc: [], tv: [], g: [], exp: [], ki: [], perf: [], fat: [], sumC: 0, pa: -1 };
     var P = C.perf || (C.perf = {}), day = owned ? (P[d] || (P[d] = {})) : null, F = C.fat || (C.fat = {});
     v.blocks.forEach(function (b) {
       var blk = C.blocks.byId[b.id];
       if (!blk) return;
-      var fx = SIM.blockEffect(world, b.id, b.ver, ch, d, daysLeft), W = KIND_W[blk.kind] || KIND_W.signoff, T = TIRED_MAX[blk.kind] || 0;
-      pl.ids.push(b.id); pl.eo.push(fx[0]); pl.ec.push(fx[1]); pl.ev.push(fx[2]);
+      var bp = SIM.blockParts(world, b.id, b.ver, ch, d, daysLeft), W = KIND_W[blk.kind] || KIND_W.signoff, T = TIRED_MAX[blk.kind] || 0;
+      var fx = [bp.n[0] + bp.a[0], bp.n[1] + bp.a[1], bp.n[2] + bp.a[2]];
+      pl.ids.push(b.id); pl.eo.push(bp.n[0]); pl.ec.push(bp.n[1]); pl.ev.push(bp.n[2]);
+      pl.ao.push(bp.a[0]); pl.ac.push(bp.a[1]); pl.av.push(bp.a[2]); pl.do.push(bp.dev[0]); pl.dc.push(bp.dev[1]); pl.dv.push(bp.dev[2]); pl.ai.push(bp.angle);
+      if (pl.pa < 0 && bp.angle >= 0 && blk.kind === 'headline') pl.pa = bp.angle;
+      
       pl.to.push(T * W.o); pl.tc.push(T * W.c); pl.tv.push(T * W.v);
       pl.g.push(GTAB[blk.kind] || GTAB.signoff); pl.exp.push(null); pl.ki.push(0); pl.sumC += fx[1];
       if (owned) {
@@ -243,17 +264,19 @@
       }
     });
     pl.n = pl.ids.length;
+    if (pl.pa < 0) for (var q = 0; q < pl.n; q++) if (pl.ai[q] >= 0) { pl.pa = pl.ai[q]; break; }   // wording without a headline angle: the body's
     cache.byV[v.id] = pl;
     return pl;
   }
   // Logit shifts for profile i: each block's effect decays with the exposures that person has had, plus a tiredness penalty.
   function planFx(world, pl, i, out) {
-    var dO = 0, dC = 0, dV = 0;
+    var dO = 0, dC = 0, dV = 0, L = world.latent && world.latent.profiles, taste = L && L.taste && L.taste.length === world.profiles.n * 5 ? L.taste : null;
+    if (!taste && L && MC.affinity) taste = MC.affinity.tasteOf(world);
     for (var j = 0; j < pl.n; j++) {
       var a = pl.exp[j] || (pl.exp[j] = expOf(world, pl.ids[j])), k = a[i];
       pl.ki[j] = k > 5 ? 5 : k;
-      var g = pl.g[j][k > 15 ? 15 : k], h = 1 - g;
-      dO += pl.eo[j] * g - pl.to[j] * h; dC += pl.ec[j] * g - pl.tc[j] * h; dV += pl.ev[j] * g - pl.tv[j] * h;
+      var g = pl.g[j][k > 15 ? 15 : k], h = 1 - g, m = (taste && pl.ai[j] >= 0) ? taste[i * 5 + pl.ai[j]] - 1 : 0;
+      dO += (pl.eo[j] + pl.ao[j] + pl.do[j] * m) * g - pl.to[j] * h; dC += (pl.ec[j] + pl.ac[j] + pl.dc[j] * m) * g - pl.tc[j] * h; dV += (pl.ev[j] + pl.av[j] + pl.dv[j] * m) * g - pl.tv[j] * h;
     }
     out.o = dO; out.c = dC; out.v = dV;
     return out;
@@ -266,7 +289,35 @@
     }
   }
   function planExposed(pl, i) { for (var j = 0; j < pl.n; j++) { var a = pl.exp[j]; if (a[i] < 255) a[i]++; } }
+  // Response ledger (read by MC.affinity, never by the sim). world.content.led = {exp, opn, clk, ord}: Uint8Array(n * 5), per person and
+  // content angle (the headline's angle; the body's when the headline has none). world.content.vled[variantId] = {angle, ch, blocks,
+  // exp, opn, clk, ord (Uint8Array n), last (Int16Array n, sim day of the last delivery)}: the same per person and variant, so the
+  // reader can compare each person with how everyone responded to that same variant (world.content.vrate[variantId] = [deliveries,
+  // clicks, opens]). Opens are not recorded on SMS (the sim fixes them).
+  function ledOf(world) {
+    var C = world.content, n = world.profiles.n, L = C.led;
+    if (!L || L.exp.length !== n * 5) L = C.led = { exp: new Uint8Array(n * 5), opn: new Uint8Array(n * 5), clk: new Uint8Array(n * 5), ord: new Uint8Array(n * 5) };
+    return L;
+  }
+  function vledOf(world, pl) {
+    var C = world.content, n = world.profiles.n, M = C.vled || (C.vled = {}), v = M[pl.v.id];
+    if (!v || v.exp.length !== n) {
+      v = M[pl.v.id] = { angle: pl.pa, ch: pl.ch, blocks: pl.ids.slice(), exp: new Uint8Array(n), opn: new Uint8Array(n), clk: new Uint8Array(n), ord: new Uint8Array(n), last: new Int16Array(n) };
+      v.last.fill(NEVER());
+    }
+    return v;
+  }
+  function bump8(a, i) { if (a[i] < 255) a[i]++; }
+  // kind: 0 delivered (exposure), 1 click, 2 order, 3 open.
+  function planLedger(world, pl, i, kind, d) {
+    var C = world.content, VR = C.vrate || (C.vrate = {}), vr = VR[pl.v.id] || (VR[pl.v.id] = [0, 0, 0]), vl = vledOf(world, pl), led = pl.pa >= 0 ? ledOf(world) : null, j = i * 5 + pl.pa;
+    if (kind === 0) { bump8(vl.exp, i); vl.last[i] = d; vr[0]++; if (led) bump8(led.exp, j); }
+    else if (kind === 1) { bump8(vl.clk, i); vr[1]++; if (led) bump8(led.clk, j); }
+    else if (kind === 2) { bump8(vl.ord, i); if (led) bump8(led.ord, j); }
+    else if (pl.ch !== 'sms') { bump8(vl.opn, i); vr[2]++; if (led) bump8(led.opn, j); }
+  }
   SIM._contentPlan = contentPlan;
+  SIM.HALF_LIFE = HALF_LIFE;
 
   function daysTotal(c) { return Math.max(1, (c.endTick - c.startTick) / 24); }
 
@@ -670,7 +721,7 @@
 
       if (rng.float() < CONST.pd[ch]) {
         add(facts, f.DELIV, 1);
-        if (CPL) planLog(CPL, 1, 1);
+        if (CPL) { planLog(CPL, 1, 1); planLedger(world, CPL, i, 0, d); }
         pushTouch(world, i, allIdx, ci, t);
         var ph = LP.ph ? LP.ph[i] : 12, engI = LP.eng ? LP.eng[i] : 0;
         var dc = dcirc(h, ph), hourFit = Math.exp(-(dc * dc) / 8);
@@ -678,7 +729,7 @@
           : sig(CONST.a[ch] + CONST.engW * engI + Lv.qo + (dq ? dq.o : 0) + CONST.hourW * (hourFit - 0.5) - CONST.fatW * Fi);
         if (rng.float() < pOpen) {
           add(facts, f.OPEN, 1);
-          if (CPL) planLog(CPL, 2, 1);
+          if (CPL) { planLog(CPL, 2, 1); planLedger(world, CPL, i, 3, d); }
           hrs[24 + h] += 1;
           if (P.openHr[i * 24 + h] < 255) P.openHr[i * 24 + h]++;
           if (P.eng[eb + 1] < 65535) P.eng[eb + 1]++;
@@ -689,7 +740,7 @@
           var pClick = sig(CONST.b[ch] + Lv.qc + (dq ? dq.c : 0) + CONST.affW * Math.log(5 * aff) + CONST.cfW * Math.log(cf));
           if (rng.float() < pClick) {
             add(facts, f.CLICK, 1);
-            if (CPL) planLog(CPL, 3, 1);
+            if (CPL) { planLog(CPL, 3, 1); planLedger(world, CPL, i, 1, d); }
             if (P.eng[eb + 2] < 65535) P.eng[eb + 2]++;
             E.flags[i] |= 2;
             var offer = v.offer || c.offer || 'none';
@@ -700,7 +751,7 @@
               var rev = prod.price * rng.lognormal(0, CONST.revSd) * (1 - (CONST.discount[offer] || 0));
               var react = bookOrder(world, i, rev, d);
               add(facts, f.CONV, 1); add(facts, f.REV, rev); add(facts, f.REACT, react);
-              if (CPL) { planLog(CPL, 4, 1); planLog(CPL, 5, rev); }
+              if (CPL) { planLog(CPL, 4, 1); planLog(CPL, 5, rev); planLedger(world, CPL, i, 2, d); }
               E.rev[i] += rev;
               attribute(world, i, rev, t, e);
             }

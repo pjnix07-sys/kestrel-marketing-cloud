@@ -248,3 +248,17 @@
 .v-team .cn-btn-primary, .v-team .k-btn-primary { background: var(--moss, #1F5C46); border-color: var(--moss, #1F5C46); color: #fff; }
 .v-team .cn-roster-pending { color: var(--ink); }
 @media (prefers-reduced-motion: reduce) { .v-team .tm-led { animation: none !important; } }
+
+/* Team grouped by mission */
+.tm-bym { margin: 0 0 20px; padding: 0 0 12px; border-bottom: 1.5px solid var(--ink); }
+.tm-bym-h { font-size: 12.5px; font-weight: 500; color: var(--ink-3, #53645A); margin: 0 0 8px; }
+.tm-bym-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; }
+.tm-bym-t { margin: 0 0 4px; font-weight: 700; font-size: 15px; letter-spacing: -.01em; }
+.tm-bym-t a { color: inherit; text-decoration: underline; text-decoration-color: var(--line-strong, #B4C0B5); text-underline-offset: 3px; }
+.tm-bym-ask { font-size: 12.5px; font-weight: 700; color: var(--ink); background: var(--signal, #FF5A1F); padding: 1px 7px; border-radius: 2px; margin-left: 6px; white-space: nowrap; }
+.tm-bym-agents { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 4px 20px; }
+.tm-bym-agents li { display: grid; gap: 1px; font-size: 13px; min-width: 0; }
+.tm-bym-agents a { display: inline-flex; align-items: center; gap: 6px; font-weight: 650; color: var(--ink); text-decoration: none; }
+.tm-bym-agents a:hover { text-decoration: underline; }
+.tm-bym-w { color: var(--ink-3, #53645A); padding-left: 22px; overflow-wrap: anywhere; }
+.tm-bym-agents li.is-wait .tm-bym-w { color: var(--ink); font-weight: 600; }

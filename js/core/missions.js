@@ -52,12 +52,39 @@
   M.list = function (world) { var s = world.missions; return s ? s.order.map(function (id) { return s.byId[id]; }).filter(Boolean) : []; };
 
   /* ======================= beats, normalization ======================= */
-  var BEAT_KINDS = ['thought', 'handoff', 'did', 'ask', 'replan', 'result'];
+  var BEAT_KINDS = ['thought', 'handoff', 'did', 'ask', 'replan', 'result', 'disagree'];
   function cleanBeat(b, tick) {
     var o = { tick: isNum(b.tick) ? b.tick : tick, agentId: String(b.agentId || 'lead'), kind: BEAT_KINDS.indexOf(b.kind) >= 0 ? b.kind : 'thought', text: String(b.text || '').slice(0, 400) };
     if (b.ref !== undefined && b.ref !== null) o.ref = b.ref;
+    // beat.diff = [{what, from, to}]: what a steer or a step changed, in the marketer's words
+    if (b.stepId) o.stepId = String(b.stepId).slice(0, 16);
+    var diff = cleanDiff(b.diff);
+    if (diff.length) o.diff = diff;
+    // a disagreement carries both positions and how it was settled: sides = [{agentId, position}], resolution
+    if (o.kind === 'disagree') {
+      var sides = (Array.isArray(b.sides) ? b.sides : []).map(function (x) { return x && x.agentId ? { agentId: String(x.agentId), position: String(x.position || '').slice(0, 300) } : null; }).filter(Boolean).slice(0, 3);
+      if (sides.length) o.sides = sides;
+      if (b.resolution) o.resolution = String(b.resolution).slice(0, 300);
+    }
+    var dec = b.decision ? cleanDecision(b.decision) : null;
+    if (dec) o.decision = dec;
     return o;
   }
+  function cleanDiff(list) {
+    return (Array.isArray(list) ? list : []).map(function (d) {
+      return d && d.what ? { what: String(d.what).slice(0, 60), from: String(d.from === undefined || d.from === null ? '' : d.from).slice(0, 100), to: String(d.to === undefined || d.to === null ? '' : d.to).slice(0, 100) } : null;
+    }).filter(Boolean).slice(0, 8);
+  }
+  // step.decision = {options:[{label, value, note}], chose, why}: what the agent weighed and why it chose one
+  function cleanDecision(d) {
+    if (!isObj(d) || !Array.isArray(d.options) || !d.options.length) return null;
+    var opts = d.options.slice(0, 6).map(function (o) {
+      return isObj(o) && o.label ? { label: String(o.label).slice(0, 80), value: String(o.value === undefined || o.value === null ? '' : o.value).slice(0, 60), note: String(o.note || '').slice(0, 160) } : null;
+    }).filter(Boolean);
+    if (!opts.length) return null;
+    return { options: opts, chose: String(d.chose || opts[0].label).slice(0, 80), why: String(d.why || '').slice(0, 300) };
+  }
+  M.cleanDecision = cleanDecision;
   function addBeats(log, beats, tick) {
     var out = (log || []).slice();
     (beats || []).forEach(function (b) { if (b && b.text) out.push(cleanBeat(b, tick)); });
@@ -174,6 +201,7 @@
     if (p.stepId && isObj(p.patch)) {
       var allowed = {}, pt = p.patch;
       ['status', 'startedTick', 'doneTick', 'actions', 'artifact', 'note', 'title', 'needs', 'attempts', 'summary'].forEach(function (k) { if (pt[k] !== undefined) allowed[k] = pt[k]; });
+      if (pt.decision) { var cd = cleanDecision(pt.decision); if (cd) allowed.decision = cd; }
       mm.plan = patchStep(m.plan, p.stepId, allowed);
       if (allowed.artifact) mm.artifacts = addArtifact(mm.artifacts || [], allowed.artifact);
     }
@@ -386,9 +414,10 @@
     }
   };
 
-  // Event-driven, one transition per engine tick: a ready step is claimed (queued -> working) on one tick and its executor runs
-  // (working -> done, blocked or skipped) on the next; independent steps progress in parallel. A step is ready only when what it
-  // needs was already done at the start of the tick. No artificial delay: rules executors take exactly one tick to claim and one to run.
+  // Event-driven, one dependency level per engine tick: every step whose needs were already done at the start of the tick is claimed
+  // and run in that same tick (queued -> working -> done, blocked or skipped), so independent steps progress together and the next
+  // level starts on the next tick. The world clock is slower now (one hour per 5 s) but missions are not: a level takes one tick.
+  // A step left 'working' by an older save is finished on its next tick. No artificial delay anywhere.
   // Day-clock work (the daily check-in and re-plan) still happens on its hour as the sample world's time passes.
   function tickMission(world, id, t) {
     var m = getM(world, id);
@@ -406,27 +435,53 @@
       var sid = m.plan[i].id, st = stepById(cur, sid);
       if (!st || snap[sid] !== st.status) continue;
       if (st.status === 'working') finishStep(world, t, cur, st);
-      else if (st.status === 'queued' && st.needs.every(function (n) { return snap[n] === undefined || snap[n] === 'done' || snap[n] === 'skipped'; })) startStep(world, t, cur, st);
+      else if (st.status === 'queued' && st.needs.every(function (n) { return snap[n] === undefined || snap[n] === 'done' || snap[n] === 'skipped'; })) {
+        startStep(world, t, cur, st);
+        var cur2 = getM(world, id), st2 = cur2 && stepById(cur2, sid);
+        if (st2 && st2.status === 'working' && cur2.status !== 'paused' && cur2.status !== 'stopped') finishStep(world, t, cur2, st2);
+      }
     }
     m = getM(world, id);
     if (!m || m.status === 'stopped') return;
     var open = m.plan.some(function (s) { return s.status !== 'done' && s.status !== 'skipped'; });
     if (!open && m.phase !== 'monitoring') {
-      missionPatch(world, t, id, { phase: 'monitoring' }, [{ agentId: 'lead', kind: 'result', text: monitoringBeat(m) }]);
+      ensureLaunchAsk(world, t, id);
+      m = getM(world, id);
+      missionPatch(world, t, id, { phase: 'monitoring' }, [{ agentId: 'lead', kind: 'result', text: monitoringBeat(world, m) }]);
       m = getM(world, id);
     }
     if (T().hourOf(t) === M.CHECKIN_HOUR && m.lastCheckDay !== dayOf(t)) {
-      if (m.phase === 'monitoring') checkin(world, t, m);
+      if (m.phase === 'monitoring') { ensureLaunchAsk(world, t, id); checkin(world, t, getM(world, id)); }
       else if ((m.artifacts || []).some(function (a) { return a.kind === 'campaign'; })) {
         var pr = computeProgress(world, m, t);
-        missionPatch(world, t, id, { progress: { value: pr.value, target: pr.target, forecast: pr.forecast, lo: pr.lo, hi: pr.hi }, lastCheckDay: dayOf(t) });
+        missionPatch(world, t, id, { progress: verdictFrom(world, m, pr), lastCheckDay: dayOf(t) });
       }
     }
   }
 
-  function monitoringBeat(m) {
-    var c = ((m.data || {}).campaignId) ? ' The campaign is drafted and waiting for your sign-off; once it runs, ' : ' ';
-    return 'The plan is in place.' + (c.length > 1 && c !== ' ' ? c : ' ') + 'Insight Analyst will check in every morning, and I’ll re-plan if we fall behind.';
+  // The mission only ever says it is waiting for your sign-off when there is an open ask behind it.
+  function monitoringBeat(world, m) {
+    var c = campaignOf(world, m), waiting = !!c && c.status === 'draft' && openAsks(m, false).some(function (a) { return a.kind === 'launch'; });
+    return 'The plan is in place.' + (waiting ? ' The campaign is drafted and waiting for your sign-off; once it runs, ' : ' ') + 'Insight Analyst will check in every morning, and I’ll re-plan if we fall behind.';
+  }
+  // A drafted campaign that nobody has scheduled always has a question open: raised when the plan finishes (even if the hand-off step
+  // was skipped), and again after a "not yet" (two days) or a "yes" that never turned into a schedule (three days).
+  function ensureLaunchAsk(world, t, id) {
+    var m = getM(world, id), c = m && campaignOf(world, m);
+    if (!m || !c || c.status !== 'draft' || m.status === 'stopped' || m.status === 'done') return;
+    var launch = (m.asks || []).filter(function (a) { return a.kind === 'launch'; });
+    if (launch.some(function (a) { return a.status === 'open'; })) return;
+    var last = launch[launch.length - 1];
+    if (last && isNum(last.answeredTick)) {
+      var yes = !/^(no|not yet|stop|hold)\b/i.test(String(last.answer || '')), gap = yes ? 3 : 2;
+      if (dayOf(t) < dayOf(last.answeredTick) + gap) return;
+    }
+    var again = !!last, started = dayOf(c.startTick) <= dayOf(t);
+    var fc = (m.data || {}).planForecast || {}, d0 = dayShort(dayOf(c.startTick));
+    act(world, t, 'mission/ask', { id: id, ask: { kind: 'launch', agentId: 'lead', blocking: false,
+      question: again ? 'Still a draft: “' + c.name + '”. Ready to schedule it' + (started ? '' : ' for ' + d0) + '?' : '“' + c.name + '” is drafted. Ready to schedule it for ' + d0 + '?',
+      why: 'The plan is done and nothing sends until the draft passes the launch checklist and you schedule it.' + (again ? ' Without it the goal can’t start moving.' : ''),
+      impact: { metric: L().metricNoun(m.objective.metric), lo: fc.lo || 0, hi: fc.hi || 0 }, options: ['Yes, schedule it', 'Not yet'], default: 'Yes, schedule it' } });
   }
 
   function startStep(world, t, m, st) {
@@ -435,7 +490,7 @@
     var from = st.needs.map(function (n) { return stepById(m, n); }).filter(function (d) { return d && d.agentId !== st.agentId && d.status === 'done'; })[0];
     if (from) beats.push({ agentId: from.agentId, kind: 'handoff', text: 'Passing this to ' + L().agentName(st.agentId) + '.' });
     var line = (L().voice.start[st.kind] || function () { return 'On it.'; })(m);
-    beats.push({ agentId: st.agentId, kind: 'thought', text: line });
+    beats.push({ agentId: st.agentId, kind: 'thought', text: line, stepId: st.id });
     stepAction(world, t, m.id, st.id, { status: 'working', startedTick: t, note: '' }, { beats: beats });
   }
 
@@ -455,8 +510,14 @@
     var patch = { status: r.skip ? 'skipped' : 'done', doneTick: t, note: r.note || '' };
     if (r.actions) patch.actions = r.actions;
     if (r.artifact) patch.artifact = r.artifact;
-    var extra = { beats: r.beats || [] };
-    if (r.data || r.artifacts) extra.mission = { data: r.data || {}, artifacts: r.artifacts || undefined };
+    // every step records what the agent weighed (real alternatives with their numbers) and why it chose one
+    var dec = cleanDecision(r.decision);
+    if (!dec) { try { dec = cleanDecision(fallbackDecision(world, t, m, st, r)); } catch (e) { report(e); dec = null; } }
+    if (dec) patch.decision = dec;
+    var beats0 = r.beats || [];
+    if (beats0[0] && !beats0[0].stepId) beats0[0].stepId = st.id;
+    var extra = { beats: beats0 };
+    if (r.data || r.artifacts || r.progress) extra.mission = { data: r.data || {}, artifacts: r.artifacts || undefined, progress: r.progress || undefined };
     stepAction(world, t, m.id, st.id, patch, extra);
     if (r.asks) r.asks.forEach(function (a) { act(world, t, 'mission/ask', { id: m.id, ask: a }); });
   }
@@ -492,25 +553,87 @@
   function offerCap(m) { var c = L().constraintOf(m.objective.constraints, 'maxDiscountPct'); return c ? c.value : null; }
   function agentTag(agentId) { return L().agentName(agentId); }
 
+
+  /* ---------------- decisions: what each agent weighed (step.decision) ---------------- */
+  function opt(label, value, note) { return { label: label, value: value === undefined || value === null ? '' : String(value), note: note || '' }; }
+  function signedPct(x) { return (x >= 0 ? '+' : '−') + pct(Math.abs(x), 0); }
+  function marginalText(x) { return isNum(x) && x >= 0.01 ? '$' + x.toFixed(2) + ' back per $1' : 'under $0.01 back per $1'; }
+  // The plan's best audiences for this mission's brief (the planner's own ranking), for Scout's and Widen's decisions.
+  function audienceCandidates(world, m, resolvedId) {
+    try {
+      var d = m.data || {}, aud = clone(d.audience || {});
+      var brief = L().brief(world, assign({}, m, { data: assign({}, d, { audience: assign({}, aud, { resolvedId: resolvedId || null, segmentId: resolvedId || null }) }) }));
+      return MC.planner.plan(world, brief).sections.audience.options || [];
+    } catch (e) { return []; }
+  }
+  function audOpt(o) {
+    return opt(o.name, num(o.size) + ' people, ' + num(o.reach) + ' reachable', pct(o.meanProp, 1) + ' chance to buy in 30 days; about ' + money(o.ev) + ' expected');
+  }
+  // Per-angle response for an audience from MC.affinity (when it exists), as { angle: {value, lo, hi} }.
+  function affinityFor(world, m) {
+    var out = {}, A = MC.affinity, sid = (m.data || {}).audience && m.data.audience.resolvedId;
+    if (!A || typeof A.forSegment !== 'function' || !sid) return out;
+    try {
+      var r = A.forSegment(world, sid), rows = Array.isArray(r) ? r : (r && (r.angles || r.rows)) || [];
+      rows.forEach(function (x) {
+        var key = x && (x.angle || x.key || x.id), l = x && (x.lift || x), v = l && (isNum(l.value) ? l.value : (isNum(l.lift) ? l.lift : null));
+        if (key && v !== null && isNum(v)) out[key] = { value: v, lo: isNum(l.lo) ? l.lo : null, hi: isNum(l.hi) ? l.hi : null, source: 'affinity' };
+      });
+    } catch (e) { return {}; }
+    return out;
+  }
+  // Within-campaign lift of an angle across the library, from the same ledger the content views read.
+  function angleDecision(world, m, heads, chose, aff) {
+    var K = MC.content, seen = {}, opts = [];
+    heads.forEach(function (h) {
+      var a = h.b.tags && h.b.tags.angle; if (!a || seen[a]) return;
+      seen[a] = h;
+    });
+    Object.keys(seen).sort().forEach(function (a) {
+      var h = seen[a], l = aff[a] || (h.sc.l ? { value: h.sc.l.value, lo: h.sc.l.lo, hi: h.sc.l.hi } : null);
+      var n = heads.filter(function (x) { return x.b.tags && x.b.tags.angle === a; }).length;
+      opts.push({ o: opt((K.ANGLE_LABEL || {})[a] || a, l ? signedPct(l.value) + (isNum(l.lo) && isNum(l.hi) ? ' (' + signedPct(l.lo) + ' to ' + signedPct(l.hi) + ')' : '') : 'no history yet',
+        (aff[a] ? 'This audience responds ' + (aff[a].value >= 0 ? 'above' : 'below') + ' average. ' : '') + n + (n === 1 ? ' headline' : ' headlines') + ' ready; best: “' + clipN(plainBlock(h.b), 40) + '”'), v: l ? l.value : -9 });
+    });
+    opts.sort(function (x, y) { return (y.v - x.v) || (x.o.label < y.o.label ? -1 : 1); });
+    var label = (K.ANGLE_LABEL || {})[chose] || chose, top = opts[0], mine = opts.filter(function (x) { return x.o.label === label; })[0];
+    var why = aff[chose] ? 'It is what this audience has responded to most (' + signedPct(aff[chose].value) + ' against the rest).'
+      : (mine && mine.v > -9 ? 'It has earned ' + signedPct(mine.v) + ' more of the response than the rest of the library on these channels.' : 'It fits the campaign’s tone and has no history that says otherwise.');
+    if (top && mine && top.o.label !== label && top.v > -9 && top.v > mine.v) why += ' ' + top.o.label + ' scores higher, but it didn’t fit this campaign (a deadline or product it doesn’t have).';
+    return { options: opts.map(function (x) { return x.o; }).slice(0, 5), chose: label, why: why };
+  }
+
   /* ---------------- executors: each returns {beats, artifact?, data?, block?, error?, skip?} ---------------- */
   var EXEC = {};
 
   EXEC.goal = function (world, t, m, st) {
-    return { beats: [{ agentId: 'lead', kind: 'did', text: 'Goal confirmed: ' + L().objectiveText(m.objective) + '.' }], note: 'Goal confirmed.' };
+    var o = m.objective, days = Math.max(1, o.by - dayOf(t) + 1), per = o.target / days, perEarly = days > 8 ? o.target / (days - 7) : null;
+    function rate(v) { return L().fmtMetric(o.metric, v) + ' a day'; }
+    var opts = o.direction === 'atMost'
+      ? [opt('Hold to the limit through ' + dayShort(o.by), 'under ' + num(o.target), 'About ' + (Math.round(per * 10) / 10) + ' a day allowed over ' + days + ' days')]
+      : [opt('Run to ' + dayShort(o.by), rate(per), days + (days === 1 ? ' day' : ' days') + ' to get there')];
+    if (perEarly) opts.push(opt('Finish a week early', rate(perEarly), 'Needs ' + pct(perEarly / per - 1, 0) + ' more a day and leaves nothing for a re-plan'));
+    return { beats: [{ agentId: 'lead', kind: 'did', text: 'Goal confirmed: ' + L().objectiveText(m.objective) + '.' }], note: 'Goal confirmed.',
+      decision: { options: opts, chose: opts[0].label, why: 'It is the date you gave. ' + (perEarly ? 'Finishing early would need ' + rate(perEarly) + ' against ' + rate(per) + ', with no room to fix a miss.' : 'There is no slack to bring it forward.') } };
   };
 
   // ---- Segment Scout: find and size the audience ----
   EXEC.audience = function (world, t, m, st) {
     var d = m.data || {}, template = d.template;
     if (template === 'protect') {
-      var gp = guardParams(world), P = world.profiles, hit = 0, reachable = 0;
+      var gp = guardParams(world), P = world.profiles, hit = 0, reachable = 0, half = 0, dbl = 0;
       for (var i = 0; i < P.n; i++) {
         if ((P.consent[i] & MC.CH.BIT.email) === 0 || (P.unsub[i] & MC.CH.BIT.email) !== 0) continue;
         reachable++;
-        if (MC.models.unsubRisk(world, i, 'email') >= gp.thr) hit++;
+        var rk = MC.models.unsubRisk(world, i, 'email');
+        if (rk >= gp.thr) hit++;
+        if (rk >= gp.thr / 2) half++;
+        if (rk >= gp.thr * 2) dbl++;
       }
       return { beats: [{ agentId: 'scout', kind: 'did', text: num(hit) + ' of ' + num(reachable) + ' email subscribers are at real risk of unsubscribing at the current send pace.' }],
-        data: { audience: assign({}, d.audience, { atRisk: hit, reachable: reachable }) }, note: num(hit) + ' at risk.' };
+        data: { audience: assign({}, d.audience, { atRisk: hit, reachable: reachable }) }, note: num(hit) + ' at risk.',
+        decision: { options: [opt('Half the usual risk bar', num(half) + ' people', 'Casts a wider net; many would be fine'), opt('The usual risk bar', num(hit) + ' people', 'Where unsubscribing becomes likely'), opt('Twice the usual bar', num(dbl) + ' people', 'Only the clearest cases')],
+          chose: 'The usual risk bar', why: 'It flags ' + num(hit) + ' of ' + num(reachable) + ' subscribers; half the bar would add ' + num(half - hit) + ' people who are probably fine, and twice the bar would miss ' + num(hit - dbl) + ' who are not.' } };
     }
     var aud = clone(d.audience || {}), ov = d.overrides || {}, sid = aud.segmentId && !ov.widen ? aud.segmentId : null, created = null, label = aud.label || '';
     if (sid && !seg(world, sid)) sid = null;
@@ -557,6 +680,17 @@
     var text = 'Found ' + num(size) + ' ' + (s0 ? lowerFirst(s0.name) : label) + '; ' + num(rc.reach) + ' (' + pct(pctReach) + ') can be reached by ' + chLower(primary) + '.';
     var auds = assign({}, aud, { resolvedId: sid, label: label || (s0 && s0.name) || '', size: size, reach: rc.reach, primary: primary });
     var res = { beats: [{ agentId: 'scout', kind: 'did', text: text }], artifact: { kind: 'segment', id: sid }, data: { audience: auds }, actions: actions, note: text };
+    var all = audienceCandidates(world, m, created ? null : sid);
+    var pickedOpt = all.filter(function (o) { return (o.segmentId && o.segmentId === sid) || (!o.segmentId && lowerFirst(o.name) === lowerFirst(label)); })[0], ownEv = pickedOpt ? pickedOpt.ev : null;
+    var seenAud = {}; if (pickedOpt) seenAud[pickedOpt.name + pickedOpt.size] = true;
+    var cands = all.filter(function (o) { var k = o.name + o.size; if (o === pickedOpt || seenAud[k]) return false; seenAud[k] = true; return true; }), mine;
+    if (pickedOpt) mine = audOpt(pickedOpt);
+    else mine = opt((s0 && s0.name) || label, num(size) + ' people, ' + num(rc.reach) + ' reachable', 'Reached by ' + chLower(primary));
+    var others = cands.slice(0, 2).map(audOpt);
+    var best = cands[0];
+    res.decision = { options: [mine].concat(others), chose: mine.label,
+      why: ownEv !== null && best && best.ev > ownEv ? 'It’s the group you described; the best-scoring alternative (' + lowerFirst(best.name) + ') is worth about ' + money(best.ev) + ' against ' + money(ownEv) + ', so say so if you’d rather switch.'
+        : (best ? 'It has the highest expected value of the ' + (1 + cands.length) + ' candidates I scored (' + (ownEv !== null ? money(ownEv) : 'best fit for the goal') + ').' : 'It was the only audience big enough to measure.') };
     return res;
   };
 
@@ -610,7 +744,11 @@
     var days = Math.max(1, Math.round((c.endTick - c.startTick) / 24));
     var text = 'Drafted “' + c.name + '”: ' + listJoin(c.channels.map(chLower)) + ', ' + moneyS(c.budget.total) + ' over ' + days + (days === 1 ? ' day' : ' days') +
       ', starting ' + dayShort(dayOf(c.startTick)) + '. It stays a draft until you schedule it.';
-    return { beats: [{ agentId: 'planner', kind: 'did', text: text }], artifact: { kind: 'campaign', id: cid }, note: text,
+    var whyRows = plan.sections.budget.why || [], excluded = (m.objective.constraints || []).filter(function (x) { return x.kind === 'excludeChannel'; }).map(function (x) { return chLower(x.value); });
+    var copts = whyRows.map(function (w) { return opt(chName(w.ch), '$' + w.roas.toFixed(2) + ' back per $1', pct(w.share, 0) + ' of the budget; ' + marginalText(w.marginal) + ' on the next dollar'); });
+    var decision = { options: copts, chose: 'Run on ' + listJoin(c.channels.map(chLower)),
+      why: 'Budget follows the channels that return the most on the next dollar' + (excluded.length ? '; ' + listJoin(excluded) + ' stays out because you said so' : '') + '. Forecast ' + L().fmtMetric(m.objective.metric, fc.mean) + ' (' + L().fmtMetric(m.objective.metric, fc.lo) + ' to ' + L().fmtMetric(m.objective.metric, fc.hi) + ').' };
+    return { beats: [{ agentId: 'planner', kind: 'did', text: text }], artifact: { kind: 'campaign', id: cid }, note: text, decision: decision,
       actions: [{ type: 'campaign/create', id: cid }],
       data: { campaignId: cid, channels: c.channels.slice(), planForecast: { mean: fc.mean, lo: fc.lo, hi: fc.hi, target: fc.target || null }, optimalSplit: clone(plan.sections.budget.byChannel),
         budgetWhy: clone(plan.sections.budget.why || []) } };
@@ -663,7 +801,7 @@
     var out = { messages: [], chans: chans, actions: [], notes: [], rejected: 0, headlineIds: [] };
     if (!K || !S || !S.contentPerformance || !chans.length) return out;
     var owned = chans.filter(function (ch) { return MC.CH.OWNED.indexOf(ch) >= 0; }), evChans = owned.length ? owned : chans;
-    var perf = S.contentPerformance(world, {by: 'block'}), blocks = K.blocks(world);
+    var perf = S.contentPerformance(world, {by: 'block'}), blocks = K.blocks(world), aff = affinityFor(world, m);
     var hasDeadline = !!(c.offer && c.offer !== 'none') || (c.eventDay !== undefined && c.eventDay !== null);
     var wantAngle = ANGLE_FOR_TONE[c.tone] || null, prod = c.productFocus || null;
     var prodBlock = prod ? blocks.filter(function (b) { return b.kind === 'product' && usableBlock(b) && b.value && b.value.productId === prod; })[0] : null;
@@ -674,6 +812,7 @@
       if (b.tags && b.tags.tone === c.tone) s += 0.15;
       if (angle && b.tags && b.tags.angle === angle) s += 0.1;
       if (prod && b.tags && b.tags.product === prod) s += 0.1;
+      if (b.tags && aff[b.tags.angle]) s += 0.5 * aff[b.tags.angle].value;   // what this audience responds to (MC.affinity), when it has data
       return { s: s, l: l };
     }
     function ranked(kind, angle, filter) {
@@ -728,6 +867,7 @@
       out.actions.push({ type: 'message/create', id: mid });
       (r2.created || []).forEach(function (vid) { out.actions.push({ type: 'message/publish', id: vid }); });
     }
+    if (out.messages.length) out.decision = angleDecision(world, m, heads, out.messages[0].angle, aff);
     return out;
   }
   function clipN(s, n) { s = String(s || ''); return s.length > n ? s.slice(0, n - 1).replace(/\s+\S*$/, '') + '…' : s; }
@@ -748,7 +888,7 @@
     var res = assemble(world, t, m, c, { avoid: {} });
     if (res.messages.length) {
       var b = contentBeat(world, res, c, false);
-      return { beats: [{ agentId: 'copy', kind: 'did', text: b.text }], actions: res.actions, note: b.summary, artifact: { kind: 'message', id: res.messages[0].id },
+      return { decision: res.decision, beats: [{ agentId: 'copy', kind: 'did', text: b.text }], actions: res.actions, note: b.summary, artifact: { kind: 'message', id: res.messages[0].id },
         artifacts: res.messages.slice(1).map(function (x) { return { kind: 'message', id: x.id }; }),
         data: { content: { messages: res.messages.map(function (x) { return x.id; }), channels: res.chans.slice(), summary: b.summary, headlineIds: res.headlineIds.slice() } } };
     }
@@ -761,13 +901,16 @@
   };
 
   // ---- Fatigue Guard ----
+  // Guard weighs the proposed send against how often each person has heard from us. Where the campaign (Copy Drafter's message,
+  // Campaign Planner's dates) would send to people already at the limit, Guard says no to those people and the beat records both
+  // positions and how it was settled: they are rested, the rest still get it, and the expected cost is stated.
   EXEC.guard = function (world, t, m, st) {
     var c = campaignOf(world, m), d = m.data || {}, gp = guardParams(world), P = world.profiles;
     var bits = d.template === 'protect' ? null : audienceBits(world, m);
     var chans = (c ? c.channels : MC.CH.OWNED).filter(function (ch) { return MC.CH.OWNED.indexOf(ch) >= 0 && !(c && c.channelPaused && c.channelPaused[ch]); });
     var cap = L().constraintOf(m.objective.constraints, 'maxSendsPerWeek');
     var until = Math.max(t, c ? c.startTick : t) + Math.round(gp.cooldownDays * 24);
-    var total = 0, per = [], actions = [], byLimit = 0;
+    var total = 0, per = [], actions = [], byLimit = 0, reachable = 0, leftOver = 0, rested = {}, tiers = { half: 0, usual: 0, dbl: 0 }, riskSeen = {};
     chans.forEach(function (ch) {
       var ci = MC.CH.IDX[ch], bit = MC.CH.BIT[ch], cands = [], n = 0;
       for (var i = 0; i < P.n; i++) {
@@ -778,23 +921,49 @@
         var risk = MC.models.unsubRisk(world, i, ch), weekly = 0;
         for (var k = 0; k < 21; k++) weekly += P.sent7[i * 21 + k];
         var overCap = !!cap && weekly >= cap.value;
+        if (!riskSeen[i] || risk > riskSeen[i]) riskSeen[i] = risk;
         if (risk >= gp.thr || overCap) cands.push([i, risk, overCap ? 1 : 0]);
       }
+      reachable += n;
       cands.sort(function (a, b) { return (b[2] - a[2]) || (b[1] - a[1]) || (a[0] - b[0]); });
       var room = Math.floor(n * gp.maxPct / 100);
       var pick = cands.slice(0, room), idx = pick.map(function (x) { return x[0]; }).sort(function (a, b) { return a - b; });
-      pick.forEach(function (x) { if (x[2]) byLimit++; });
+      leftOver += Math.max(0, cands.length - pick.length);
+      pick.forEach(function (x) { if (x[2]) byLimit++; rested[x[0]] = true; });
       if (!idx.length) return;
       var payload = { channel: ch, idx: idx, untilTick: until };
       if (c) payload.campaignId = c.id;
       var r = doAction(world, t, 'guard', { type: 'profiles/suppress', payload: payload });
       if (r.ok) { total += idx.length; per.push(num(idx.length) + ' on ' + chLower(ch)); actions.push({ type: 'profiles/suppress', channel: ch, count: idx.length }); }
     });
+    Object.keys(riskSeen).forEach(function (i) { var r = riskSeen[i]; if (r >= gp.thr / 2) tiers.half++; if (r >= gp.thr) tiers.usual++; if (r >= gp.thr * 2) tiers.dbl++; });
     var text = total
       ? 'Rested ' + num(total) + (total === 1 ? ' person' : ' people') + ' (' + listJoin(per) + ') until ' + dayShort(dayOf(until)) + ' because they’ve had a lot of messages lately' +
         (cap && byLimit ? ', including ' + num(byLimit) + ' already at your ' + cap.value + ' a week limit' : '') + '. Anyone who has unsubscribed was never included.'
       : 'Nobody in this audience is close to a limit, so no one needs resting. Anyone who has unsubscribed is excluded already.';
-    return { beats: [{ agentId: 'guard', kind: 'did', text: text }], actions: actions, note: text };
+    var decision = { options: [
+      opt('Rest at half the usual risk', num(tiers.half) + ' people', 'Safer for the list, but ' + num(Math.max(0, tiers.half - tiers.usual)) + ' of them are probably fine'),
+      opt('Rest at the usual risk', num(tiers.usual) + ' people', 'Where unsubscribing becomes likely at this send pace'),
+      opt('Rest at twice the usual risk', num(tiers.dbl) + ' people', 'Leaves ' + num(Math.max(0, tiers.usual - tiers.dbl)) + ' at real risk getting the message')]
+      .concat(cap ? [opt('Your ' + cap.value + ' a week limit', num(byLimit) + ' at the limit', 'Counted first, whatever their risk')] : []),
+      chose: 'Rest at the usual risk', why: total ? 'Resting ' + num(total) + ' protects the people most likely to unsubscribe without cutting the send for the other ' + num(Math.max(0, reachable - total)) + ' reachable people (capped at ' + gp.maxPct + '% of the audience).'
+        : 'Nobody crosses the bar, so the send goes to everyone who agreed to hear from us.' };
+    var beats = [];
+    if (total && c && !!(d.campaignId)) {
+      // Guard vs the proposer of the send (Copy Drafter when messages exist, else Campaign Planner): quantify what resting costs
+      var proposer = d.content && d.content.messages && d.content.messages.length ? 'copy' : 'planner', exp = 0, buyers = 0, aovSum = 0;
+      for (var pi = 0; pi < P.n; pi++) { if (P.orders[pi] > 0 && P.aov[pi] > 0) { buyers++; aovSum += P.aov[pi]; } }
+      var aov = buyers ? aovSum / buyers : 80;
+      Object.keys(rested).forEach(function (i) { exp += P.prop[i]; });
+      var cost = exp * aov;
+      var pos1 = (proposer === 'copy' ? 'The message is ready; I’d send it to everyone who can be reached' : 'The campaign is planned to reach everyone who can be reached') + ' (' + num(reachable) + ' on ' + listJoin(chans.map(chLower)) + ').';
+      var pos2 = num(total) + (total === 1 ? ' person has' : ' people have') + ' heard from us too often' + (cap && byLimit ? ' (' + num(byLimit) + ' already at your ' + cap.value + ' a week limit)' : '') + ', and another message makes them likely to unsubscribe. Their expected orders over the next 30 days are worth about ' + money(cost) + '; resting them delays the message, not those orders.';
+      var res = 'Guard wins for those ' + num(total) + (total === 1 ? ' person' : ' people') + ' until ' + dayShort(dayOf(until)) + '; ' + (leftOver ? 'another ' + num(leftOver) + ' stay in because Guard rests at most ' + gp.maxPct + '% of an audience; ' : '') + 'everyone else still gets the send.';
+      beats.push({ agentId: 'guard', kind: 'disagree', text: 'Fatigue Guard objected to sending to ' + num(total) + (total === 1 ? ' person' : ' people') + ' who have heard from us too often. ' + res, stepId: st.id,
+        sides: [{ agentId: proposer, position: pos1 }, { agentId: 'guard', position: pos2 }], resolution: res });
+    }
+    beats.push({ agentId: 'guard', kind: 'did', text: text, stepId: st.id });
+    return { beats: beats, actions: actions, note: text, decision: decision };
   };
 
   // ---- Send-Time Tuner (same scoring: smoothed best-hour histogram, 3-hour window, quiet hours off limits) ----
@@ -822,6 +991,23 @@
     var adaptive = known / n >= 0.5 && top / n < 0.2;
     return { hour: adaptive ? 'adaptive' : best, best: best, share: top / n, n: n };
   }
+  // The three best 3-hour windows for a channel with the share of this audience's opens that land in each (quiet hours excluded).
+  function hourOptions(world, bits, ch) {
+    var P = world.profiles, bit = MC.CH.BIT[ch], hist = [], h, tot = 0;
+    for (h = 0; h < 24; h++) hist.push(0);
+    for (var i = 0; i < P.n; i++) {
+      if (bits && !bits[i]) continue;
+      if ((P.consent[i] & bit) === 0 || (P.unsub[i] & bit) !== 0) continue;
+      for (var k = 0; k < 24; k++) { var o = P.openHr[i * 24 + k]; hist[k] += o; tot += o; }
+    }
+    if (!tot) return [];
+    var quiet = (world.guardrails && world.guardrails.quiet) || { start: 21, end: 8, channels: ['sms', 'push'] }, q = (quiet.channels || []).indexOf(ch) >= 0, out = [];
+    for (h = 0; h < 24; h++) {
+      var blocked = q && (T().inQuiet(h, quiet) || T().inQuiet((h + 1) % 24, quiet) || T().inQuiet((h + 2) % 24, quiet));
+      out.push({ hour: h, share: (hist[h] + hist[(h + 1) % 24] + hist[(h + 2) % 24]) / tot, blocked: blocked });
+    }
+    return out.filter(function (x) { return !x.blocked; }).sort(function (a, b) { return (b.share - a.share) || (a.hour - b.hour); }).slice(0, 3);
+  }
   EXEC.sendtime = function (world, t, m, st) {
     var c = campaignOf(world, m);
     if (!c) return { skip: true, note: 'No campaign to schedule.', beats: [] };
@@ -838,9 +1024,18 @@
       }
       parts.push(chName(ch) + ' ' + (b.hour === 'adaptive' ? 'at each person’s best hour' : 'at ' + MC.fmt.hour(b.hour)));
     });
+    var firstOwned = c.channels.filter(function (ch) { return MC.CH.OWNED.indexOf(ch) >= 0; })[0], hopts = firstOwned ? hourOptions(world, bits, firstOwned) : [], bh = firstOwned ? bestHourFor(world, bits, firstOwned) : null;
+    var hdec = null;
+    if (hopts.length) {
+      var shown = hopts.map(function (x) { return opt(MC.fmt.hour(x.hour), pct(x.share, 1) + ' of opens', x.hour === (bh && bh.best) ? 'Best 3-hour window' + (bh.hour === 'adaptive' ? ', but opens are spread out so each person gets their own hour' : '') : 'Runner-up'); });
+      var topS = hopts[0].share, runner = hopts[1];
+      hdec = { options: shown.concat(bh && bh.hour === 'adaptive' ? [opt('Each person’s own best hour', 'most already have a pattern', 'Opens are spread across the day, so one hour would miss most people')] : []),
+        chose: bh && bh.hour === 'adaptive' ? 'Each person’s own best hour' : MC.fmt.hour(bh ? bh.best : hopts[0].hour),
+        why: chName(firstOwned) + ': ' + pct(topS, 1) + ' of this audience’s opens land in the best window' + (runner ? ', against ' + pct(runner.share, 1) + ' in the next best' : '') + (firstOwned === 'sms' || firstOwned === 'push' ? '; quiet hours are off limits' : '') + '.' };
+    }
     if (!parts.length) return { skip: true, note: 'No email, SMS or push to time.', beats: [{ agentId: 'sendtime', kind: 'did', text: 'This campaign has no email, SMS or push, so there’s nothing to time.' }] };
     var text = 'Set sends to ' + listJoin(parts) + ', when this audience opens most' + ((c.channels.indexOf('sms') >= 0 || c.channels.indexOf('push') >= 0) ? ' and outside quiet hours' : '') + '.';
-    return { beats: [{ agentId: 'sendtime', kind: 'did', text: text }], actions: actions, note: text };
+    return { beats: [{ agentId: 'sendtime', kind: 'did', text: text }], actions: actions, note: text, decision: hdec };
   };
 
   // ---- Budget Pacer (planner's response curves: equal marginal return across channels, total unchanged) ----
@@ -868,12 +1063,19 @@
       if (-dlt > down) { down = -dlt; from = ch; }
     });
     moved = Math.min(up, down);
-    if (Math.abs(up) + Math.abs(down) < 50) return { beats: [{ agentId: 'pacer', kind: 'did', text: 'The split across ' + listJoin(c.channels.map(chLower)) + ' already earns about the same on the next dollar, so I’m leaving it alone.' }], note: 'Split unchanged.' };
+    var pdec = { options: sp.why.map(function (w) { return opt(chName(w.ch), marginalText(w.marginal) + ' on the next dollar', money(c.budget.byChannel[w.ch] || 0) + ' now' + (by[w.ch] !== (c.budget.byChannel[w.ch] || 0) ? ', ' + money(by[w.ch]) + ' after' : ', stays')); }), chose: '', why: '' };
+    if (Math.abs(up) + Math.abs(down) < 50) {
+      pdec.chose = 'Leave the split'; pdec.why = 'The next dollar earns about the same on every channel, so moving money would not help.';
+      return { beats: [{ agentId: 'pacer', kind: 'did', text: 'The split across ' + listJoin(c.channels.map(chLower)) + ' already earns about the same on the next dollar, so I’m leaving it alone.' }], note: 'Split unchanged.', decision: pdec };
+    }
     var r = doAction(world, t, 'pacer', { type: 'campaign/setBudget', payload: { id: c.id, byChannel: by } });
     if (!r.ok) return { error: r.error };
     var w = sp.why.filter(function (x) { return x.ch === to; })[0];
-    var text = 'Moved ' + money(moved) + ' from ' + chLower(from) + ' to ' + chLower(to) + (w ? ', where the next $1 returns about $' + w.marginal.toFixed(2) : '') + '. The total stays at ' + money(c.budget.total) + '.';
-    return { beats: [{ agentId: 'pacer', kind: 'did', text: text }], actions: [{ type: 'campaign/setBudget', id: c.id }], note: text };
+    var wf = sp.why.filter(function (x) { return x.ch === from; })[0];
+    var text = 'Moved ' + money(moved) + ' from ' + chLower(from) + ' to ' + chLower(to) + (w && w.marginal >= 0.01 ? ', where the next $1 returns about $' + w.marginal.toFixed(2) : ', where it has more room to work') + '. The total stays at ' + money(c.budget.total) + '.';
+    pdec.chose = 'Move ' + money(moved) + ' from ' + chName(from) + ' to ' + chName(to);
+    pdec.why = 'Money goes where the next dollar returns the most' + (w && wf && w.marginal >= 0.01 ? ': ' + chName(to) + ' at about $' + w.marginal.toFixed(2) + ' against about $' + (wf.marginal >= 0.01 ? wf.marginal.toFixed(2) : '0.00 to 0.01') + ' on ' + chLower(from) : '') + '. The total stays at ' + money(c.budget.total) + '.';
+    return { beats: [{ agentId: 'pacer', kind: 'did', text: text }], actions: [{ type: 'campaign/setBudget', id: c.id }], note: text, decision: pdec };
   };
 
   // ---- Lead hands the draft over ----
@@ -900,7 +1102,10 @@
     var pr = computeProgress(world, m, t);
     var text = 'I’ll check in every morning at ' + MC.fmt.hour(M.CHECKIN_HOUR) + ' against ' + L().fmtMetric(m.objective.metric, m.objective.target) + ' ' + L().metricNoun(m.objective.metric) + ' ' +
       (m.objective.deadlineText || 'by ' + dayShort(m.objective.by)) + '. ' + (pr.hasCampaign ? 'Expecting roughly ' + L().fmtMetric(m.objective.metric, pr.forecast) + ' from the campaign as planned.' : 'There’s no campaign running yet, so progress starts at zero.');
-    return { beats: [{ agentId: 'analyst', kind: 'did', text: text }], note: 'Tracking daily.' };
+    var vv = M.verdict(world, m, t);
+    return { beats: [{ agentId: 'analyst', kind: 'did', text: text }], note: 'Tracking daily.', progress: vv || undefined,
+      decision: { options: [opt('Check in every morning', 'react within a day', pr.daysLeft + (pr.daysLeft === 1 ? ' day' : ' days') + ' left to ' + dayShort(m.objective.by)), opt('Check in weekly', 'react within a week', pr.daysLeft > 7 ? 'Too slow to correct a miss' : 'Longer than the time left')],
+        chose: 'Check in every morning', why: pr.hasCampaign ? 'A daily look against ' + L().fmtMetric(m.objective.metric, m.objective.target) + ' ' + L().metricNoun(m.objective.metric) + ' lets me re-plan while there’s time.' : 'There’s no campaign yet; the daily look starts once there is one.' } };
   };
 
   // ---- steering / re-plan steps ----
@@ -955,7 +1160,7 @@
     if (!asm.messages.length) asm = assemble(world, t, m, c2, { avoid: {} });
     if (asm.messages.length) {
       var bb = contentBeat(world, asm, c2, true), at = bb.text + ' Replacing ' + retired + ' older ' + (retired === 1 ? 'variant' : 'variants') + '.';
-      return { beats: [{ agentId: 'copy', kind: 'did', text: at }], actions: actions.concat(asm.actions), note: bb.summary, artifact: { kind: 'message', id: asm.messages[0].id },
+      return { decision: asm.decision, beats: [{ agentId: 'copy', kind: 'did', text: at }], actions: actions.concat(asm.actions), note: bb.summary, artifact: { kind: 'message', id: asm.messages[0].id },
         artifacts: asm.messages.slice(1).map(function (x) { return { kind: 'message', id: x.id }; }),
         data: { content: { messages: asm.messages.map(function (x) { return x.id; }), channels: asm.chans.slice(), summary: bb.summary, headlineIds: asm.headlineIds.slice() } } };
     }
@@ -964,30 +1169,95 @@
     var text = 'Rewrote the messages around ' + L().offerLabel(c2.offer) + ': ' + res.n + ' new variants, replacing ' + retired + '. They’re in review.';
     return { beats: [{ agentId: 'copy', kind: 'did', text: text }], actions: actions.concat(res.actions), note: text };
   };
+  // Taking a channel out removes it everywhere: the campaign's channel list, budget, send hour, journey sends and its message
+  // versions (campaign/dropChannel); the freed budget moves to the other channels, and the mission's own notes forget it.
   EXEC.channel = function (world, t, m, st) {
     var c = campaignOf(world, m), ch = st.channel;
     if (!c || !ch || c.channels.indexOf(ch) < 0) return { skip: true, note: 'That channel isn’t in the campaign.', beats: [] };
-    if (c.channelPaused && c.channelPaused[ch]) return { skip: true, note: 'Already paused.', beats: [] };
-    var r = doAction(world, t, 'planner', { type: 'campaign/setChannelPaused', payload: { id: c.id, channel: ch, paused: true } });
+    if (c.channels.length < 2) return { skip: true, note: 'It’s the only channel left.', beats: [{ agentId: 'planner', kind: 'did', text: chName(ch) + ' is the only channel in “' + c.name + '”, so I’m leaving it rather than send nothing.' }] };
+    var fromCh = c.channels.map(chLower), held = c.budget.byChannel[ch] || 0, versions = MC.catalog.variantsOf(world, c.id, ch).length, sends = c.journey.steps.filter(function (x) { return x.type === 'send' && x.channel === ch; }).length;
+    var r = doAction(world, t, 'planner', { type: 'campaign/dropChannel', payload: { id: c.id, channel: ch, keepTotal: true } });
     if (!r.ok) return { error: r.error };
-    var by = {}; by[ch] = 0;
-    doAction(world, t, 'planner', { type: 'campaign/setBudget', payload: { id: c.id, byChannel: assign({}, c.budget.byChannel, by) } });
-    MC.catalog.variantsOf(world, c.id, ch).forEach(function (v) { if (v.status !== 'retired') doAction(world, t, 'planner', { type: 'variant/setStatus', payload: { id: v.id, status: 'retired' } }); });
-    var text = 'Took ' + chLower(ch) + ' out of “' + c.name + '”: paused it and retired its messages.';
-    return { beats: [{ agentId: 'planner', kind: 'did', text: text }], actions: [{ type: 'campaign/setChannelPaused', id: c.id, channel: ch }], note: text };
+    var c2 = world.campaigns.byId[c.id], keepCh = c2.channels.slice(), msgs = ((m.data || {}).content) || null;
+    var data = { channels: keepCh };
+    if ((m.data || {}).audience && m.data.audience.primary === ch) data.audience = assign({}, m.data.audience, { primary: keepCh[0] });
+    if (msgs) data.content = assign({}, msgs, { channels: (msgs.channels || []).filter(function (x) { return x !== ch; }) });
+    if ((m.data || {}).optimalSplit) { var os = assign({}, m.data.optimalSplit); delete os[ch]; data.optimalSplit = os; }
+    var text = 'Took ' + chLower(ch) + ' out of “' + c.name + '”: its ' + (sends === 1 ? 'send' : sends + ' sends') + ' in the journey, its ' + versions + (versions === 1 ? ' message version' : ' message versions') + ' and its ' + money(held) + ' budget moved or went with it. The total stays at ' + money(c2.budget.total) + '.';
+    var dec = { options: [opt('Remove ' + chName(ch) + ' completely', versions + ' versions, ' + sends + ' sends, ' + money(held), 'Nothing about it stays in the journey, budget or messages'), opt('Pause ' + chName(ch), money(held) + ' stays reserved', 'It would still show in the journey and the budget, and could be switched back on by mistake')],
+      chose: 'Remove ' + chName(ch) + ' completely', why: 'You said no ' + chLower(ch) + ', so leaving it paused would keep it in the journey and the numbers. Its ' + money(held) + ' goes to ' + listJoin(keepCh.map(chLower)) + '.' };
+    return { beats: [{ agentId: 'planner', kind: 'did', text: text, diff: [{ what: 'Channels', from: fromCh.join(', '), to: keepCh.map(chLower).join(', ') }, { what: 'Journey sends', from: String(c.journey.steps.filter(function (x) { return x.type === 'send'; }).length), to: String(c2.journey.steps.filter(function (x) { return x.type === 'send'; }).length) }, { what: chName(ch) + ' budget', from: money(held), to: '$0' }] }],
+      actions: [{ type: 'campaign/dropChannel', id: c.id, channel: ch }], note: text, data: data, decision: dec };
   };
+
+  // ---- Budget Pacer's say on a budget change. Pacer weighs what the dollars being removed earn. ----
+  function returnOnCut(world, m, c, lim) {
+    var sp = splitFor(world, m, c, c.budget.total), active = sp ? sp.why : [], cut = c.budget.total - lim;
+    if (!active.length || !(cut > 0)) return null;
+    var wsum = 0, wtot = 0;
+    active.forEach(function (w) { var amt = c.budget.byChannel[w.ch] || 0; wsum += w.marginal * amt; wtot += amt; });
+    var avg = wtot ? wsum / wtot : 0, low = active.slice().sort(function (a, b) { return a.marginal - b.marginal; })[0];
+    return { marginal: avg, gives: cut * avg, lowCh: low.ch, lowMarginal: low.marginal, why: active };
+  }
   EXEC.budget = function (world, t, m, st) {
     var c = campaignOf(world, m), lim = st.limit;
     if (!c || !(lim > 0)) return { skip: true, note: 'Nothing to change.', beats: [] };
     if (c.budget.total <= lim) return { skip: true, note: 'Already within the limit.', beats: [{ agentId: 'planner', kind: 'did', text: 'The campaign budget (' + money(c.budget.total) + ') is already within ' + money(lim) + '.' }] };
-    var by = {}, used = 0, keys = c.channels.slice(), big = keys[0];
-    keys.forEach(function (ch) { by[ch] = Math.floor((c.budget.byChannel[ch] || 0) * lim / c.budget.total / 10) * 10; used += by[ch]; if (by[ch] > by[big]) big = ch; });
-    by[big] += Math.floor(lim) - used;
-    var r = doAction(world, t, 'planner', { type: 'campaign/setBudget', payload: { id: c.id, byChannel: by } });
+    var roc = returnOnCut(world, m, c, lim), sp = splitFor(world, m, c, lim), by = {}, used = 0;
+    if (sp) c.channels.forEach(function (ch) { by[ch] = sp.active.indexOf(ch) >= 0 ? sp.byChannel[ch] : 0; });
+    else {
+      var keys = c.channels.slice(), big = keys[0];
+      keys.forEach(function (ch) { by[ch] = Math.floor((c.budget.byChannel[ch] || 0) * lim / c.budget.total / 10) * 10; used += by[ch]; if (by[ch] > by[big]) big = ch; });
+      by[big] += Math.floor(lim) - used;
+    }
+    var before = c.budget.total, r = doAction(world, t, 'planner', { type: 'campaign/setBudget', payload: { id: c.id, byChannel: by } });
     if (!r.ok) return { error: r.error };
-    var text = 'Scaled the budget on “' + c.name + '” from ' + money(c.budget.total) + ' to ' + money(lim) + ', keeping the same split across channels.';
-    return { beats: [{ agentId: 'planner', kind: 'did', text: text }], actions: [{ type: 'campaign/setBudget', id: c.id }], data: { overrides: assign({}, (m.data || {}).overrides || {}, { budget: lim }) }, note: text };
+    var text = 'Cut the budget on “' + c.name + '” from ' + money(before) + ' to ' + money(lim) + ', re-split so the cut falls where the next dollar returns least.';
+    var beats = [];
+    if (roc && roc.gives >= 1) {
+      var pos1 = 'You asked to keep spend under ' + money(lim) + ', so the budget has to come down from ' + money(before) + '.';
+      var pos2 = 'The ' + money(before - lim) + ' being cut earns about ' + money(roc.gives) + ' in return at today’s rates (' + marginalText(roc.marginal) + ' on average); I’d keep it if the limit were mine to set.';
+      var res = 'Your limit stands. I re-split the smaller budget so each channel’s next dollar returns about the same, rather than cutting every channel evenly.';
+      beats.push({ agentId: 'pacer', kind: 'disagree', text: 'Budget Pacer pushed back on cutting spend: it gives up about ' + money(roc.gives) + ' in return. ' + res, stepId: st.id,
+        sides: [{ agentId: 'planner', position: pos1 }, { agentId: 'pacer', position: pos2 }], resolution: res });
+    }
+    beats.push({ agentId: 'planner', kind: 'did', text: text, stepId: st.id, diff: [{ what: 'Budget', from: money(before), to: money(lim) }].concat(c.channels.filter(function (ch) { return (c.budget.byChannel[ch] || 0) !== by[ch]; }).map(function (ch) { return { what: chName(ch), from: money(c.budget.byChannel[ch] || 0), to: money(by[ch]) }; })) });
+    var dec = { options: [opt('Keep ' + money(before), roc ? 'about ' + money(roc.gives) + ' more back' : '', 'Over your ' + money(lim) + ' limit'), opt('Cut to ' + money(lim), 'within your limit', 'Re-split by the next dollar’s return'), opt('Cut evenly across channels', '', 'Simpler, but cuts strong channels as hard as weak ones')],
+      chose: 'Cut to ' + money(lim), why: 'Spend under ' + money(lim) + ' is your limit, so the total is fixed; the open question was where to cut, and equal returns on the next dollar decides that.' };
+    return { beats: beats, actions: [{ type: 'campaign/setBudget', id: c.id }], data: { overrides: assign({}, (m.data || {}).overrides || {}, { budget: lim }) }, note: text, decision: dec };
   };
+
+
+  // A decision for steps whose executor didn't build one: the alternatives and numbers the step could have used, from world state.
+  function fallbackDecision(world, t, m, st, r) {
+    var c = campaignOf(world, m), o = m.objective, days = Math.max(0, o.by - dayOf(t) + 1);
+    if (r.skip) return { options: [opt('Do it', '', 'Not needed right now'), opt('Skip it', '', r.note || 'Nothing to change')], chose: 'Skip it', why: r.note || 'There was nothing for this step to change.' };
+    if (st.kind === 'handoff' && c) {
+      var items = []; try { items = MC.guardrails.preflight(world, world.campaigns.byId[c.id]) || []; } catch (e) { items = []; }
+      var fails = items.filter(function (x) { return x.status === 'fail'; }).length, warns = items.filter(function (x) { return x.status === 'warn'; }).length;
+      return { options: [opt('Ask for sign-off now', fails + ' failing, ' + warns + ' warnings', 'The draft is a draft; nothing sends until you schedule it'), opt('Keep polishing first', '', 'Delays your decision without changing what you can decide')],
+        chose: 'Ask for sign-off now', why: fails ? 'It still has ' + fails + ' failing ' + (fails === 1 ? 'check' : 'checks') + ', which the ask says plainly, but nothing sends until those pass.' : 'No check fails, and the decision is yours to make either way.' };
+    }
+    if (st.kind === 'monitor') {
+      return { options: [opt('Check in every morning', 'react within 1 day', days + (days === 1 ? ' day' : ' days') + ' left to the deadline'), opt('Check in weekly', 'react within 7 days', days > 7 ? 'Slow for a ' + days + '-day goal' : 'More than the time that is left')],
+        chose: 'Check in every morning', why: 'A miss found a week late can’t be fixed in ' + days + (days === 1 ? ' day' : ' days') + '; a daily look costs nothing.' };
+    }
+    if (st.kind === 'extend' && c) {
+      return { options: [opt('End on ' + dayShort(o.by), 'to your deadline', 'The goal counts through that day'), opt('Keep the old end date', '', 'Ends before the deadline, leaving days unused')], chose: 'End on ' + dayShort(o.by), why: 'The goal counts sales until ' + dayShort(o.by) + ', so a campaign that stops sooner leaves days on the table.' };
+    }
+    if (st.kind === 'widen' && c) {
+      var cands = audienceCandidates(world, m, c.segmentId).filter(function (x) { return x.segmentId !== c.segmentId; }).slice(0, 3);
+      if (cands.length) return { options: cands.map(audOpt), chose: r.artifact ? ((world.segments.byId[r.artifact.id] || {}).name || cands[0].name) : cands[0].name, why: 'The closest group by expected value that the campaign doesn’t already cover and that is big enough to measure.' };
+    }
+    if (st.kind === 'offer' && c) {
+      var cap = offerCap(m), now = L().OFFER_PCT[c.offer] || 0, to = L().offerFor((m.data || {}).template, m.objective.constraints);
+      return { options: [opt(L().offerLabel(c.offer), now + '% off', 'What the draft had'), opt(L().offerLabel(to), (L().OFFER_PCT[to] || 0) + '% off', 'Within the ' + (cap > 0 ? cap + '% limit' : 'no-discount limit'))], chose: L().offerLabel(to), why: 'The best offer that stays inside what you allowed.' };
+    }
+    if (st.kind === 'rewrite') return { options: [opt('Re-assemble from approved blocks', '', 'Keeps copy inside the brand and the new offer'), opt('Keep the old messages', '', 'They mention the old offer')], chose: 'Re-assemble from approved blocks', why: 'The old copy no longer matches the offer you allowed.' };
+    if (st.kind === 'copy') return { options: [opt('Write variants directly', '', 'The library had no approved blocks that fit')], chose: 'Write variants directly', why: 'No approved headline fit this campaign, so each channel got brand-checked drafts instead.' };
+    if (st.kind === 'pacer' || st.kind === 'sendtime') return { options: [opt('Leave it as drafted', '', ''), opt('Change it', '', '')], chose: r.note || 'Changed it', why: r.note || '' };
+    return { options: [opt('Do it', '', ''), opt('Wait', '', '')], chose: 'Do it', why: r.note || '' };
+  }
 
   M._exec = EXEC;
 
@@ -1046,9 +1316,55 @@
   }
   M.progressOf = computeProgress;
 
+  // The forecast verdict beside the goal. Numbers come from MC.metrics.mission (the one definition of mission progress) when it
+  // exists; until then the mission's own projection fills in, so the shape never changes:
+  // { value, target, forecast, lo, hi, by, verdict: 'on pace' | 'behind' | 'ahead' | 'too early', text }.
+  var VERDICTS = ['on pace', 'behind', 'ahead', 'too early'];
+  function metricsProgress(world, m) {
+    var X = MC.metrics;
+    if (!X || typeof X.mission !== 'function') return null;
+    var r; try { r = X.mission(world, m.id); } catch (e) { return null; }
+    if (!isObj(r)) return null;
+    var fc = isObj(r.forecast) ? r.forecast : { value: r.forecast, lo: r.lo, hi: r.hi };
+    var base = isObj(r.progress) ? r.progress : r;
+    var out = { value: isNum(base.value) ? base.value : null, forecast: isNum(fc.value) ? fc.value : (isNum(fc.mean) ? fc.mean : null), lo: isNum(fc.lo) ? fc.lo : null, hi: isNum(fc.hi) ? fc.hi : null,
+      verdict: VERDICTS.indexOf(r.verdict) >= 0 ? r.verdict : null };
+    return out.value === null && out.forecast === null ? null : out;
+  }
+  function verdictFrom(world, m, pr) {
+    var o = m.objective, mx = metricsProgress(world, m), v = pr.value, f = pr.forecast, lo = pr.lo, hi = pr.hi, band = pr.band;
+    if (mx) {
+      if (mx.value !== null) v = mx.value;
+      if (mx.forecast !== null) { f = mx.forecast; lo = mx.lo !== null ? mx.lo : f * 0.85; hi = mx.hi !== null ? mx.hi : f * 1.15; }
+      if ((band !== 'early' || (mx.value || 0) > 0) && mx.forecast !== null) {
+        var pace = o.target > 0 ? f / o.target : 0;
+        band = o.direction === 'atMost' ? (f <= o.target * 0.9 ? 'ahead' : (f <= o.target ? 'on' : 'behind')) : (pace >= 1.05 ? 'ahead' : (pace >= 0.85 ? 'on' : 'behind'));
+      }
+    }
+    var verdict = mx && mx.verdict ? mx.verdict : ({ early: 'too early', on: 'on pace', behind: 'behind', ahead: 'ahead' }[band] || 'too early');
+    function r1(x) { return o.metric === 'revenue' ? Math.round(x) : Math.round(x * 10) / 10; }
+    var out = { value: r1(v), target: o.target, forecast: r1(f), lo: r1(lo), hi: r1(hi), by: o.by, verdict: verdict };
+    out.text = L().voice.verdict(m, out);
+    return out;
+  }
+  M.verdict = function (world, m, t) {
+    if (!m || !m.objective) return null;
+    return verdictFrom(world, m, computeProgress(world, m, t === undefined ? world.meta.tick : t));
+  };
+  // Open asks across the team: the one count every surface shows (MC.metrics.asks when it exists).
+  M.openAskCount = function (world) {
+    var X = MC.metrics;
+    if (X && typeof X.asks === 'function') {
+      try { var r = X.asks(world); if (isNum(r)) return r; if (r && isNum(r.count)) return r.count; if (r && isNum(r.n)) return r.n; if (Array.isArray(r)) return r.length; } catch (e) { /* fall through */ }
+    }
+    var n = 0;
+    M.list(world).forEach(function (mm) { if (mm.status !== 'stopped' && mm.status !== 'done') n += openAsks(mm, false).length; });
+    return n;
+  };
+
   function checkin(world, t, m) {
     var day = dayOf(t), pr = computeProgress(world, m, t), prev = m.progress || {};
-    var progress = { value: pr.value, target: pr.target, forecast: pr.forecast, lo: pr.lo, hi: pr.hi };
+    var progress = verdictFrom(world, m, pr);
     var beats = [], mission = { progress: progress, lastCheckDay: day };
     var firstOfWeek = !isNum(m.lastBeatDay) || (day - m.lastBeatDay) >= 3;
     var d = m.data || {}, draft = false, c0 = (m.artifacts || []).filter(function (a) { return a.kind === 'campaign'; })[0];
@@ -1073,10 +1389,12 @@
     // drift: re-plan when behind (at most every few days, a few times)
     var canReplan = pr.band === 'behind' && pr.daysLeft >= 2 && pr.live && (m.replans || 0) < M.MAX_REPLANS &&
       (m.lastReplanDay === null || m.lastReplanDay === undefined || day - m.lastReplanDay >= M.REPLAN_GAP_DAYS) &&
-      m.plan.every(function (s) { return s.status === 'done' || s.status === 'skipped'; });
+      m.plan.every(function (s) { return s.status === 'done' || s.status === 'skipped'; }) && !openAsks(m, false).some(function (a) { return a.kind === 'behind'; });
     var addSteps = null, asks = [];
     if (canReplan) {
-      var rm = L().remediate(world, m, { pace: pr.pace, forecast: pr.forecast, target: pr.target, daysLeft: pr.daysLeft, campaignId: pr.campaignId, replans: m.replans || 0, linked: !!d.linked });
+      var cp = pr.campaignId && world.campaigns.byId[pr.campaignId], pacer = null;
+      if (cp) { try { var spx = splitFor(world, m, cp, cp.budget.total); if (spx && spx.why.length) { var ws = 0, wt = 0; spx.why.forEach(function (x) { var a = cp.budget.byChannel[x.ch] || 0; ws += x.marginal * a; wt += a; }); var low = spx.why.slice().sort(function (a, b) { return a.marginal - b.marginal; })[0]; pacer = { marginal: wt ? ws / wt : 0, lowCh: low.ch, hiCh: spx.why.slice().sort(function (a, b) { return b.marginal - a.marginal; })[0].ch }; } } catch (e) { pacer = null; } }
+      var rm = L().remediate(world, m, { pace: pr.pace, forecast: pr.forecast, target: pr.target, daysLeft: pr.daysLeft, campaignId: pr.campaignId, replans: m.replans || 0, linked: !!d.linked, pacer: pacer });
       if (rm) {
         beats = beats.concat(rm.beats);
         if (rm.added.length) { addSteps = rm.added; mission.phase = 'executing'; }

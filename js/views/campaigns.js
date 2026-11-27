@@ -15,20 +15,10 @@
 
   function h() { return MC.html.apply(null, arguments); }
 
-  /* Quiet "Made by <mission goal> · <agent>" back-link for objects a mission produced (mission.artifacts). */
+  /* Where this campaign sits in the story: mission, the agent that made / last changed it, audience, messages (MC.ui.Xref). */
   function MadeBy(p) {
-    var ms = MC.hooks && MC.hooks.useSelect ? MC.hooks.useSelect(function (w) { return w ? w.missions || null : null; }) : null;
-    if (!ms || !ms.order || !p.id) return null;
-    var hit = null, ag = null;
-    ms.order.forEach(function (mid) {
-      var m = ms.byId[mid];
-      if (!m || hit) return;
-      (m.artifacts || []).forEach(function (a) { if (a.kind === p.kind && a.id === p.id) hit = m; });
-    });
-    if (!hit) return null;
-    (hit.plan || []).forEach(function (s) { if (s.artifact && s.artifact.kind === p.kind && s.artifact.id === p.id) ag = s.agentId; });
-    var nm = ag && MC.lead && MC.lead.agentName ? MC.lead.agentName(ag) : null;
-    return h`<p className="mc-madeby">Made by <a href=${'#missions/' + encodeURIComponent(hit.id)}>${hit.title || hit.goalText}</a>${nm ? ' \u00b7 ' + nm : ''}</p>`;
+    var C = MC.ui && MC.ui.Xref;
+    return C ? h`<${C} kind=${p.kind} id=${p.id} className="cm-xref" />` : null;
   }
   function R() { return window.React; }
   function fin(x) { return typeof x === 'number' && isFinite(x); }
@@ -172,13 +162,8 @@
     if (n.adaptive) return 'Sends at each person’s best hour';
     return 'Next send ' + hourLabel(n.hour) + ' ' + (n.tomorrow ? 'tomorrow' : 'today') + ' on ' + chLabel(n.ch);
   }
-  function holdoutText(c, segCount, guardPct) {
-    var pc = fin(c.holdoutPct) ? c.holdoutPct : (fin(guardPct) ? guardPct : 10);
-    if (!(pc > 0)) return null;
-    return 'Holdout ' + pc + '%' + (fin(segCount) && segCount > 0 ? ', about ' + plural(Math.max(1, Math.round(segCount * pc / 100)), 'person', 'people') : '');
-  }
-
-  /* ---------------- kit lookups (render time) with small fallbacks ---------------- */
+  // The universal holdout is the one holdout there is (MC.metrics): 5% of every audience is held out from every message.
+  function holdoutText() { return (MC.metrics && MC.metrics.HOLDOUT_LABEL) || null; }
   function FbButton(p) {
     return h`<button type="button" id=${p.id} className=${cx('cm-fbtn', 'is-' + (p.kind || 'secondary'))} onClick=${p.onClick}
       disabled=${!!p.disabled} aria-label=${p['aria-label']} title=${p.title}>${p.children}</button>`;
@@ -410,7 +395,7 @@
             label=${goalText(g) + ' goal progress'} />
         </div>`
         : h`<p className="cm-card-goal-plan num">Goal ${goalFmt(g.type, g.target, true)}${g.type === 'revenue' ? ' revenue' : ' ' + (GOAL_NOUN[g.type] || '')}${MID}Budget ${money(r.budget, true)}</p>`}
-      ${r.status === 'live' && c ? h`<p className="cm-card-next">${nextSendText(c, tick) || 'No more sends scheduled'}${holdoutText(c, p.segCount, p.guardPct) ? h`<span className="cm-muted"> ${MID} ${holdoutText(c, p.segCount, p.guardPct)}</span>` : null}</p>` : null}
+      ${r.status === 'live' && c ? h`<p className="cm-card-next">${nextSendText(c, tick) || 'No more sends scheduled'}${holdoutText() ? h`<span className="cm-muted"> ${MID} ${holdoutText()}</span>` : null}</p>` : null}
       ${r.status === 'live' || r.status === 'paused' ? h`<div className="cm-card-foot">
           <${Spark} values=${r.spark14} label=${r.name + ', last 14 days'} />
           ${agentLine ? h`<${AgentNote} text=${agentLine} title=${agentTitle} />` : null}
@@ -443,7 +428,7 @@
         <div><dt>Exit</dt><dd>${pr.exit || DASH}</dd></div>
         <div><dt>Re-entry</dt><dd>${fin(pr.reentryDays) ? 'After ' + plural(pr.reentryDays, 'day', 'days') : DASH}</dd></div>
       </dl>
-      ${live ? h`<p className="cm-card-next">${nextSendText(c, tick) || 'No more sends scheduled'}${holdoutText(c, p.segCount, p.guardPct) ? h`<span className="cm-muted"> ${MID} ${holdoutText(c, p.segCount, p.guardPct)}</span>` : null}</p>` : null}
+      ${live ? h`<p className="cm-card-next">${nextSendText(c, tick) || 'No more sends scheduled'}${holdoutText() ? h`<span className="cm-muted"> ${MID} ${holdoutText()}</span>` : null}</p>` : null}
       <div className="cm-card-foot">
         <span className="cm-muted num">${goalText(g)}</span>
         ${r.status !== 'live' ? h`<${Status} status=${r.status} />` : null}
@@ -648,9 +633,15 @@
     var sel = R().useCallback(function (w) { return w.campaigns && w.campaigns.byId ? w.campaigns.byId[id] || null : null; }, [id]);
     return useSel(sel);
   }
+  // Goal and pacing come from campaignStats; revenue, spend, sends and orders come from MC.metrics.campaign (one definition).
   function useStats(id) {
     var sel = R().useCallback(function (w) { return call('campaignStats', w, id); }, [id]);
-    return useSel(sel);
+    var st = useSel(sel);
+    var msel = R().useCallback(function (w) { return MC.metrics && MC.metrics.campaign ? MC.metrics.campaign(w, id) : null; }, [id]);
+    var mc = useSel(msel);
+    return R().useMemo(function () {
+      return st && mc ? Object.assign({}, st, { revenue: mc.revenue, cost: mc.cost, roas: mc.roas, conv: mc.conversions, sends: mc.sent, reached: mc.reached }) : st;
+    }, [st, mc]);
   }
 
   /* ---------------- Collisions, lift, pacing, message load (selectors from the Metrics lane) ---------------- */
@@ -675,9 +666,9 @@
 
   function LiftCard(p) {
     var c = p.campaign;
-    var sel = R().useCallback(function (w) { return hasSel('campaignLift') ? call('campaignLift', w, c.id) : null; }, [c.id]);
+    var sel = R().useCallback(function (w) { return MC.metrics && MC.metrics.lift ? MC.metrics.lift(w, { campaignId: c.id }) : null; }, [c.id]);
     var lift = useSel(sel);
-    if (!hasSel('campaignLift') || !lift) {
+    if (!lift) {
       return h`<section className="cm-side-sec cm-liftcard" aria-labelledby="cmp-lift-title">
         ${p.bare ? null : h`<h2 className="cm-h3" id="cmp-lift-title">Lift vs held-out customers</h2>`}
         <p className="cm-muted cm-small">Lift appears once there is enough to compare with customers held out from all messages.</p>
@@ -708,7 +699,8 @@
       }
     }
     return h`<section className="cm-side-sec cm-liftcard" aria-labelledby="cmp-lift-title">
-      ${p.bare ? null : h`<h2 className="cm-h3" id="cmp-lift-title">Lift vs held-out customers</h2>`}${body}</section>`;
+      ${p.bare ? null : h`<h2 className="cm-h3" id="cmp-lift-title">Lift vs held-out customers</h2>`}${body}
+      ${lift.label ? h`<p className="cm-muted cm-small" data-holdout=${lift.holdoutPct}>${lift.label}.</p>` : null}</section>`;
   }
 
   function PacingNote(p) {
@@ -726,10 +718,10 @@
 
   function MessageLoad(p) {
     var c = p.campaign, segCount = p.segCount;
-    var sel = R().useCallback(function (w) { return hasSel('messageLoad') ? call('messageLoad', w, { days: 7 }) : null; }, []);
+    var sel = R().useCallback(function (w) { return MC.metrics && MC.metrics.load ? MC.metrics.load(w, { days: 7 }) : null; }, []);
     var ml = useSel(sel);
     var Panel = ui('Panel');
-    if (!hasSel('messageLoad') || !ml) {
+    if (!ml) {
       return h`<${Panel} id="cmp-load" title="Message load" sub="How many messages each person gets in a week."><p className="cm-muted cm-small">Message load isn’t available yet.</p><//>`;
     }
     var dist = Array.isArray(ml.distribution) ? ml.distribution : EMPTY;
@@ -741,7 +733,7 @@
     var sub = fin(cap) ? 'Sends per person over the last ' + (days === 7 ? 'week' : days + ' days') + ', against your cap of ' + cap + '.' : 'Sends per person over the last week.';
     return h`<${Panel} id="cmp-load" title="Message load" sub=${sub}>
       ${perPerson != null ? h`<p className="num">This campaign sent about <strong>${perPerson.toFixed(1)}</strong> per person in its audience.</p>` : null}
-      ${fin(ml.overCap) ? h`<p className=${cx('num', ml.overCap > 0 && 'cm-warn-text')}>${ml.overCap > 0 ? plural(ml.overCap, 'person is', 'people are') + ' over the cap across all campaigns.' : 'Nobody is over the cap.'}</p>` : null}
+      ${ml.text ? h`<p className=${cx('num', ml.status === 'over' && 'cm-warn-text')} data-load=${ml.status}>${ml.text}</p>` : null}
       ${dist.length ? h`<ul className="cm-load" aria-label="People by sends this week">${dist.map(function (d) {
         var over = fin(cap) && d.sends > cap;
         return h`<li key=${d.sends} className="cm-load-row">
@@ -948,8 +940,6 @@
     var series = useSel(seriesSel) || EMPTY;
     var markSel = React.useCallback(function (w) { return call('agentMarkers', w, { campaignIds: [c.id], fromDay: fromDay, toDay: toDay }) || EMPTY; }, [c.id, fromDay, toDay]);
     var marks = useSel(markSel) || EMPTY;
-    var liftSel = React.useCallback(function (w) { return call('liftVsControl', w, c.id); }, [c.id]);
-    var lift = useSel(liftSel);
     var propSel = React.useCallback(function (w) { return call('proposalsFor', w, c.id) || EMPTY; }, [c.id]);
     var props = useSel(propSel) || EMPTY;
     var pending = props.filter(function (x) { return x.status === 'pending'; });
@@ -1040,18 +1030,38 @@
             </li>`;
           })}</ol>${applied.length > 3 ? h`<${Link} id="cmp-changes-toggle" onClick=${function () { setShowAll(!showAll); }}>${showAll ? 'Show fewer' : 'Show all ' + applied.length}<//>` : null}` : h`<p className="cm-muted cm-small">${c.status === 'draft' ? 'Agents never change drafts. They start once the campaign is live.' : 'No agent changes yet.'}</p>`}
         </section>
-        ${hasSel('campaignLift') ? h`<${LiftCard} campaign=${c} />` : h`<section className="cm-side-sec" aria-labelledby="cmp-lift-title">
-          <h2 className="cm-h3" id="cmp-lift-title">Lift vs control</h2>
-          ${lift && fin(lift.lift) ? h`<p className="cm-lift num"><strong>${delta(lift.lift)}</strong> ${lift.metric} vs control
-              <span className="cm-muted">(${delta(lift.lo)} to ${delta(lift.hi)})</span></p>
-              <p className="cm-muted cm-small num">${num(lift.trt.n)} treated sends, ${num(lift.ctl.n)} control sends. The control group follows your original plan without agent changes.</p>`
-            : h`<p className="cm-muted cm-small">Lift appears after the control group (${(c.holdoutPct != null ? c.holdoutPct : 10)}% of the audience) receives 100 sends.</p>`}
-        </section>`}
+        <${LiftCard} campaign=${c} />
       </aside>
     </div>`;
   }
 
   /* ---------------- Journey ---------------- */
+  function plainTok(t) { return String(t || '').replace(/\{(\w+)(?:\|([^}]*))?\}/g, function (x, n, fb) { return fb || n.replace(/_/g, ' '); }); }
+  // What a send step delivers: the message(s) this campaign runs on that channel, their blocks, and the words of the channel version.
+  function stepSends(w, c, ch) {
+    var K = MC.content, X = MC.xref, out = [];
+    if (!K || !X || !ch) return out;
+    X.messagesOfCampaign(w, c.id).forEach(function (x) {
+      if (x.channels.indexOf(ch) < 0) return;
+      var msg = K.message(w, x.id), r = K.render(w, x.id, ch, {}), f = (r && r.fields) || {};
+      var t = ch === 'email' ? (f.headline || f.subject) : ch === 'sms' ? f.sms : ch === 'push' ? ((f.pushTitle || '') + ' ' + (f.pushBody || '')) : (f.socialHeadline || f.socialText);
+      var blocks = msg ? K.blockIdsOf(msg).map(function (b) { return K.block(w, b); }).filter(function (b) { return b && b.kind !== 'image' && b.kind !== 'product'; }) : EMPTY;
+      out.push({ id: x.id, name: x.name, version: plainTok(t), blocks: blocks.slice(0, 4).map(function (b) { return { id: b.id, kind: (K.KIND_LABEL && K.KIND_LABEL[b.kind]) || b.kind, text: plainTok(K.textOf(b)) }; }) });
+    });
+    return out;
+  }
+  function StepSends(p) {
+    var w = getWorld(), c = p.campaign, step = p.step;
+    var sends = w && step && step.type === 'send' ? stepSends(w, c, step.channel) : EMPTY;
+    if (!sends.length) return null;
+    return h`<div className="cm-sends" data-step=${step.id}>${sends.map(function (x) {
+      return h`<div key=${x.id} className="cm-send">
+        <p className="cm-send-n"><${MC.ui.Xlink} kind="message" id=${x.id}>${x.name}<//> <span className="cm-muted">${MID}${chLabel(step.channel)} version</span></p>
+        ${x.version ? h`<p className="cm-send-v">“${x.version}”</p>` : null}
+        ${p.blocks && x.blocks.length ? h`<ul className="cm-send-b">${x.blocks.map(function (b) { return h`<li key=${b.id}><span className="cm-label">${b.kind}</span> ${b.text}</li>`; })}</ul>` : null}
+      </div>`;
+    })}</div>`;
+  }
   function Journey(p) {
     var React = R();
     var c = p.campaign;
@@ -1100,6 +1110,7 @@
             onChange=${function (x) { if (fin(x)) patchStep(sel.id, { waitH: Math.max(1, Math.min(336, Math.round(x))) }); }} /><//>`);
       }
       if (sel.type === 'send' && sel.channel) {
+        rows.push(h`<${StepSends} key="sends" campaign=${c} step=${sel} blocks=${true} />`);
         var hr = c.sendHour ? c.sendHour[sel.channel] : undefined;
         var vs = variants && variants.byId ? Object.keys(variants.byId).map(function (k) { return variants.byId[k]; })
           .filter(function (v) { return v.campaignId === c.id && v.channel === sel.channel && v.status !== 'retired'; }) : EMPTY;
@@ -1136,6 +1147,12 @@
           </div>
           <div className="cm-inspector" aria-live="off">${inspector()}</div>
         </div>
+        <section className="cm-sends-all" aria-label="What each send step delivers">
+          <h3 className="cm-h3">What each step sends</h3>
+          <ul className="cm-sends-list">${(draft.value || EMPTY).filter(function (s) { return s.type === 'send' && s.channel && c.channels.indexOf(s.channel) >= 0; }).map(function (s) {
+            return h`<li key=${s.id}><button type="button" className="cm-sends-step" onClick=${function () { setSel(s.id); }}>${s.label || chLabel(s.channel)}</button><${StepSends} campaign=${c} step=${s} /></li>`;
+          })}</ul>
+        </section>
       <//>
     </div>`;
   }
@@ -1385,14 +1402,8 @@
 
   /* ---------------- Wrap report (completed campaigns) ---------------- */
   function channelTotals(w, cid, ch) {
-    var F = MC.F || { REV: 5, COST: 6, SENT: 0, CONV: 4 };
-    var out = { rev: 0, cost: 0, sent: 0, conv: 0 }, days = (w.metrics && w.metrics.days) || EMPTY;
-    for (var i = 0; i < days.length; i++) {
-      var cd = days[i].c && days[i].c[cid], f = cd && cd.ch && cd.ch[ch];
-      if (!f) continue;
-      out.rev += f[F.REV] || 0; out.cost += f[F.COST] || 0; out.sent += f[F.SENT] || 0; out.conv += f[F.CONV] || 0;
-    }
-    return out;
+    var mc = MC.metrics && MC.metrics.campaign ? MC.metrics.campaign(w, cid) : null, x = mc && mc.byChannel ? mc.byChannel[ch] : null;
+    return x ? { rev: x.revenue || 0, cost: x.cost || 0, sent: x.sends || 0, conv: x.conversions || 0 } : { rev: 0, cost: 0, sent: 0, conv: 0 };
   }
   function WrapTab(p) {
     var React = R();
@@ -1414,7 +1425,7 @@
     }, [c.id, c.channels]), function (a, b) { return JSON.stringify(a) === JSON.stringify(b); }) || EMPTY;
     var segs = useSel(React.useCallback(function (w) { return w.segments; }, []));
     var seg = segs && segs.byId ? segs.byId[c.segmentId] : null;
-    var liftSel = React.useCallback(function (w) { return hasSel('campaignLift') ? call('campaignLift', w, c.id) : null; }, [c.id]);
+    var liftSel = React.useCallback(function (w) { return MC.metrics && MC.metrics.lift ? MC.metrics.lift(w, { campaignId: c.id }) : null; }, [c.id]);
     var lift = useSel(liftSel);
     var Panel = ui('Panel');
     var g = (stats && stats.goal) || null;

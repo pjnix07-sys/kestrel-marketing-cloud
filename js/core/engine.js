@@ -1,5 +1,5 @@
 /* Marketing Cloud - MC.engine: boots the Fernway Outfitters sample world and keeps it moving.
-   One tick = one hour of world time. The wall-clock scheduler is a setTimeout chain that runs
+   One tick = one hour of world time (5 s of wall clock). The wall-clock scheduler is a setTimeout chain that runs
    continuously at one default pace (PACE_MS) regardless of which view is open; each fire advances
    exactly one tick inside a single store batch, so subscribers see one notify per tick.
    Pacing lives only here (§11.1): the UI exposes no speed or clock. setSpeed/getSpeed/step remain for
@@ -11,8 +11,9 @@
   var E = MC.engine = MC.engine || {};
 
   var assign = Object.assign;
-  // Default pace: one world hour every 1.2 s (a day in about 29 s). Other keys are dev-only.
-  E.PACE_MS = 1200;
+  // Default pace: one world hour every 5 s (a day in 2 minutes), so figures hold still while you read them. Missions do not
+  // slow down: they advance one dependency level per tick (see MC.missions.advance). Other keys are dev-only.
+  E.PACE_MS = 5000;
   E.DEFAULT_SPEED = '1x';
   E.SPEEDS = { pause: 0, '1x': E.PACE_MS, '4x': E.PACE_MS / 4, '16x': E.PACE_MS / 16 };
   E.SPEED_KEYS = ['pause', '1x', '4x', '16x'];

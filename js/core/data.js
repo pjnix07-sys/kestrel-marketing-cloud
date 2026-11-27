@@ -838,6 +838,8 @@
   function phaseHistory(st) { makeHistory(st.world, st.seed); }
   function phaseScores(st) {
     var w = st.world, F = MC.F;
+    // hidden content taste per person (docs/CONSISTENCY.md section 3): derived from the final profile attributes; own rng fork
+    if (MC.affinity && MC.affinity.makeTaste) MC.affinity.makeTaste(w, st.seed);
     // c-trs goal: calibrated so the completed sale closed at about 92% of its target
     var conv = 0;
     w.metrics.days.forEach(function (e) { var cd = e.c['c-trs']; if (cd) conv += cd.tot[F.CONV]; });

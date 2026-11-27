@@ -28,6 +28,7 @@
   function str(x) { return typeof x === 'string' ? x : (x == null ? '' : String(x)); }
   function cx() { var o = []; for (var i = 0; i < arguments.length; i++) if (arguments[i]) o.push(arguments[i]); return o.join(' '); }
   function K() { return MC.content; }
+  function Xr(p) { var C = MC.ui && MC.ui.Xref; return C ? h`<${C} ...${p} />` : null; }
   function CP() { return MC.copy || {}; }
   function assign(a) { for (var i = 1; i < arguments.length; i++) { var s = arguments[i]; if (s) for (var k in s) if (Object.prototype.hasOwnProperty.call(s, k)) a[k] = s[k]; } return a; }
   function clip(s, n) { s = str(s); return s.length > n ? s.slice(0, n - 1).replace(/\s+\S*$/, '') + ELL : s; }
@@ -180,7 +181,13 @@
     var c = useSel(function (w) { return w.content; });
     var vrs = useSel(function (w) { return w.variants; });
     var st = React.useState(0), bump = st[0], setBump = st[1];
-    var xs = React.useState(null), open = xs[0], setOpen = xs[1];
+    var xs = React.useState(function () { return memo.openBlock || null; }), open = xs[0], setOpen = xs[1];
+    React.useEffect(function () {
+      if (!memo.openBlock) return undefined;
+      var id = memo.openBlock; memo.openBlock = null; setOpen(id);
+      var raf = window.requestAnimationFrame(function () { var el = document.getElementById('ct-blk-' + id); if (el && el.scrollIntoView) { try { el.scrollIntoView({ block: 'center' }); } catch (e) { /* ignore */ } } });
+      return function () { window.cancelAnimationFrame(raf); };
+    }, [p.focusKey]);
     var w = world(), KK = K();
     function set(patch) { assign(memo, patch); setBump(bump + 1); }
     if (!w || !c) return h`<p className="ct-empty">Loading the library${ELL}</p>`;
@@ -203,6 +210,9 @@
       t = t || {};
       return (!memo.angle || t.angle === memo.angle) && (!memo.tone || t.tone === memo.tone);
     }
+    // Counts are MC.metrics.messages: distinct messages, blocks, and (separately) channel versions.
+    var tot = MC.metrics && MC.metrics.messages ? MC.metrics.messages(w) : null;
+    var filtered = !!(q || memo.show !== 'all' || memo.kind || memo.angle || memo.tone || memo.review || memo.channel);
     var showBlocks = memo.show !== 'messages', showMsgs = memo.show !== 'blocks' && !memo.kind;
     var rowsB = !showBlocks ? EMPTY : blocks.filter(function (b) {
       if (b.archived) return false;
@@ -243,7 +253,7 @@
         ${sel1('ct-f-review', 'Review', revOpts, memo.review, function (v) { set({ review: v }); })}
         ${sel1('ct-f-channel', 'Channel', chOpts, memo.channel, function (v) { set({ channel: v }); })}
       </div>
-      <p className="ct-count" role="status">${plural(rowsM.length, 'message')} ${DOT} ${plural(rowsB.length, 'block')}${selReady('contentPerformance') ? '' : ' ' + DOT + ' results appear here as soon as there is data'}</p>
+      <p className="ct-count" role="status" data-messages=${tot ? tot.messages : undefined}>${plural(tot && !filtered ? tot.messages : rowsM.length, 'message')} ${DOT} ${plural(tot && !filtered ? tot.blocks : rowsB.length, 'block')}${tot && !filtered ? ' ' + DOT + ' ' + plural(tot.channelVersions, 'channel version') : (tot ? ' ' + DOT + ' filtered from ' + tot.messages + ' messages and ' + tot.blocks + ' blocks' : '')}${selReady('contentPerformance') ? '' : ' ' + DOT + ' results appear here as soon as there is data'}</p>
       ${rowsM.length ? h`<section aria-label="Messages"><h2 className="ct-h">Messages</h2>
         <ul className="ct-list">${rowsM.map(function (m) { return h`<${MessageRow} key=${m.id} w=${w} m=${m} chans=${Object.keys(msgCh[m.id] || {})} onOpen=${p.onOpenMessage} />`; })}</ul></section>` : null}
       ${rowsB.length ? h`<section aria-label="Blocks"><h2 className="ct-h">Blocks</h2>
@@ -271,6 +281,7 @@
         return h`<li key=${s.key}><span className="ct-k">${SLOT_LABEL[s.slot]}</span><span className="ct-stack-t">${clip(tokenText(KK.textOf(b)), s.slot === 'body' ? 70 : 60)}</span></li>`;
       })}</ol>
       <p className="ct-meta">${tagWords(m.tags).join(' ' + DOT + ' ')}${tagWords(m.tags).length ? ' ' + DOT + ' ' : ''}${places ? 'Running in ' + p.chans.map(chLabel).join(', ') : 'Not running anywhere yet'}${stale ? ' ' + DOT + ' ' + plural(stale, 'channel version') + ' behind' : ''}</p>
+      <${Xr} kind="message" id=${m.id} className="ct-xref" />
       <p className="ct-actions"><button type="button" className="ct-link" onClick=${function () { p.onOpen(m.id); }}>Open in Compose</button></p>
     </li>`;
   }
@@ -278,7 +289,7 @@
   function BlockRow(p) {
     var b = p.b, w = p.w, perf = perfLine(p.perf);
     var wu = p.open ? sel('whereUsed', w, b.id) : null;
-    return h`<li className=${cx('ct-row', p.b.retired && 'is-retired')}>
+    return h`<li id=${'ct-blk-' + b.id} className=${cx('ct-row', p.b.retired && 'is-retired')}>
       <div className="ct-row-head">
         <span className="ct-k">${kindLabel(b.kind)}</span>
         <div className="ct-val"><${BlockValue} block=${b} /></div>
@@ -291,6 +302,7 @@
         ${DOT} <span className=${perf.enough ? '' : 'ct-faint'}>${p.perfOn ? perf.text : 'Results appear here as soon as there is data'}</span>
       </p>
       ${p.open ? h`<div className="ct-where">
+        <${Xr} kind="block" id=${b.id} className="ct-xref" />
         ${wu && wu.messages && wu.messages.length ? h`<ul>${wu.messages.map(function (m) {
           return h`<li key=${m.id}><button type="button" className="ct-link" onClick=${function () { p.onOpenMessage(m.id); }}>${m.name}</button>
             <span className="ct-muted"> ${DOT} ${m.placements.map(function (pl) { return SLOT_LABEL[pl.slot].toLowerCase() + (pl.channel ? ' in ' + chLabel(pl.channel) : ''); }).join(', ')}${m.campaigns && m.campaigns.length ? ' ' + DOT + ' ' + plural(m.campaigns.length, 'campaign') : ''}</span></li>`;
@@ -517,6 +529,7 @@
                 <input id="ct-name" className="ct-input" value=${nameTxt} maxLength="80" onChange=${function (e) { setNameTxt(e.target.value); }} />
                 <${Btn} kind="primary" size="sm" type="submit" onClick=${null}>Save<//><${Btn} kind="ghost" size="sm" onClick=${function () { setRenaming(false); }}>Cancel<//></form>`
             : h`<h2 className="ct-msgname">${m.name} <button type="button" className="ct-link" onClick=${function () { setNameTxt(m.name); setRenaming(true); }}>Rename</button></h2>`}
+          <${Xr} kind="message" id=${m.id} className="ct-xref" />
           <p className="ct-meta">Version ${m.ver} ${DOT} ${tagWords(m.tags).join(' ' + DOT + ' ')}${m.author && m.author.indexOf('agent:') === 0 ? ' ' + DOT + ' Written by ' + agentName(m.author.slice(6)) : ''}</p>
         </div>
         <div className="ct-c-review"><${ReviewPill} review=${m.review} />
@@ -689,15 +702,16 @@
     var ts = React.useState(memo.tab), tab = ts[0], setTab0 = ts[1];
     var ms = React.useState(memo.msgId), msgId0 = ms[0], setMsg0 = ms[1];
     var wide = MC.hooks.useMedia ? MC.hooks.useMedia('(min-width: 720px)') : true;
-    var fkey = [focus.messageId, focus.variantId, focus.tab].join('|');
+    var fkey = [focus.messageId, focus.variantId, focus.tab, focus.blockId].join('|');
     var seen = React.useRef('');
     // Links from the rest of the app arrive as focus: a message, or a channel version (variant).
     React.useEffect(function () {
-      if (!ready || seen.current === fkey || (!focus.messageId && !focus.variantId && !focus.tab)) return;
+      if (!ready || seen.current === fkey || (!focus.messageId && !focus.variantId && !focus.tab && !focus.blockId)) return;
       seen.current = fkey;
       var w = world(), id = focus.messageId;
       if (!id && focus.variantId && w && w.variants.byId[focus.variantId]) id = w.variants.byId[focus.variantId].messageId || null;
-      if (id) { memo.msgId = id; setMsg0(id); memo.tab = 'compose'; setTab0('compose'); }
+      if (focus.blockId) { memo.openBlock = focus.blockId; memo.q = ''; memo.show = 'all'; memo.kind = ''; memo.angle = ''; memo.tone = ''; memo.review = ''; memo.channel = ''; memo.tab = 'library'; setTab0('library'); }
+      else if (id) { memo.msgId = id; setMsg0(id); memo.tab = 'compose'; setTab0('compose'); }
       else if (focus.tab && TABS.some(function (t) { return t[0] === focus.tab; })) { memo.tab = focus.tab; setTab0(focus.tab); }
     }, [fkey, ready]);
     function setTab(t) { memo.tab = t; setTab0(t); }
@@ -722,7 +736,7 @@
       </header>
       <div id="ct-panel" role="tabpanel" aria-labelledby=${'ct-tab-' + tab}>
         ${!ready ? h`<p className="ct-empty">Loading Fernway content${ELL}</p>`
-          : tab === 'library' ? h`<${Library} onOpenMessage=${openMessage} />`
+          : tab === 'library' ? h`<${Library} onOpenMessage=${openMessage} focusKey=${fkey} />`
           : tab === 'compose' ? h`<div>
               <label className="ct-filter ct-pick"><span>Message</span>
                 <select id="ct-msg" className="ct-select" value=${msgId || ''} onChange=${function (e) { openMessage(e.target.value); }}>${(msgs ? msgs.order : EMPTY).map(function (id) { return h`<option key=${id} value=${id}>${msgs.byId[id].name}</option>`; })}</select></label>
