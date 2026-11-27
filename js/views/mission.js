@@ -436,7 +436,21 @@
     var React = R(), m = p.m, st = React.useState(''), text = st[0], setText = st[1];
     var thread = m && p.mode === 'steer' ? threadOf(m) : EMPTY, asks = m ? openAsks(m) : EMPTY;
     var endRef = React.useRef(null), taRef = React.useRef(null);
-    React.useEffect(function () { var e = endRef.current; if (e && e.parentNode) e.parentNode.scrollTop = e.parentNode.scrollHeight; }, [thread.length, asks.length, p.creating]);
+    var fitRef = React.useRef('');
+    // Open on the latest message. When the whole conversation fits in a little more than the default window, grow the
+    // window to fit it (once per mission and mode) so the first message and the top padding are never clipped.
+    React.useEffect(function () {
+      var e = endRef.current, t = e && e.parentNode;
+      if (!t) return;
+      var key = (m ? m.id : '') + '|' + p.mode;
+      if (fitRef.current !== key && t.scrollHeight > 0) {
+        fitRef.current = key;
+        t.style.maxHeight = '';
+        var cap = Math.round(window.innerHeight * 0.7);
+        if (t.scrollHeight > t.clientHeight && t.scrollHeight <= cap) t.style.maxHeight = t.scrollHeight + 'px';
+      }
+      t.scrollTop = t.scrollHeight;
+    }, [thread.length, asks.length, p.creating, p.open, m && m.id, p.mode]);
     React.useEffect(function () { if (p.focusTick && taRef.current) taRef.current.focus(); }, [p.focusTick]);
     function send() {
       var t = text.trim();
