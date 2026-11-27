@@ -146,6 +146,128 @@
     return { qo: qo, qc: qc, qv: ev };
   };
 
+  /* ======================= content blocks: latent effects (docs/CONTENT.md "Simulation truth") =======================
+     Each block has seeded noise (world.latent.blocks[id]) and an effect that depends on its angle tag, the channel, the day
+     (urgency pays only near a real deadline; gifting rises after Dec 1) and how many times the same person has already been
+     sent it (reuse fatigue). A variant's quality is its text-model quality (qo, qc, qv) plus the sum of its pinned blocks'
+     effects, so editing a block never changes a live variant's sends until it is published again. No extra random draws. */
+  var KIND_W = {
+    headline: { o: 1.0, c: 0.6, v: 0.2 }, body: { o: 0.3, c: 0.6, v: 0.2 }, offer: { o: 0.1, c: 0.5, v: 0.6 }, cta: { o: 0, c: 0.7, v: 0.1 },
+    image: { o: 0.25, c: 0.5, v: 0.1 }, product: { o: 0, c: 0.3, v: 0.4 }, claim: { o: 0, c: 0.1, v: 0.4 }, signoff: { o: 0, c: 0, v: 0.05 }
+  };
+  var ANGLE_K = { headline: 1, body: 0.5 };                                    // only wording carries an angle
+  var HALF_LIFE = { headline: 2, body: 3, offer: 6, cta: 5, image: 3, product: 8, claim: 10, signoff: 20 };   // exposures
+  var TIRED_MAX = { headline: 0.35, body: 0.2, offer: 0.1, cta: 0.1, image: 0.25, product: 0.05, claim: 0.05, signoff: 0.02 };
+  var BLOCK_SD = 0.10, GIFT_DAY = 24, URGENCY_WINDOW = 6;                      // Dec 1 is sim day 24
+  var ANGLE_BASE = {   // [open, click, convert] logit effect by channel (sms opens are fixed, so only clicks move there)
+    'trail-season': { email: [0.34, 0.26, 0.05], push: [0.30, 0.22, 0.04], sms: [0, 0.03, 0], social: [0, 0.12, 0], web: [0, 0.10, 0] },
+    warmth: { email: [0.10, 0.10, 0.08], push: [0.05, 0.05, 0.04], sms: [0, 0.12, 0.08], social: [0, 0.08, 0.04], web: [0, 0.08, 0.04] },
+    utility: { email: [0.06, 0.08, 0.03], push: [0.04, 0.06, 0.02], sms: [0, 0.06, 0.03], social: [0, 0.05, 0], web: [0, 0.05, 0] }
+  };
+  var GIFT_GAIN = { email: [0.32, 0.28, 0.30], push: [0.28, 0.24, 0.25], sms: [0, 0.30, 0.30], social: [0, 0.20, 0.12], web: [0, 0.20, 0.12] };
+  var GIFT_OFF = [-0.10, -0.08, -0.04];
+  var URG_BASE = { email: [-0.06, -0.04, 0], push: [-0.06, -0.04, 0], sms: [0, -0.02, 0], social: [0, -0.02, 0], web: [0, -0.02, 0] };
+  var URG_GAIN = { email: [0.45, 0.30, 0.10], push: [0.40, 0.28, 0.10], sms: [0, 0.12, 0.08], social: [0, 0.20, 0.05], web: [0, 0.20, 0.05] };
+  var URG_NO_DEADLINE = [-0.15, -0.12, -0.05];   // urgency with nothing behind it reads as pressure
+  var ZERO3 = [0, 0, 0];
+  var GTAB = {};   // fatigue retention by kind: 0.5^(exposures / half-life)
+  Object.keys(HALF_LIFE).forEach(function (k) { var a = []; for (var n = 0; n < 16; n++) a.push(Math.pow(0.5, n / HALF_LIFE[k])); GTAB[k] = a; });
+
+  function clamp01(x) { return x < 0 ? 0 : (x > 1 ? 1 : x); }
+  // Angle effect [o, c, v] on a channel on sim day d; daysLeft is null when the campaign has no real deadline.
+  function angleFx(angle, ch, d, daysLeft) {
+    if (angle === 'urgency') {
+      if (daysLeft === null) return URG_NO_DEADLINE;
+      var r = clamp01(1 - daysLeft / URGENCY_WINDOW), b = URG_BASE[ch] || ZERO3, g = URG_GAIN[ch] || ZERO3;
+      return [b[0] + g[0] * r, b[1] + g[1] * r, b[2] + g[2] * r];
+    }
+    if (angle === 'gifting') {
+      var ramp = clamp01((d - GIFT_DAY + 1) / 10), gg = GIFT_GAIN[ch] || ZERO3;
+      return [GIFT_OFF[0] * (1 - ramp) + gg[0] * ramp, GIFT_OFF[1] * (1 - ramp) + gg[1] * ramp, GIFT_OFF[2] * (1 - ramp) + gg[2] * ramp];
+    }
+    var t = ANGLE_BASE[angle];
+    return (t && t[ch]) || ZERO3;
+  }
+  SIM.angleFx = angleFx;
+
+  // The block's seeded noise (its own hidden truth); same fork every time.
+  SIM.latentForBlock = function (world, block) {
+    var id = typeof block === 'string' ? block : block.id;
+    var rng = MC.rng.fork(seedOf(world), 'block', id);
+    return { o: rng.normal(0, BLOCK_SD), c: rng.normal(0, BLOCK_SD), v: rng.normal(0, BLOCK_SD) };
+  };
+  function blockNoise(world, id) {
+    var L = world.latent || (world.latent = { profiles: null, variants: {}, curves: {} });
+    var B = L.blocks || (L.blocks = {});
+    return B[id] || (B[id] = SIM.latentForBlock(world, id));
+  }
+  // Static [o, c, v] effect of one pinned block for a channel on a day (no fatigue): what a fresh person would see.
+  SIM.blockEffect = function (world, blockId, ver, ch, d, daysLeft) {
+    var C = world.content, blk = C && C.blocks.byId[blockId];
+    if (!blk) return [0, 0, 0];
+    var tags = (MC.content ? MC.content.blockAt(blk, ver) : blk).tags || {}, W = KIND_W[blk.kind] || KIND_W.signoff;
+    var N = blockNoise(world, blockId), ak = ANGLE_K[blk.kind] || 0, af = ak ? angleFx(tags.angle, ch, d, daysLeft) : ZERO3;
+    return [W.o * (N.o + ak * af[0]), W.c * (N.c + ak * af[1]), W.v * (N.v + ak * af[2])];
+  };
+
+  function expOf(world, id) {
+    var C = world.content, n = world.profiles.n;
+    var E = C.exp || (C.exp = {});
+    return E[id] && E[id].length === n ? E[id] : (E[id] = new Uint8Array(n));
+  }
+  // Send plan for a content-linked variant on a day: block effects and ledger rows, cached per variant per day.
+  function contentPlan(world, v, d, owned) {
+    var C = world.content;
+    if (!C || !v.blocks || !v.blocks.length) return null;
+    var cache = world._cplan || (world._cplan = { day: null, byV: {} });
+    if (cache.day !== d) { cache.day = d; cache.byV = {}; }
+    var pl = cache.byV[v.id];
+    if (pl && pl.v === v) return pl;
+    var c = camp(world, v.campaignId), ch = v.channel, dl = null;
+    if (c && ((c.offer && c.offer !== 'none') || (c.eventDay !== undefined && c.eventDay !== null))) dl = c.endTick;
+    var daysLeft = dl === null ? null : Math.max(0, (dl - (d * 24 + 12)) / 24);
+    pl = { v: v, ch: ch, n: 0, ids: [], eo: [], ec: [], ev: [], to: [], tc: [], tv: [], g: [], exp: [], ki: [], perf: [], fat: [], sumC: 0 };
+    var P = C.perf || (C.perf = {}), day = owned ? (P[d] || (P[d] = {})) : null, F = C.fat || (C.fat = {});
+    v.blocks.forEach(function (b) {
+      var blk = C.blocks.byId[b.id];
+      if (!blk) return;
+      var fx = SIM.blockEffect(world, b.id, b.ver, ch, d, daysLeft), W = KIND_W[blk.kind] || KIND_W.signoff, T = TIRED_MAX[blk.kind] || 0;
+      pl.ids.push(b.id); pl.eo.push(fx[0]); pl.ec.push(fx[1]); pl.ev.push(fx[2]);
+      pl.to.push(T * W.o); pl.tc.push(T * W.c); pl.tv.push(T * W.v);
+      pl.g.push(GTAB[blk.kind] || GTAB.signoff); pl.exp.push(null); pl.ki.push(0); pl.sumC += fx[1];
+      if (owned) {
+        var pb = day[b.id] || (day[b.id] = {});
+        pl.perf.push(pb[ch] || (pb[ch] = [0, 0, 0, 0, 0, 0]));
+        var fb = F[b.id] || (F[b.id] = {});
+        pl.fat.push(fb[ch] || (fb[ch] = [[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]]));
+      }
+    });
+    pl.n = pl.ids.length;
+    cache.byV[v.id] = pl;
+    return pl;
+  }
+  // Logit shifts for profile i: each block's effect decays with the exposures that person has had, plus a tiredness penalty.
+  function planFx(world, pl, i, out) {
+    var dO = 0, dC = 0, dV = 0;
+    for (var j = 0; j < pl.n; j++) {
+      var a = pl.exp[j] || (pl.exp[j] = expOf(world, pl.ids[j])), k = a[i];
+      pl.ki[j] = k > 5 ? 5 : k;
+      var g = pl.g[j][k > 15 ? 15 : k], h = 1 - g;
+      dO += pl.eo[j] * g - pl.to[j] * h; dC += pl.ec[j] * g - pl.tc[j] * h; dV += pl.ev[j] * g - pl.tv[j] * h;
+    }
+    out.o = dO; out.c = dC; out.v = dV;
+    return out;
+  }
+  // col: 0 sent, 1 delivered, 2 open, 3 click, 4 convert, 5 revenue (ledger rows per block, day and channel; fat rows by exposure index)
+  function planLog(pl, col, amt) {
+    for (var j = 0; j < pl.n; j++) {
+      pl.perf[j][col] += amt;
+      if (col >= 1 && col <= 4) pl.fat[j][pl.ki[j]][col - 1] += amt;
+    }
+  }
+  function planExposed(pl, i) { for (var j = 0; j < pl.n; j++) { var a = pl.exp[j]; if (a[i] < 255) a[i]++; } }
+  SIM._contentPlan = contentPlan;
+
   function daysTotal(c) { return Math.max(1, (c.endTick - c.startTick) / 24); }
 
   // Latent paid response curves R(S) = A·(1 − e^{−S/B}) per paid channel. Writes and returns the map.
@@ -454,6 +576,7 @@
   }
 
   var SKIP = 0, WAIT = 1, SENT = 2;
+  var CPQ = { o: 0, c: 0, v: 0 };   // scratch for planFx
   var OWNED_NAMES = ['email', 'sms', 'push'];
 
   function ownedCampaign(world, c, t, h, d, G) {
@@ -532,6 +655,8 @@
       if (!rng) rng = MC.rng.fork(seedOf(world), 'sim', c.id, t);
       var vi = rng.weighted(el.ws), v = el.vs[vi < 0 ? 0 : vi];
       var Lv = latentOf(world, v);
+      var CPL = v.messageId ? contentPlan(world, v, d, true) : null, dq = null;
+      if (CPL) { dq = planFx(world, CPL, i, CPQ); planLog(CPL, 0, 1); }
       var facts = [cd.tot, fact(cd.ch, ch), fact(k ? cd.ctl : cd.trt, ch), fact(cd.v, v.id), e.tot];
       var cost = CONST.unitCost[ch], Fi = P.fatigue[i];
       add(facts, f.SENT, 1); add(facts, f.COST, cost);
@@ -545,13 +670,15 @@
 
       if (rng.float() < CONST.pd[ch]) {
         add(facts, f.DELIV, 1);
+        if (CPL) planLog(CPL, 1, 1);
         pushTouch(world, i, allIdx, ci, t);
         var ph = LP.ph ? LP.ph[i] : 12, engI = LP.eng ? LP.eng[i] : 0;
         var dc = dcirc(h, ph), hourFit = Math.exp(-(dc * dc) / 8);
         var pOpen = ch === 'sms' ? CONST.smsOpen
-          : sig(CONST.a[ch] + CONST.engW * engI + Lv.qo + CONST.hourW * (hourFit - 0.5) - CONST.fatW * Fi);
+          : sig(CONST.a[ch] + CONST.engW * engI + Lv.qo + (dq ? dq.o : 0) + CONST.hourW * (hourFit - 0.5) - CONST.fatW * Fi);
         if (rng.float() < pOpen) {
           add(facts, f.OPEN, 1);
+          if (CPL) planLog(CPL, 2, 1);
           hrs[24 + h] += 1;
           if (P.openHr[i * 24 + h] < 255) P.openHr[i * 24 + h]++;
           if (P.eng[eb + 1] < 65535) P.eng[eb + 1]++;
@@ -559,24 +686,27 @@
           var prod = productFor(world, v, c, i);
           var aff = Math.max(CONST.affFloor, P.aff[i * 5 + prod.ci] || 0);
           var cf = Math.max(CONST.cfFloor, LP.cf ? LP.cf[i * 5 + ci] : 0.5);
-          var pClick = sig(CONST.b[ch] + Lv.qc + CONST.affW * Math.log(5 * aff) + CONST.cfW * Math.log(cf));
+          var pClick = sig(CONST.b[ch] + Lv.qc + (dq ? dq.c : 0) + CONST.affW * Math.log(5 * aff) + CONST.cfW * Math.log(cf));
           if (rng.float() < pClick) {
             add(facts, f.CLICK, 1);
+            if (CPL) planLog(CPL, 3, 1);
             if (P.eng[eb + 2] < 65535) P.eng[eb + 2]++;
             E.flags[i] |= 2;
             var offer = v.offer || c.offer || 'none';
             var p0 = LP.p0 ? LP.p0[i] : 0, ps = LP.priceSens ? LP.priceSens[i] : 0;
-            var pConv = Math.min(CONST.convMax, sig(CONST.convBase + CONST.convP0 * p0 + Lv.qv + (CONST.offerLift[offer] || 0) -
+            var pConv = Math.min(CONST.convMax, sig(CONST.convBase + CONST.convP0 * p0 + Lv.qv + (dq ? dq.v : 0) + (CONST.offerLift[offer] || 0) -
               CONST.priceSensW * ps * (offer === 'none' ? 1 : 0)) * seasonD);
             if (rng.float() < pConv) {
               var rev = prod.price * rng.lognormal(0, CONST.revSd) * (1 - (CONST.discount[offer] || 0));
               var react = bookOrder(world, i, rev, d);
               add(facts, f.CONV, 1); add(facts, f.REV, rev); add(facts, f.REACT, react);
+              if (CPL) { planLog(CPL, 4, 1); planLog(CPL, 5, rev); }
               E.rev[i] += rev;
               attribute(world, i, rev, t, e);
             }
           }
         }
+        if (CPL) planExposed(CPL, i);
         if (rng.float() < CONST.unsubBase * (1 + CONST.unsubFat * Fi) * (1 + spamOf(v))) {
           P.unsub[i] |= bit;
           add(facts, f.UNSUB, 1);
@@ -676,7 +806,8 @@
       var a = (c.alloc && c.alloc[ch]) || {}, vs = [], ws = [], qsum = 0, liveN = 0;
       MC.catalog.variantsOf(world, c.id, ch).forEach(function (v) {
         if (v.status !== 'live') return;
-        qsum += latentOf(world, v).qc; liveN++;
+        var pplan = v.messageId ? contentPlan(world, v, d, false) : null;
+        qsum += latentOf(world, v).qc + (pplan ? pplan.sumC : 0); liveN++;
         if (a[v.id] > 0) { vs.push(v); ws.push(a[v.id]); }
       });
       var creativeQ = liveN ? Math.exp(qsum / liveN) : 1;

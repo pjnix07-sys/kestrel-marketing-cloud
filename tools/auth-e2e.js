@@ -49,7 +49,7 @@ async function newPage(browser, federated) {
       if (u.pathname === '/authorize') {
         st.authorize.push(u.searchParams); st.nonce = u.searchParams.get('nonce');
         const back = new URL(u.searchParams.get('redirect_uri')); back.searchParams.set('code', 'code-123'); back.searchParams.set('state', u.searchParams.get('state'));
-        return route.fulfill({ status: 302, headers: { location: back.toString() }, body: '' });
+        return route.fulfill({ status: 200, contentType: 'text/html', body: '<!doctype html><title>Acme SSO</title><script>location.replace(' + JSON.stringify(back.toString()) + ')</script>' });
       }
       if (u.pathname === '/token') {
         st.idpToken.push(req.postData());
@@ -132,6 +132,7 @@ const shot = (page, name) => page.screenshot({ path: path.join(OUT, name + '.png
       await open(page);
       check('signin: the choice appears first and is selected', await page.locator('#connect-mode-signin').isChecked() && (await page.locator('#connect-signin').innerText()).includes('Sign in with Acme SSO'));
       await shot(page, 'signin-panel');
+      const hash0 = new URL(page.url()).hash;
       await page.click('#connect-signin');
       for (let i = 0; i < 100 && !st.relay.length; i++) await page.waitForTimeout(100);     // the page leaves, then comes back
       await page.waitForSelector('#app-connect-btn');
@@ -142,8 +143,8 @@ const shot = (page, name) => page.screenshot({ path: path.join(OUT, name + '.png
       check('signin: relay got the assertion and the configured ids', st.relay.length === 1 && st.relay[0].federation_rule_id === 'fdrl_abc' && st.relay[0].organization_id === FED.organizationId && st.relay[0].workspace_id === 'wrkspc_xyz' && st.relay[0].assertion.split('.').length === 3);
       check('signin: Anthropic saw the federated Bearer token only', st.anthropic.length > 0 && st.anthropic.every(h => h.authorization === 'Bearer ' + TOKEN && !h['x-api-key']));
       const url = new URL(page.url());
-      check('signin: URL cleaned (no code/state), route kept', !url.search && url.hash === '#/agents', page.url());
-      const s = await page.evaluate(() => ({ l: Object.keys(localStorage).length, t: JSON.parse(sessionStorage.getItem('mc.ai.token') || 'null'), p: sessionStorage.getItem('mc.fed.pending') }));
+      check('signin: URL cleaned (no code/state), route kept', !url.search && url.hash === hash0 && !!hash0, page.url());
+      const s = await page.evaluate(() => ({ l: Object.keys(localStorage).map(k => localStorage.getItem(k)).filter(v => /sk-ant-oat/.test(v)).length, t: JSON.parse(sessionStorage.getItem('mc.ai.token') || 'null'), p: sessionStorage.getItem('mc.fed.pending') }));
       check('signin: token in sessionStorage (federated), nothing in localStorage, pending record cleared', s.l === 0 && s.t && s.t.source === 'federated' && s.p === null, JSON.stringify(s));
       await open(page);
       check('signin: the panel names the IdP', /Acme SSO/.test(await page.innerText('#connect-kind')));
