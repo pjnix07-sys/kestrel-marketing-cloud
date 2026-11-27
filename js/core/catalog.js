@@ -1833,7 +1833,11 @@
     }
     if (ctx.user && m.review !== 'approved') return 'Approve the message before publishing it.';
     var ids = KC().blockIdsOf(m);
-    for (var k = 0; k < ids.length; k++) if (!blockUsable(cblock(world, ids[k]))) return 'A block in this message is retired. Swap it out first.';
+    for (var k = 0; k < ids.length; k++) {
+      var pb = cblock(world, ids[k]);
+      if (!blockUsable(pb)) return 'A block in this message is retired. Swap it out first.';
+      if (ctx.user && pb.review !== 'approved') return 'Approve ' + bname(world, pb.id) + ' first; it is ' + pb.review.replace('_', ' ') + '.';
+    }
     if (p.share !== undefined && p.share !== null && !(isNum(p.share) && p.share >= 0 && p.share < 1)) return 'Share must be between 0 and 1.';
     for (var j = 0; j < p.channels.length; j++) {
       var r = KC().render(world, p.id, p.channels[j], { campaignId: p.campaignId });
