@@ -1,70 +1,69 @@
 # Marketing Cloud
 
-Marketing Cloud is a prototype of an agentic marketing platform. A marketer plans campaigns, writes content, builds audiences and reads analytics, while eight agents watch the numbers and propose or make changes. You choose how much each agent may do on its own, and every change can be traced and undone.
+You give a team of marketing agents an outcome, and you watch them plan it, do it, hand work to each other, and come back to you only for real decisions. Campaigns, audiences and copy are things the agents make along the way, not the places you start. The unit of work is a mission: one sentence with a goal, a deadline and limits. Everything an agent does goes through the same logged actions, guardrails and undo as anything you would do by hand, so the work on the board is real state in the sample world, not an animation.
 
-All data is synthetic. The sample company is Fernway Outfitters, a fictional outdoor gear brand with 6,000 generated customers and 60 days of history.
+The sample tenant is Fernway Outfitters, an invented outdoor retailer with 6,000 generated customer profiles and a season that runs Nov 7 to Dec 31, 2026.
 
-**Live demo:** https://pjnix07-sys.github.io/kestrel-marketing-cloud/
+**Live:** https://pjnix07-sys.github.io/kestrel-marketing-cloud/
 
-## What to try first
+## Try this first
 
-1. Open the Command Center. Read the KPI strip, then "What changed", which lists what the agents have done.
-2. Open "Approvals" in the top bar and approve or dismiss one proposal. Each shows a reason, an expected impact range, the guardrails it passed and the exact changes.
-3. Undo something an agent did on its own from "What changed".
-4. In Campaigns, describe a campaign in a sentence and let the Campaign Planner draft it.
-5. In Agents, change an agent between Off, Suggest and Autopilot.
-
-A scripted five-minute walkthrough is in [docs/DEMO.md](docs/DEMO.md).
+1. Open a mission from the switcher in the top bar. "Win back 400 lapsed hikers before Dec 15 without discounting more than 15%" is already mid-execution. The board shows each agent's lane, what it is doing now, the hand-offs between agents, and the artifacts they have produced.
+2. Answer the ask. One mission has a question waiting: it shows the why, the impact range and what happens if you say no. Answer it and the blocked steps continue immediately.
+3. Steer in the Lead column. Open "Talk to Lead" and type "skip SMS" or "keep the discount under 10%". Lead replies in a sentence or two and the plan re-forms on the board.
+4. Start a New goal. Try `Grow Trail runners by 300 sign-ups by Dec 20 with no SMS`. Lead parses it, plans it, and the agents start.
+5. Open Artifacts, then Content. In Compose, edit one message and see its email, SMS, push, social and web versions render side by side from the same blocks. In Intelligence, read which headline angles win in which channel, which blocks are tired, and the agents' recommendations.
 
 ## How the agents work
 
-The app runs on rules by default, with no network calls. Eight agents (Variant Optimizer, Send-Time Tuner, Budget Pacer, Fatigue Guard, Insight Analyst, Copy Drafter, Segment Scout, Campaign Planner) compute candidate changes from the sample data. Each agent is set to Off, Suggest (queues proposals for approval) or Autopilot (acts inside its guardrails). Fatigue Guard and Variant Optimizer start on Autopilot; the others start on Suggest, and Campaign Planner only offers Off or Suggest.
+Out of the box the agents run on rules. A deterministic planner turns a goal sentence into a plan from templates (win back, launch, event revenue, grow a segment, protect the list), and the eight specialists do the work with the same scoring code as the rest of the app. Nothing needs a key.
 
-**Connect Claude** (top bar) lets the agents and some writing tools use Claude Haiku 5.5 with your own Anthropic API key. Haiku writes the wording and picks among the options the rule engine computed. It cannot change state directly, and its proposals go through the same guardrails and approvals. If the key is missing, the call times out (8 seconds) or the reply is invalid, the rule-based result is used for that run.
+Connect Claude (top bar) and the Lead plans free-text goals with Claude Haiku 5.5, and the specialists reason and write with it. You connect with your own Anthropic API key. It stays in this browser (localStorage if "Remember on this device" is on, otherwise sessionStorage) and is sent only to `api.anthropic.com`. If a call fails, times out or returns something that does not validate, that step falls back to the rules result.
 
-Data policy: only aggregated campaign and audience numbers are sent to Anthropic, never individual customer records. Your key stays in this browser (localStorage if "Remember on this device" is on, otherwise sessionStorage) and is sent only to api.anthropic.com. Disconnect clears it.
-
-**Sign-in options.** Besides an API key, Connect Claude accepts a federated access token (`sk-ant-oat01-…`, from your organisation's Anthropic Workload Identity Federation, for example `ant auth print-credentials --access-token`). It is sent as a Bearer token, kept in sessionStorage only, and the agents fall back to rules when it expires. An operator can also switch on "Sign in with <your company>" by setting `MC.CONFIG.federation` in `js/config.js` (OIDC code + PKCE in the browser) and deploying the relay in `tools/wif-relay/`, because Anthropic's token exchange does not allow browser CORS. When you do, add the IdP and relay origins to `connect-src` in the CSP meta tag of `index.html` and run `node tools/check-config.js`. Anthropic documents federation for workload identities; end-user ID tokens may be rejected, so test with your organisation. Details: [docs/AI-FLEET.md](docs/AI-FLEET.md#authentication-api-key-federated-token-company-sign-in) and [tools/wif-relay/README.md](tools/wif-relay/README.md).
+Data policy: only aggregated campaign and audience numbers are sent. Individual customer records never leave the browser. Claude's output is recorded in the logged action payload, so replaying a session needs no API call.
 
 ## Run locally
 
-There is no build step. Serve the repository root with any static server.
+It is a static site with no build step. Serve the repo root over HTTP (the boot worker needs `http:` or `https:`, so `file://` falls back to building on the main thread):
 
 ```
-python3 -m http.server 8000
+python3 -m http.server 8765
+# or, on Windows: powershell -NoProfile -ExecutionPolicy Bypass -File tools/serve.ps1 -Port 8765
 ```
 
-Then open http://localhost:8000/. On Windows without Node or Python:
-
-```
-powershell -NoProfile -ExecutionPolicy Bypass -File tools/serve.ps1
-```
-
-This serves http://localhost:8765/ (use `-Port` to change it).
+Then open http://localhost:8765/.
 
 ## Tests
 
-- `node tools/smoke.js [ticks]` loads the core and agent scripts in Node, boots the sample world and advances it. No browser needed.
-- `NODE_PATH=$(npm root -g) node tools/e2e.js [--port 8870] [--only boot,home,...]` runs a Playwright and Chromium suite against its own server. It fails if any request leaves localhost, except api.anthropic.com, which it stubs.
+| Command | What it covers |
+|---|---|
+| `node tools/smoke.js 500` | Boots the world headless, advances 500 ticks, reports audit errors (should be 0). Run it twice and the output must match. |
+| `node tools/missions-test.js` | Mission planning, steps, asks, steering and determinism. |
+| `node tools/content-test.js` | Content model, renders, ledgers, intelligence selectors, content agents. |
+| `node tools/agent-eval/run.js` | Offline eval of the Haiku bridge with stubbed model responses (normal and adversarial cases). |
+| `node tools/auth-test.js` | Offline checks of the connection layer: headers, expiry, storage. |
+| `NODE_PATH=$(npm root -g) node tools/e2e.js` | Playwright and Chromium suite against its own server. Fails if any request leaves localhost, except a stubbed `api.anthropic.com`. |
+| `NODE_PATH=$(npm root -g) node tools/auth-e2e.js` | Browser test of the connect flow with Anthropic stubbed. |
 
-## Project layout
+## Layout
 
 ```
-index.html          script load order (classic scripts, no modules)
+index.html          script load order (classic scripts, no modules); ?v= cache keys
 css/                tokens.css, app.css, views/*.css
-js/core/            world, actions, simulation, engine, runtime, guardrails, replay
-js/agents/          the eight agents
+js/core/            world, catalog, sim, engine, missions, content, runtime, guardrails, replay, boot-worker
+js/agents/          lead (orchestrator) and the eight specialists
 js/ai/              Claude client, context builder, fleet bridge, inline tasks
 js/ui/              component kit, charts, flow, agent UI
-js/views/           home, campaigns, content, audiences, analytics, console (Agents), connect
-js/app.js           shell, navigation, approvals drawer
-tools/              smoke.js, e2e.js, serve.ps1
-docs/               ARCHITECTURE.md, DEMO.md, CONTRACT.md, AI-FLEET.md, api/, critique/, review/
+js/views/           mission (home), content, campaigns, audiences, analytics, console (Team), connect, tour
+js/app.js           top bar, Asks drawer, router, boot
+tools/              tests and the local server script
+docs/               AGENTIC, CONTENT, AI-FLEET, DESIGN-DIRECTION, ARCHITECTURE, DEMO, FORENSICS
+concepts/           design prototypes the direction was chosen from
 vendor/             React 18, React DOM, htm, and their licences
 assets/             favicon, mark, Schibsted Grotesk font
 ```
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for how the pieces fit, and [docs/CONTRACT.md](docs/CONTRACT.md) for the original design contract.
+Start with [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). The product rules are in [docs/AGENTIC.md](docs/AGENTIC.md) and [docs/DESIGN-DIRECTION.md](docs/DESIGN-DIRECTION.md); content is in [docs/CONTENT.md](docs/CONTENT.md) and the Claude bridge in [docs/AI-FLEET.md](docs/AI-FLEET.md). [docs/DEMO.md](docs/DEMO.md) is a five-minute walkthrough.
 
 ## Credits and licences
 
