@@ -13,7 +13,7 @@
 
   var DASH = '–', DOT = '·';
   var EMPTY = [];
-  var ROW_H = 66, BLOCK_H = 38, LABEL_W = 176, LABEL_W_NARROW = 112, MIN_COL = 150;
+  var ROW_H = 76, BLOCK_H = 46, LABEL_W = 176, LABEL_W_NARROW = 112, MIN_COL = 128;
 
   function html() { return MC.html.apply(null, arguments); }
   function R() { return window.React; }
@@ -25,7 +25,7 @@
   function L() { return MC.lead || {}; }
   function lcFirst(s) { s = String(s || ''); return /^[A-Z][a-z]/.test(s) ? s.charAt(0).toLowerCase() + s.slice(1) : s; }
   function trunc(s, n) { s = String(s || ''); return s.length > n ? s.slice(0, n - 1).replace(/\s+\S*$/, '') + '…' : s; }
-  function agentName(id) { return MC.ui && MC.ui.agentName ? MC.ui.agentName(id) : (L().agentName ? L().agentName(id) : id); }
+  function agentName(id) { return L().agentName ? L().agentName(id) : (MC.ui && MC.ui.agentName ? MC.ui.agentName(id) : id); }
   function Mark(p) { var C = MC.ui && MC.ui.AgentMark; return C ? html`<${C} id=${p.id} size=${p.size || 14} badge=${p.badge} />` : null; }
   function dayShort(d) { try { return L().dayShort(d); } catch (e) { return 'day ' + d; } }
   function getWorld() { return MC.store && MC.store.getState ? MC.store.getState() : null; }
@@ -313,11 +313,12 @@
       <div className="mr-dots" aria-hidden="true">${items}</div>
       <p className="mr-art-note">${per > 1 ? '1 dot is about ' + Math.round(per) + ' people. ' : ''}${share < 1 ? 'Hollow dots can’t be reached by ' + (aud.primary || 'email') + '.' : 'Everyone here can be reached.'}</p>`;
   }
+  function vtext(v) { var f = v.fields || {}; return f.subject || f.pushTitle || f.socialHeadline || f.sms || f.pushBody || f.socialText || f.body || ''; }
   function EmailPanel(p) {
     var Scene = MC.ui && MC.ui.Scene, vs = p.variants, v = vs.filter(function (x) { return x.channel === 'email'; })[0] || vs[0], f = v.fields || {};
     var isText = v.channel !== 'email';
     return html`<div className="mr-mail">
-      ${isText ? html`<div className="mr-sms">${f.body || f.subject || ''}</div>` : html`
+      ${isText ? html`<div className="mr-sms">${vtext(v)}</div>` : html`
         <div className="mr-m-bar">${p.brand}</div>
         ${Scene && f.imageId ? html`<${Scene} imageId=${f.imageId} style=${{ borderRadius: 0, height: 50, width: '100%', objectFit: 'cover' }} />` : null}
         <p className="mr-m-h">${f.headline || f.subject}</p>
@@ -325,7 +326,7 @@
         ${f.cta ? html`<span className="mr-m-cta">${f.cta}</span>` : null}`}
     </div>
     <ul className="mr-subs">${vs.slice(0, 4).map(function (x) {
-      return html`<li key=${x.id} className=${x.status === 'live' ? 'is-live' : ''}><b>${x.name}</b><span>${trunc((x.fields || {}).subject || (x.fields || {}).body, 46)}</span></li>`;
+      return html`<li key=${x.id} className=${x.status === 'live' ? 'is-live' : ''}><b>${x.name}</b><em>${x.channel === 'sms' ? 'SMS' : x.channel}</em><span>${trunc(vtext(x), 46)}</span></li>`;
     })}</ul>`;
   }
   function journeyOrder(steps) {
@@ -553,8 +554,8 @@
           </div>
           <div className="mr-bay">
             <${Narration} m=${m} tick=${tick} />
-            <${Artifacts} world=${w} m=${m} camp=${camp} seg=${seg} flash=${flash} />
             <${Counters} tot=${tot} camp=${camp} />
+            <${Artifacts} world=${w} m=${m} camp=${camp} seg=${seg} flash=${flash} />
           </div>
         </div>
         <${LeadColumn} ...${leadProps} />
