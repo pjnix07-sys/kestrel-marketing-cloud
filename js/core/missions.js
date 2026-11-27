@@ -232,7 +232,6 @@
       var s = ensure(world);
       world.missions = assign({}, s, { order: s.order.concat([id]) });
       ctx.created.push(id);
-      M.settle(world, tick, id);
       return;
     }
     m = getM(world, p.id);
@@ -275,7 +274,6 @@
         else if (mm.status === 'waiting') mm.status = 'running';
       }
       putM(world, mm);
-      M.settle(world, tick, mm.id);
       return;
     }
     if (name === 'steer') {
@@ -306,7 +304,6 @@
       if (normalized.length && !st.status && m.status === 'done') mm.status = 'running';
       mm.log = addBeats(m.log, st.beats, tick);
       putM(world, mm);
-      M.settle(world, tick, mm.id);
       return;
     }
     if (name === 'setStatus') {
@@ -389,31 +386,27 @@
     }
   };
 
-  // Event-driven: a step runs as soon as its dependencies are done; passes repeat until nothing more can run.
+  // Event-driven, one transition per engine tick: a ready step is claimed (queued -> working) on one tick and its executor runs
+  // (working -> done, blocked or skipped) on the next; independent steps progress in parallel. A step is ready only when what it
+  // needs was already done at the start of the tick. No artificial delay: rules executors take exactly one tick to claim and one to run.
   // Day-clock work (the daily check-in and re-plan) still happens on its hour as the sample world's time passes.
   function tickMission(world, id, t) {
     var m = getM(world, id);
-    if (!m || m.status === 'stopped' || m.status === 'done') return;
+    if (!m || m.status === 'stopped' || m.status === 'done' || t < m.createdTick) return;
     if (m.status === 'paused') {
       if (isNum(m.resumeDay) && dayOf(t) >= m.resumeDay) { act(world, t, 'mission/setStatus', { id: id, status: 'running' }); m = getM(world, id); }
       else return;
     }
     if (m.status === 'planning') { missionPatch(world, t, id, { status: openAsks(m, true).length ? 'waiting' : 'running', phase: 'executing' }); m = getM(world, id); }
-    for (var pass = 0; pass < 24; pass++) {
-      m = getM(world, id);
-      if (!m || m.status === 'paused' || m.status === 'stopped') return;
-      var ran = false;
-      for (var i = 0; i < m.plan.length; i++) {
-        var st = stepById(getM(world, id), m.plan[i].id);
-        if (!st || st.status !== 'queued') continue;
-        var cur = getM(world, id);
-        var ready = st.needs.every(function (n) { var d = stepById(cur, n); return !d || d.status === 'done' || d.status === 'skipped'; });
-        if (!ready) continue;
-        startStep(world, t, cur, st);
-        finishStep(world, t, getM(world, id), stepById(getM(world, id), st.id));
-        ran = true;
-      }
-      if (!ran) break;
+    var snap = {};
+    m.plan.forEach(function (st) { snap[st.id] = st.status; });
+    for (var i = 0; i < m.plan.length; i++) {
+      var cur = getM(world, id);
+      if (!cur || cur.status === 'paused' || cur.status === 'stopped') return;
+      var sid = m.plan[i].id, st = stepById(cur, sid);
+      if (!st || snap[sid] !== st.status) continue;
+      if (st.status === 'working') finishStep(world, t, cur, st);
+      else if (st.status === 'queued' && st.needs.every(function (n) { return snap[n] === undefined || snap[n] === 'done' || snap[n] === 'skipped'; })) startStep(world, t, cur, st);
     }
     m = getM(world, id);
     if (!m || m.status === 'stopped') return;
@@ -430,8 +423,6 @@
       }
     }
   }
-  // Runs whatever is ready right now (used inside the logged actions so answers and steering take effect immediately).
-  M.settle = function (world, t, id) { try { tickMission(world, id, t); } catch (e) { report(e); } };
 
   function monitoringBeat(m) {
     var c = ((m.data || {}).campaignId) ? ' The campaign is drafted and waiting for your sign-off; once it runs, ' : ' ';

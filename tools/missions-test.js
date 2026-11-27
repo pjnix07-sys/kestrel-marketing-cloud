@@ -64,7 +64,15 @@ const mission = (MC, id) => MC.store.getState().missions.byId[id];
   let r = MC.missions.createSync('Win back 400 lapsed hikers before Dec 15 without discounting more than 15%');
   check('create ok', r.ok && r.id, JSON.stringify(r));
   let m = mission(MC, r.id);
-  check('executes immediately to monitoring', m.phase === 'monitoring' && m.status === 'running' && m.plan.every(s => s.status === 'done' || s.status === 'skipped'), JSON.stringify(m.plan.map(s => s.kind + ':' + s.status)));
+  check('plan forms over ticks, not at once', m.plan.every(s => s.status === 'queued' || s.status === 'blocked') && m.phase !== 'monitoring');
+  adv(MC, 1); m = mission(MC, r.id);
+  check('claim then run on separate ticks', m.plan[0].status === 'working');
+  adv(MC, 1); m = mission(MC, r.id);
+  check('step done next tick, next claimed', m.plan[0].status === 'done' && m.plan[1].status === 'queued');
+  adv(MC, 1); m = mission(MC, r.id);
+  check('dependents claimed after dependency done', m.plan[1].status === 'working');
+  adv(MC, 40); m = mission(MC, r.id);
+  check('reaches monitoring event-driven', m.phase === 'monitoring' && m.status === 'running' && m.plan.every(s => s.status === 'done' || s.status === 'skipped'), JSON.stringify(m.plan.map(s => s.kind + ':' + s.status)));
   const cid = (m.artifacts.filter(a => a.kind === 'campaign')[0] || {}).id;
   w = MC.store.getState();
   const camp = w.campaigns.byId[cid];
@@ -80,28 +88,32 @@ const mission = (MC, id) => MC.store.getState().missions.byId[id];
   // ---- guardrail block -> ask -> answer
     w = MC.store.getState();
   r = MC.missions.createSync('Hit $10k in revenue by Dec 3, SMS only');
+  adv(MC, 40);
   m = mission(MC, r.id);
   const blocked = m.plan.filter(s => s.status === 'blocked')[0];
   const ask = m.asks.filter(a => a.status === 'open' && a.kind === 'guardrail')[0];
   check('guardrail blocks and asks', !!blocked && blocked.kind === 'campaign' && ask && m.status === 'waiting', JSON.stringify(m.plan.map(s => s.kind + ':' + s.status)) + ' ' + (w.guardrails && w.guardrails.maxDailySpend));
   if (ask) {
-    const ar = MC.missions.answer(m.id, ask.id, ask.options[0]);
+    const ar = MC.missions.answer(m.id, ask.id, ask.options[0]); adv(MC, 40);
     check('answer ok', ar.ok, ar.error);
     m = mission(MC, m.id);
     check('continues after answer', m.phase === 'monitoring' || m.plan.some(s => s.kind === 'campaign' && s.status === 'done'), JSON.stringify(m.plan.map(s => s.kind + ':' + s.status)));
   }
   // clarifying ask
   r = MC.missions.createSync('Win back lapsed customers');
+  adv(MC, 5);
   m = mission(MC, r.id);
   const ca = m.asks.filter(a => a.status === 'open')[0];
   check('clarifying ask from Lead', ca && ca.agentId === 'lead' && m.plan[0].status === 'blocked');
-  if (ca) { MC.missions.answer(m.id, ca.id, ca.options[1]); m = mission(MC, m.id); const ca2 = m.asks.filter(a => a.status === 'open')[0]; if (ca2) MC.missions.answer(m.id, ca2.id, ca2.options[1]); m = mission(MC, m.id); check('clarified mission proceeds', m.phase === 'monitoring', m.phase + ' ' + m.status); }
+  if (ca) { MC.missions.answer(m.id, ca.id, ca.options[1]); adv(MC, 3); m = mission(MC, m.id); const ca2 = m.asks.filter(a => a.status === 'open')[0]; if (ca2) MC.missions.answer(m.id, ca2.id, ca2.options[1]); adv(MC, 40); m = mission(MC, m.id); check('clarified mission proceeds', m.phase === 'monitoring', m.phase + ' ' + m.status); }
 
   // ---- steer -> replan
   r = MC.missions.createSync('Hit $12k in revenue by Dec 8 with a Cyber Monday push');
+  adv(MC, 40);
   m = mission(MC, r.id);
   const before = m.plan.length;
   const sr = MC.missions.steer(m.id, 'no SMS and keep the discount under 10%');
+  adv(MC, 40);
   m = mission(MC, m.id);
   const c2 = w.campaigns.byId[(m.artifacts.filter(a => a.kind === 'campaign')[0] || {}).id];
   check('steer adds steps and beats', sr.ok && m.plan.length > before && m.log.some(b => b.kind === 'replan'), JSON.stringify(sr));
@@ -119,6 +131,7 @@ const mission = (MC, id) => MC.store.getState().missions.byId[id];
 
   // ---- seeded ask answer executes real extend
   MC.missions.answer('m-lhw', 'a1', mission(MC, 'm-lhw').asks[0].options[0]);
+  adv(MC, 40);
   const lhw = mission(MC, 'm-lhw');
   check('seed ask answered runs to monitoring', lhw.phase === 'monitoring', JSON.stringify(lhw.plan.map(s => s.kind + ':' + s.status)));
   adv(MC, 24 * 5);
@@ -129,6 +142,7 @@ const mission = (MC, id) => MC.store.getState().missions.byId[id];
     M.missions.createSync('Win back 400 lapsed hikers before Dec 15 without discounting more than 15%');
     adv(M, 30);
     M.missions.createSync('Hit $9k in revenue by Dec 5');
+    adv(M, 30);
     M.missions.steer(M.store.getState().missions.order.slice(-1)[0], 'no push');
     adv(M, 24 * 4);
     return M;

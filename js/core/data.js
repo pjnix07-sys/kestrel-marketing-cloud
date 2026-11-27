@@ -592,7 +592,7 @@
     (function () {
       var spec = D.MISSIONS_SEED[0], c = world.campaigns.byId[spec.campaignId], sg = world.segments.byId[spec.segmentId];
       if (!c || !sg) return;
-      var t0 = c.createdTick, b = base(spec, t0), m = b.m, rc = reachOf(world, spec.segmentId, 'email');
+      var t0 = (D.seedTarget || 0) - 6 * 24, b = base(spec, t0), m = b.m, rc = reachOf(world, spec.segmentId, 'email');
       var lastDay = Math.floor((c.endTick - 1) / 24), by = m.objective.by, extra = Math.max(1, by - lastDay);
       var perDay = c.goal.target / Math.max(1, Math.round((c.endTick - c.startTick) / 24));
       var offerPct = { pct15: 15, pct25: 25 }[c.offer] || 0;
@@ -633,7 +633,7 @@
     (function () {
       var spec = D.MISSIONS_SEED[1], c = world.campaigns.byId[spec.campaignId], sg = world.segments.byId[spec.segmentId];
       if (!c || !sg) return;
-      var t0 = c.createdTick, b = base(spec, t0), m = b.m, rc = reachOf(world, spec.segmentId, 'email');
+      var t0 = (D.seedTarget || 0) - 4 * 24, b = base(spec, t0), m = b.m, rc = reachOf(world, spec.segmentId, 'email');
       var vs = MC.catalog.variantsOf(world, c.id), chs = c.channels.slice();
       var hours = MC.CH.OWNED.filter(function (ch) { return chs.indexOf(ch) >= 0; }).map(function (ch) { return chWord(ch) + ' at ' + fm.hour(c.sendHour[ch]); });
       var big = chs.slice().sort(function (a, z) { return (c.budget.byChannel[z] || 0) - (c.budget.byChannel[a] || 0) || (a < z ? -1 : 1); })[0];

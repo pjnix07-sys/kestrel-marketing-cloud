@@ -237,6 +237,8 @@
   E.build = function (seed, opts) {
     opts = opts || {};
     var target = opts.target !== undefined ? opts.target : (opts.catchUp === false ? 0 : E.catchUpTarget(opts.now));
+    // seeded missions are dated relative to where the world will be caught up to (narration only)
+    if (MC.data) MC.data.seedTarget = target;
     function inThread() {
       return generateWorld(seed, opts.onPhase).then(function (w) { return target ? catchUp(w, target, opts.onPhase) : w; });
     }
