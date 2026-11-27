@@ -108,6 +108,13 @@
     var art = s.artifact, c = campaignOf(w, m), seg, vs;
     if (art && art.kind === 'segment' && w.segments.byId[art.id]) { seg = w.segments.byId[art.id]; return { short: num(seg.count) + ' people', full: seg.name + ': ' + num(seg.count) + ' people' }; }
     if (art && art.kind === 'campaign' && w.campaigns.byId[art.id]) { return { short: 'Campaign draft', full: w.campaigns.byId[art.id].name }; }
+    if (c && (s.kind === 'copy' || s.kind === 'rewrite')) {
+      vs = MC.catalog.variantsOf(w, c.id);
+      var mids = {}, chs = {};
+      vs.forEach(function (v) { if (v.messageId) { mids[v.messageId] = 1; chs[v.channel] = 1; } });
+      var nm = Object.keys(mids).length, nc = Object.keys(chs).length;
+      if (nm) return { short: nm + (nm === 1 ? ' message' : ' messages') + ' \u00b7 ' + nc + (nc === 1 ? ' channel' : ' channels'), full: nm + (nm === 1 ? ' message' : ' messages') + ' \u00b7 ' + nc + (nc === 1 ? ' channel' : ' channels') + ' for ' + c.name };
+    }
     if (c && s.kind === 'copy') { vs = MC.catalog.variantsOf(w, c.id); return { short: vs.length + (vs.length === 1 ? ' message' : ' messages'), full: vs.length + ' messages written for ' + c.name }; }
     if (c && (s.kind === 'pacer' || s.kind === 'budget')) return { short: money(c.budget.total) + ' split', full: money(c.budget.total) + ' split across ' + c.channels.length + ' channels' };
     if (s.kind === 'sendtime') return { short: 'Send windows', full: s.note || 'Send windows set' };
@@ -386,16 +393,39 @@
         return html`<li key=${ch}><i style=${{ background: cols[i % cols.length] }}></i>${(MC.CH && MC.CH.LABEL && MC.CH.LABEL[ch]) || ch}<span>${money(c.budget.byChannel[ch])}${spent > 0 ? html`<small> ${DOT} ${money(spent)} spent</small>` : null}</span></li>`;
       })}</ul>`;
   }
+  var MSG_CH = ['email', 'sms', 'push', 'social', 'web'];
+  function MessagePanel(p) {
+    var K = MC.content, w = p.world, id = p.messageId, m = K && K.message(w, id);
+    if (!m) return null;
+    var Scene = MC.ui && MC.ui.Scene, blocks = K.blockIdsOf(m).map(function (b) { return K.block(w, b); }).filter(Boolean);
+    return html`<div className="mr-msg-art">
+      <p className="mr-msg-name">${m.name}</p>
+      <ul className="mr-msg-blocks">${blocks.filter(function (b) { return b.kind !== 'image' && b.kind !== 'product'; }).slice(0, 5).map(function (b) {
+        return html`<li key=${b.id}><em>${K.KIND_LABEL[b.kind] || b.kind}</em><span>${trunc(K.textOf(b).replace(/\{(\w+)(?:\|([^}]*))?\}/g, function (x, n, fb) { return fb || n.replace(/_/g, ' '); }), 54)}</span></li>`;
+      })}</ul>
+      <div className="mr-msg-vers" aria-label="Channel versions">${MSG_CH.map(function (ch) {
+        var r = K.render(w, id, ch, {}), f = r.fields || {}, t;
+        if (r.error) return null;
+        t = ch === 'email' ? (f.headline || f.subject) : ch === 'sms' ? f.sms : ch === 'push' ? (f.pushTitle + ' ' + f.pushBody) : f.socialHeadline;
+        return html`<div key=${ch} className=${'mr-ver mr-ver-' + ch}><b>${(MC.CH && MC.CH.LABEL && MC.CH.LABEL[ch]) || ch}</b>
+          ${Scene && f.imageId && (ch === 'email' || ch === 'web') ? html`<${Scene} imageId=${f.imageId} style=${{ borderRadius: 0, height: 22, width: '100%', objectFit: 'cover' }} />` : null}
+          <span>${trunc(String(t || '').replace(/\{(\w+)(?:\|([^}]*))?\}/g, function (x, n, fb) { return fb || n.replace(/_/g, ' '); }), 60)}</span></div>`;
+      })}</div>
+      <a className="mr-msg-open" href=${'#content'} onClick=${function () { try { MC.uiStore.setFocus('content', { messageId: id, variantId: null, tab: 'compose' }); } catch (e) { /* link still works */ } }}>Open in Content</a>
+    </div>`;
+  }
   function Artifacts(p) {
     var w = p.world, m = p.m, camp = p.camp, seg = p.seg, work = workingSteps(m);
     function busy(kinds) { return work.some(function (s) { return kinds.indexOf(s.kind) >= 0; }); }
     var vs = camp ? MC.catalog.variantsOf(w, camp.id) : EMPTY;
+    var msgId = null;
+    vs.forEach(function (v) { if (!msgId && v.messageId && v.status !== 'retired') msgId = v.messageId; });
     var st = null;
     if (camp) { try { st = MC.select.campaignStats(w, camp.id); } catch (e) { st = null; } }
     var brand = w.meta && w.meta.tenant ? w.meta.tenant : 'Fernway Outfitters';
     return html`<div className="mr-arts">
       <${Panel} title="Segment" agent="scout" ready=${!!seg} working=${busy(['audience', 'widen'])} flash=${p.flash.seg}>${seg ? html`<${SegmentPanel} seg=${seg} m=${m} />` : null}<//>
-      <${Panel} title="Email" agent="copy" ready=${vs.length > 0} working=${busy(['copy', 'rewrite'])} flash=${p.flash.mail}>${vs.length ? html`<${EmailPanel} variants=${vs} brand=${brand} />` : null}<//>
+      <${Panel} title=${msgId ? "Message" : "Email"} agent="copy" ready=${vs.length > 0} working=${busy(['copy', 'rewrite'])} flash=${p.flash.mail}>${vs.length ? (msgId && MC.content && MC.content.message ? html`<${MessagePanel} world=${w} messageId=${msgId} />` : html`<${EmailPanel} variants=${vs} brand=${brand} />`) : null}<//>
       <${Panel} title="Journey" agent="planner" ready=${!!camp} working=${busy(['campaign', 'extend', 'offer', 'channel'])} flash=${p.flash.jour}>${camp ? html`<${JourneyPanel} camp=${camp} />` : null}<//>
       <${Panel} title="Budget" agent="pacer" ready=${!!camp && camp.budget.total > 0} working=${busy(['pacer', 'budget'])} flash=${p.flash.bud}>${camp ? html`<${BudgetPanel} camp=${camp} stats=${st} />` : null}<//>
     </div>`;
