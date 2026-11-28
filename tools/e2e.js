@@ -196,7 +196,7 @@ async function secMissions() {
     const lanes = await page.locator('.mr-lane').count(), blocks = await page.locator('.mr-blk').count();
     await check('missions: board has a lane per agent and a block per step', lanes >= 3 && blocks === m0.plan.length, `${lanes} lanes, ${blocks} blocks, ${m0.plan.length} steps`, page);
     const labels = await page.$$eval('.mr-blk', els => els.map(e => e.getAttribute('aria-label')));
-    await check('missions: each block names its agent, step and state', labels.every(l => /^[^:]+: .+, (done|working|queued|waiting on you|skipped)$/.test(l)), labels.slice(0, 2).join(' | '), page);
+    await check('missions: each block names its agent, step and state', labels.every(l => /^[^:]+: .+, (done|working|queued|waiting on you|skipped)(\. Weighed \d+ options.*)?$/.test(l)), labels.slice(0, 2).join(' | '), page);
     const batons = await page.$$eval('.mr-baton', els => els.map(e => e.getAttribute('title')));
     await check('missions: finished steps show hand-off batons', batons.length >= 1 && batons.every(t => /handed .+ to /.test(t)), batons.slice(0, 2).join(' | ') || 'none', page);
     const panels = await page.$$eval('.mr-art h3', els => els.map(e => e.textContent.trim()));
@@ -414,22 +414,23 @@ async function secArtifacts() {
     const made = await page.evaluate(() => { const m = MC.store.getState().missions.byId['m-lhw']; return { c: (m.artifacts.find(a => a.kind === 'campaign') || {}).id, s: (m.artifacts.find(a => a.kind === 'segment') || {}).id, goal: m.goalText }; });
     await check('artifacts: the seeded mission has made a campaign and a segment', !!made.c && !!made.s, JSON.stringify(made), page);
     await page.evaluate(id => MC.nav.go('campaigns', { mode: 'detail', id }), made.c);
-    await page.waitForSelector('.mc-madeby', { timeout: 8000 }).catch(() => {});
-    let mb = await page.$$eval('.mc-madeby', els => els.map(e => ({ t: e.textContent.replace(/\s+/g, ' ').trim(), h: e.querySelector('a') && e.querySelector('a').getAttribute('href') })));
-    await check('artifacts: a mission-made campaign says "Made by" and links to #missions/<id>', mb.length === 1 && /^Made by /.test(mb[0].t) && mb[0].h === '#missions/' + SEED_LHW && mb[0].t.indexOf(made.goal) >= 0, JSON.stringify(mb), page);
+    await page.waitForSelector('.cm-xref', { timeout: 8000 }).catch(() => {});
+    const xm = await page.$$eval('.cm-xref a[data-xref^="mission:"]', els => els.map(e => ({ t: e.textContent.replace(/\s+/g, ' ').trim(), h: e.getAttribute('href'), all: e.closest('.cm-xref').textContent })));
+    await check('artifacts: a mission-made campaign names its mission (link to #missions/<id>) and the agent that made it', xm.length === 1 && xm[0].h === '#missions/' + SEED_LHW && made.goal.indexOf(xm[0].t.replace(/…$/, '')) === 0 && /made by/.test(xm[0].all), JSON.stringify(xm), page);
+    let mb;
     await page.evaluate(id => MC.nav.go('audiences', { tab: 'segments', segmentId: id }), made.s);
-    await page.waitForSelector('.mc-madeby', { timeout: 8000 }).catch(() => {});
-    mb = await page.$$eval('.mc-madeby', els => els.map(e => ({ t: e.textContent.replace(/\s+/g, ' ').trim(), h: e.querySelector('a') && e.querySelector('a').getAttribute('href') })));
-    await check('artifacts: a mission-made segment says "Made by" and links back', mb.length === 1 && mb[0].h === '#missions/' + SEED_LHW, JSON.stringify(mb), page);
+    await page.waitForSelector('.v-audiences a[data-xref^="mission:"]', { timeout: 8000 }).catch(() => {});
+    mb = await page.$$eval('.v-audiences a[data-xref^="mission:"]', els => els.map(e => ({ t: e.textContent.replace(/\s+/g, ' ').trim(), h: e.getAttribute('href') })));
+    await check('artifacts: a mission-made segment names its mission and links back', mb.length >= 1 && mb[0].h === '#missions/' + SEED_LHW, JSON.stringify(mb), page);
     if (mb.length) {
-      await page.click('.mc-madeby a');
+      await page.click('.v-audiences a[data-xref^="mission:"]');
       await page.waitForFunction(g => (document.getElementById('page-title') || { textContent: '' }).textContent.trim() === g, made.goal, { timeout: 8000 }).catch(() => {});
       await check('artifacts: the back-link opens the mission room', (await page.evaluate(() => location.hash)) === '#missions/' + SEED_LHW && (await page.innerText('h1#page-title')).trim() === made.goal, await page.evaluate(() => location.hash), page);
     }
     /* a hand-made object has no back-link */
     await page.evaluate(() => MC.nav.go('campaigns', { mode: 'detail', id: 'c-hgg' }));
     await page.waitForFunction(() => /Holiday/.test((document.getElementById('page-title') || { textContent: '' }).textContent), null, { timeout: 8000 }).catch(() => {});
-    const own = await page.evaluate(() => { const w = MC.store.getState(); return { has: w.missions.order.some(id => w.missions.byId[id].artifacts.some(a => a.kind === 'campaign' && a.id === 'c-hgg')), n: document.querySelectorAll('.mc-madeby').length, t: document.getElementById('page-title').textContent.trim() }; });
+    const own = await page.evaluate(() => { const w = MC.store.getState(); return { has: w.missions.order.some(id => w.missions.byId[id].artifacts.some(a => a.kind === 'campaign' && a.id === 'c-hgg')), n: document.querySelectorAll('.mc-madeby, a[data-xref^="mission:"]').length, t: document.getElementById('page-title').textContent.trim() }; });
     await check('artifacts: an object no mission made shows no "Made by"', own.has ? true : own.n === 0, `made by a mission: ${own.has}; back-links shown: ${own.n}; "${own.t.slice(0, 30)}"`, page);
     await page.close();
   } finally { await closeCtx(ctx); }

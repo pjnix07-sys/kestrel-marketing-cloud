@@ -689,7 +689,9 @@
       return { list: out.filter(function (g) { return g.asks.length || g.props.length; }), taken: loose };
     }, [slice, props]);
     var PC = ui('ProposalCard');
+    var anyAsk = groups.list.some(function (g) { return g.asks.length; });
     return html`<div className="app-asks">
+      ${!anyAsk && groups.list.length ? html`<p className="app-asks-none">No mission is waiting on you.</p>` : null}
       ${groups.list.length ? groups.list.map(function (g) {
         return html`<section key=${g.m.id} aria-labelledby=${'asks-m-' + g.m.id} className="app-asks-sec app-asks-mission" data-mission=${g.m.id}>
           <h3 id=${'asks-m-' + g.m.id} className="app-asks-sub app-asks-msub"><a href=${'#missions/' + encodeURIComponent(g.m.id)} onClick=${function (e) { e.preventDefault(); setUi({ drawer: null }); go('missions', g.m.id); }}>${missionGoal(g.m)}</a>

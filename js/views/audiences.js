@@ -921,7 +921,7 @@
           <h2 id="aud-seg-detail-title" className="aud-h2">${s.name}</h2>
           <button type="button" className="aud-x" aria-label="Close segment details" onClick=${function () { setFocus({ segmentId: null }); }}>${TIMES}</button>
         </div>
-        <${MadeBy} kind="segment" id=${s.id} />
+        ${MC.ui && MC.ui.Xref ? h`<${MC.ui.Xref} kind="segment" id=${s.id} />` : h`<${MadeBy} kind="segment" id=${s.id} />`}
         <p>${describeRule(s.rule) || 'Matches everyone.'}</p>
         <div className="aud-detail-stats">
           <div><span className="aud-stat-k">Size</span><span className="aud-stat-v num">${fmtNum(s.count)}</span></div>

@@ -246,13 +246,14 @@
       var target = o.target, pace = target > 0 ? forecast / target : 0, band = pr ? pr.band : 'early';
       if (band !== 'early') {
         if (o.direction === 'atMost') band = forecast <= target * 0.9 ? 'ahead' : (forecast <= target ? 'on' : 'behind');
-        else band = pace >= 1.05 ? 'ahead' : (pace >= 0.85 ? 'on' : 'behind');
+        else band = pace >= 1.05 ? 'ahead' : (pace >= 0.95 ? 'on' : 'behind');
       }
       value = r1(o.metric, value); forecast = r1(o.metric, forecast); lo = r1(o.metric, lo); hi = r1(o.metric, hi);
       var fm = function (x) { return o.metric === 'revenue' ? MC.fmt.money(x, { compact: true }) : MC.fmt.num(Math.round(x)); };
       var byTxt = MC.time && MC.time.dayLabel && isNum(o.by) ? MC.time.dayLabel(o.by) : '';
       var text = (band === 'early' || !(forecast > 0)) ? '' :
-        'On pace for ' + fm(forecast) + ' of ' + fm(target) + ' (' + fm(lo) + ' to ' + fm(hi) + ')' + (byTxt ? ' by ' + byTxt : '') + '.';
+        ({ ahead: 'Ahead of pace: heading for ', on: 'On pace for ', behind: 'Behind pace: heading for ' }[band] || 'Heading for ') +
+        fm(forecast) + ' of ' + fm(target) + ' (' + fm(lo) + ' to ' + fm(hi) + ')' + (byTxt ? ' by ' + byTxt : '') + '.';
       var verdict = { early: 'too early', on: 'on pace', behind: 'behind', ahead: 'ahead' }[band] || 'too early';
       return {
         id: id, metric: o.metric, direction: o.direction || 'atLeast', value: value, target: target, by: o.by, forecast: { value: forecast, lo: lo, hi: hi }, lo: lo, hi: hi, band: band,
