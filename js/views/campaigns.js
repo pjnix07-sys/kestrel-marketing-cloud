@@ -395,7 +395,7 @@
             label=${goalText(g) + ' goal progress'} />
         </div>`
         : h`<p className="cm-card-goal-plan num">Goal ${goalFmt(g.type, g.target, true)}${g.type === 'revenue' ? ' revenue' : ' ' + (GOAL_NOUN[g.type] || '')}${MID}Budget ${money(r.budget, true)}</p>`}
-      ${r.status === 'live' && c ? h`<p className="cm-card-next">${nextSendText(c, tick) || 'No more sends scheduled'}${holdoutText() ? h`<span className="cm-muted"> ${MID} ${holdoutText()}</span>` : null}</p>` : null}
+      ${r.status === 'live' && c ? h`<p className="cm-card-next">${nextSendText(c, tick) || 'No more sends scheduled'}</p>` : null}
       ${r.status === 'live' || r.status === 'paused' ? h`<div className="cm-card-foot">
           <${Spark} values=${r.spark14} label=${r.name + ', last 14 days'} />
           ${agentLine ? h`<${AgentNote} text=${agentLine} title=${agentTitle} />` : null}
@@ -428,7 +428,7 @@
         <div><dt>Exit</dt><dd>${pr.exit || DASH}</dd></div>
         <div><dt>Re-entry</dt><dd>${fin(pr.reentryDays) ? 'After ' + plural(pr.reentryDays, 'day', 'days') : DASH}</dd></div>
       </dl>
-      ${live ? h`<p className="cm-card-next">${nextSendText(c, tick) || 'No more sends scheduled'}${holdoutText() ? h`<span className="cm-muted"> ${MID} ${holdoutText()}</span>` : null}</p>` : null}
+      ${live ? h`<p className="cm-card-next">${nextSendText(c, tick) || 'No more sends scheduled'}</p>` : null}
       <div className="cm-card-foot">
         <span className="cm-muted num">${goalText(g)}</span>
         ${r.status !== 'live' ? h`<${Status} status=${r.status} />` : null}
@@ -447,8 +447,9 @@
     var segById = (segments && segments.byId) || EMPTY_OBJ;
     function segCount(c) { var s = c && segById[c.segmentId]; return s ? s.count : null; }
     function isProgram(r) { var c = byId[r.id]; return !!(c && c.program); }
-    var dated = rows.filter(function (r) { return !isProgram(r); });
-    var programs = rows.filter(function (r) { return isProgram(r) && r.status !== 'completed'; });
+    // A running always-on program is live: it sits in the Live column so the board matches "N campaigns running".
+    var dated = rows.filter(function (r) { return !isProgram(r) || r.status === 'live'; });
+    var programs = rows.filter(function (r) { return isProgram(r) && r.status !== 'completed' && r.status !== 'live'; });
     return h`<div className="cm-board-wrap">
       <div className="cm-board" role="list" aria-label="Campaigns by status">
       ${COLUMNS.map(function (col) {
@@ -829,6 +830,10 @@
     <//>`;
   }
 
+  function detailSentence(c) {
+    var st = { live: 'Running', paused: 'Paused', scheduled: 'Scheduled to start ' + dayLabel(dayOf(c.startTick)), draft: 'A draft, not sent to anyone yet', completed: 'Finished' }[c.status] || c.status;
+    return st + (c.status === 'live' || c.status === 'completed' || c.status === 'paused' ? ' toward ' : ' with ') + GOAL_LABEL[c.goal.type] + ' goal ' + goalFmt(c.goal.type, c.goal.target, true) + ' on ' + chList(c.channels) + '.';
+  }
   function DetailHeader(p) {
     var React = R();
     var c = p.campaign, tick = p.tick;
@@ -858,6 +863,7 @@
       <div className="cm-detail-titlerow">
         <div className="cm-detail-titles">
           <h1 id="page-title" tabIndex="-1" className="cm-h1">${c.name}</h1>
+          <p className="cm-sub" id="cmp-detail-sentence">${detailSentence(c)}</p>
           <${MadeBy} kind="campaign" id=${c.id} />
           <p className="cm-detail-meta">
             <${Status} status=${c.status} />
@@ -907,7 +913,7 @@
       ${rows.length ? h`<div className="k-scroll-x"><table className="cm-table cm-table-stack">
         <thead><tr><th scope="col">Variant</th><th scope="col">Author</th><th scope="col" className="is-num">Sends</th>
           <th scope="col" className="is-num">Open</th><th scope="col" className="is-num">Click</th>
-          <th scope="col" className="is-num">${reward}</th><th scope="col" className="is-num">Chance best</th></tr></thead>
+          <th scope="col" className="is-num">${reward}</th><th scope="col" className="is-num" title="Probability this variant is truly the best one">Chance best</th></tr></thead>
         <tbody>${rows.map(function (r) {
           var aId = agentIdOf(r.author);
           var rate = r.reward === 'clicks' ? r.clickRate : r.convPerSend;
@@ -1009,8 +1015,10 @@
                 ariaLabel=${GOAL_LABEL[c.goal.type] + ' per day for ' + c.name} emptyText="Daily results appear after the first full day." />
             </div>` : null}
         <//>
-        <${Panel} id="cmp-variants" title="Variant leaderboard" sub="Variant Optimizer shifts traffic toward the leader within your guardrails.">
-          <${Leaderboard} campaign=${c} />
+        <${MC.ui.Details} id="cmp-variants-details" summary="Message variants: which version wins (a variant is one version of a message being tested)">
+          <${Panel} id="cmp-variants" title="Variant leaderboard" sub="Variant Optimizer shifts traffic toward the leader within your guardrails.">
+            <${Leaderboard} campaign=${c} />
+          <//>
         <//>
       </div>
       <aside className="cm-ov-side" aria-label="Agent activity on this campaign">
@@ -1030,7 +1038,9 @@
             </li>`;
           })}</ol>${applied.length > 3 ? h`<${Link} id="cmp-changes-toggle" onClick=${function () { setShowAll(!showAll); }}>${showAll ? 'Show fewer' : 'Show all ' + applied.length}<//>` : null}` : h`<p className="cm-muted cm-small">${c.status === 'draft' ? 'Agents never change drafts. They start once the campaign is live.' : 'No agent changes yet.'}</p>`}
         </section>
-        <${LiftCard} campaign=${c} />
+        <${MC.ui.Details} id="cmp-lift-details" summary="Lift: how much better than not messaging (compared with held-out customers)">
+          <${LiftCard} campaign=${c} />
+        <//>
       </aside>
     </div>`;
   }
@@ -2005,12 +2015,17 @@
     var live = rows.filter(function (r) { return r.status === 'live' && !isProg(r); }).length;
     var onAlways = rows.filter(function (r) { return r.status === 'live' && isProg(r); }).length;
     var next = rows.filter(function (r) { return r.status === 'scheduled'; }).sort(function (a, b) { return a.startTick - b.startTick; })[0];
-    var sub = plural(rows.length, 'campaign', 'campaigns') + MID + live + ' live' + (onAlways ? MID + onAlways + ' always-on' : '') + (next ? MID + next.name + ' starts ' + rel(next.startTick, tick) : '');
+    var running = rows.filter(function (r) { return r.status === 'live'; });
+    var best = running.filter(function (r) { return r.goal && r.goal.target > 0; }).sort(function (a, b) { return b.goal.value / b.goal.target - a.goal.value / a.goal.target; })[0];
+    var sub = !rows.length ? 'No campaigns yet. Plan one to get started.'
+      : (running.length ? plural(running.length, 'campaign', 'campaigns') + ' running' : 'Nothing is running right now')
+        + (best ? '; ' + best.name + ' is closest to its goal (' + goalText(best.goal) + ')' : '')
+        + (next ? (running.length ? '. ' : '; ') + next.name + ' starts ' + rel(next.startTick, tick) : '') + '.';
     var body = mode === 'list' ? h`<${ListMode} />` : mode === 'calendar' ? h`<${CalendarMode} />` : h`<${Board} />`;
     return h`<div className="cm-index">
       <header className="cm-head">
         <div className="cm-head-titles">
-          <h1 id="page-title" tabIndex="-1" className="cm-h1">Campaigns <span className="mc-art-tag">made and maintained by your agents</span></h1>
+          <h1 id="page-title" tabIndex="-1" className="cm-h1">Campaigns</h1>
           <p className="cm-sub">${sub}</p>
         </div>
         <${Btn} kind="primary" id="cmp-plan" icon="plus" onClick=${function () { setFocus({ mode: 'planner', id: null }); }}>Plan a campaign<//>
@@ -2038,7 +2053,7 @@
     var body;
     if (!ready) {
       body = h`<div className="cm-index"><header className="cm-head"><div className="cm-head-titles">
-        <h1 id="page-title" tabIndex="-1" className="cm-h1">Campaigns</h1><p className="cm-sub">Loading the Fernway sample campaigns${ELL}</p></div></header></div>`;
+        <h1 id="page-title" tabIndex="-1" className="cm-h1">Campaigns</h1><p className="cm-sub">Loading campaigns${ELL}</p></div></header></div>`;
     } else if (mode === 'detail' && focus.id) body = h`<${Detail} focus=${focus} backMode=${lastIndexMode} />`;
     else if (mode === 'planner') body = h`<${PlannerView} key=${'planner-' + (focus.id || 'new')} focus=${focus} />`;
     else {

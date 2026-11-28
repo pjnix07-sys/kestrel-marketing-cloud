@@ -231,3 +231,32 @@
 .v-analytics .an-h1 { font-size: clamp(30px, 3.6vw, 44px); line-height: 1.05; font-weight: 700; letter-spacing: -0.025em; }
 .v-analytics ..an-card { background: transparent; border: 0; border-top: 1px solid var(--line); border-radius: 0; box-shadow: none; padding-left: 0; padding-right: 0; }
 .v-analytics .k-btn-primary { background: var(--moss, #1F5C46); border-color: var(--moss, #1F5C46); color: #fff; }
+
+/* ===== Results page: answer, goals, advanced ===== */
+.v-analytics .an-answer { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 8px 32px; padding: 4px 0 8px; min-width: 0; }
+.v-analytics .an-answer-line { margin: 0; flex: 1 1 360px; font-family: var(--font-display); font-weight: 700; font-size: clamp(20px, 2.4vw, 28px); line-height: 1.2; letter-spacing: -0.015em; color: var(--ink); max-width: 36ch; }
+.v-analytics .an-answer-hero { margin: 0; display: flex; flex-direction: column; align-items: flex-start; min-width: 0; }
+.v-analytics .an-hero-num { font-family: var(--font-display); font-weight: 700; font-size: clamp(44px, 6vw, 64px); line-height: 1; letter-spacing: -0.03em; color: var(--ink); }
+.v-analytics .an-answer-cap { font-size: 13px; color: var(--ink-3); margin-top: 4px; }
+.v-analytics .an-goals { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 8px 32px; }
+.v-analytics .an-goal { display: flex; flex-direction: column; gap: 6px; padding: 12px 0; border-top: 1px solid var(--line); min-width: 0; }
+.v-analytics .an-goal-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px 12px; min-width: 0; }
+.v-analytics .an-goal-title { text-align: left; font-weight: 600; font-size: 15px; color: var(--ink); overflow-wrap: anywhere; }
+.v-analytics .an-goal-hero { margin: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; }
+.v-analytics .an-goal .an-hero-num { font-size: 32px; }
+.v-analytics .an-goal-of { font-size: 14px; color: var(--ink-2); }
+.v-analytics .an-goal-text { overflow-wrap: anywhere; }
+.v-analytics .an-read { color: var(--ink-2); }
+.v-analytics .an-read strong { font-size: 16px; }
+.v-analytics .an-filters .mc-details { flex: 1 1 100%; min-width: 0; }
+.v-analytics .an-advanced { margin-top: 8px; }
+.v-analytics .an-advanced > .mc-details-body { padding-top: 12px; }
+
+/* charts: marks respond to focus, recessive hover */
+.v-analytics .ch-mark:focus { outline: none; }
+.v-analytics .ch-mark:focus-visible rect:first-child { stroke: var(--focus); stroke-width: 2; }
+.v-analytics .ch-goal-compact .ch-body { min-height: 120px; }
+@media (max-width: 639px) {
+  .v-analytics .an-goals { grid-template-columns: minmax(0, 1fr); }
+  .v-analytics .an-answer-line { max-width: none; }
+}

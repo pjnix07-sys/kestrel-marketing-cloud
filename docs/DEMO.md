@@ -1,6 +1,6 @@
 # Demo: five minutes with the agents
 
-Live at https://pjnix07-sys.github.io/kestrel-marketing-cloud/, or run it locally (see the README). There is nothing to set up and no scripted playback: the page is live software on a sample world that keeps moving, one world hour every 1.2 seconds, so what you point at is what the agents are doing at that moment. Nothing here needs a key. The sample tenant is Fernway Outfitters, a fictional outdoor retailer.
+Live at https://pjnix07-sys.github.io/kestrel-marketing-cloud/, or run it locally (see the README). There is nothing to set up and no scripted playback: the page is live software on a sample workspace whose data is as of now and moves in real time; agents work on a goal as soon as its inputs are ready, so a new goal is planned and under way within seconds. Nothing here needs a key. The sample tenant is Fernway Outfitters, a fictional outdoor retailer.
 
 Before you start, open the page once and let it load (it builds 6,000 sample profiles and catches the world up to today). Use a wide window so the Lead column is open.
 
@@ -44,5 +44,5 @@ Back on the board: "While we talked, the world kept moving and the agents kept w
 ## If something goes wrong
 
 - A mission shows an ask you already answered elsewhere: open the Asks count in the top bar to see everything waiting.
-- The board feels quiet: the world ticks every 1.2 seconds, and a step takes one tick to start and one to finish, so work is visible but brief. Answer the ask or send a new goal to see more.
+- The board feels quiet: that is expected. Data moves in real time, and agent steps take about a second each, then wait for results. Answer a decision or set a new goal to see agents work.
 - Want to replay the guided first run: overflow menu, then "Take the tour".

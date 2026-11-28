@@ -5,7 +5,10 @@ Read docs/FORENSICS.md once: it explains why the first build missed and the rule
 ## Product thesis (check every change against it)
 Agentic first, traditional marketing cloud last. You hand a team of agents an outcome; you see them plan it, do it,
 hand work to each other and ask you only for real decisions; campaigns, audiences and copy are things they make.
-Binding specs: docs/AGENTIC.md (product and mission model), docs/DESIGN-DIRECTION.md (visual language).
+It is a product you use, not a simulated organisation you watch: real-time data, plain product voice, "Goals" not
+missions, beginner-simple by default with depth one click away (docs/PRODUCT.md, Nov 28 direction).
+Binding specs: docs/PRODUCT.md (product framing, rail nav, detail levels, dataviz), docs/AGENTIC.md (mission model),
+docs/DESIGN-DIRECTION.md (visual language). Charts follow the dataviz skill (validated palette, mark specs, hover, table view).
 
 ## Rules
 1. Thesis first: restate the change's effect on the thesis in one sentence before building; challenge inherited plans.
@@ -18,7 +21,9 @@ Binding specs: docs/AGENTIC.md (product and mission model), docs/DESIGN-DIRECTIO
 8. Incumbent marketing clouds are a capability checklist, never the navigation or primary surface.
 9. Live software, not theatre: no play/pause/replay, playheads, countdowns or delays added to be watched.
 10. Still banned visually: glassmorphism/backdrop-filter, curved left-edge stripes, decorative gradients, sparkle/AI
-    icons, emoji, KPI-tile walls, sidebar-of-objects navigation.
+    icons, emoji, KPI-tile walls. Navigation is the minimal icon rail (names on hover/focus; bottom bar on phones), per
+    the user's Nov 28 direction; no labelled sidebar of objects, no top bar.
+11. Dead simple first: one plain sentence and one primary action per page; advanced material in MC.ui.Details.
 
 ## Engineering
 Static, no build: classic-script IIFEs on window.MC, React 18 + htm from vendor/, asset URLs carry ?v=MC.BUILD (bump

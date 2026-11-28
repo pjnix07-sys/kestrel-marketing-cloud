@@ -418,6 +418,8 @@ async function missionCopy() {
   const MC = await boot(), K = MC.content; let w = MC.store.getState();
   const r = MC.missions.createSync('Win back 400 lapsed hikers before Dec 15 without discounting more than 15%');
   w = adv(MC, 50);
+  for (let k = 0; k < 40 && MC.missions.hasWork(MC.store.getState()); k++) MC.engine.pulse();
+  w = MC.store.getState();
   const m = MC.missions.get(w, r.id), c = w.campaigns.byId[m.data.campaignId], cd = m.data.content;
   check('mission copy step assembles messages', !!cd && cd.messages.length >= 1 && cd.messages.every(id => K.message(w, id)), JSON.stringify(cd));
   check('the hand-off reads "N messages · M channels"', /^\d+ messages? · \d+ channels?$/.test(cd.summary) && cd.summary.indexOf(cd.messages.length + (cd.messages.length === 1 ? ' message' : ' messages')) === 0 && cd.channels.length === c.channels.length && m.log.some(b => b.kind === 'did' && b.text.indexOf(cd.summary) >= 0), cd.summary);

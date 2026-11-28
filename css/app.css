@@ -47,8 +47,9 @@ svg g[tabindex]:focus-visible > :first-child { stroke: var(--focus); stroke-widt
 .app-boot-title { margin: 0 0 4px; font-family: var(--font-display); font-size: var(--text-xl); font-weight: 700; color: var(--ink); }
 .app-boot-body { margin: 0; }
 
-/* =========================== shell: top bar only =========================== */
-.app-shell { display: flex; flex-direction: column; min-height: 100vh; min-height: 100dvh; }
+/* =========================== shell: side rail + page (docs/PRODUCT.md §2) =========================== */
+.app-shell { display: flex; flex-direction: column; min-height: 100vh; min-height: 100dvh; padding-left: var(--rail-w); }
+.app-shell.is-compact { padding-left: 0; padding-bottom: calc(var(--bbar-h) + env(safe-area-inset-bottom, 0px)); }
 .app-main {
   flex: 1 0 auto; width: 100%; max-width: var(--app-max); min-width: 0; margin: 0 auto;
   padding: var(--space-4) var(--app-gutter) var(--space-7);
@@ -664,3 +665,79 @@ svg g[tabindex]:focus-visible > :first-child { stroke: var(--focus); stroke-widt
 .mc-details-sum::before { content: ''; width: 6px; height: 6px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: rotate(-45deg); transition: transform 120ms ease; }
 .mc-details[open] > .mc-details-sum::before { transform: rotate(45deg); }
 .mc-details-body { padding-top: var(--space-2); }
+
+
+/* =========================== side rail =========================== */
+:root { --rail-w: 64px; --bbar-h: 60px; }
+.rail {
+  position: fixed; left: 0; top: 0; bottom: 0; z-index: 30; width: var(--rail-w);
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+  padding: 12px 0; background: var(--panel); border-right: 1px solid var(--line);
+}
+.rail-group { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.rail-foot { margin-top: auto; }
+.rail-mark { position: relative; display: grid; place-items: center; width: 44px; height: 44px; color: var(--ink); margin-bottom: 4px; border-radius: var(--radius-md); }
+.rail-mark .app-mark-node { fill: var(--signal); }
+.rail-item {
+  position: relative; display: grid; place-items: center; width: 44px; height: 44px; padding: 0;
+  border: 0; border-radius: var(--radius-md); background: transparent; color: var(--ink-3); cursor: pointer; text-decoration: none;
+}
+.rail-item:hover { background: var(--surface-2); color: var(--ink); }
+.rail-item.is-on { background: var(--ink); color: var(--paper); }
+.rail-new { color: var(--ink); border: 1.5px solid var(--ink); margin-bottom: 8px; }
+.rail-new:hover { background: var(--ink); color: var(--paper); }
+.rail-item:focus-visible, .rail-mark:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.rail-badge {
+  position: absolute; top: 3px; right: 2px; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px;
+  background: var(--signal); color: var(--on-signal); font-size: 11px; font-weight: 700; line-height: 18px; text-align: center;
+}
+.rail-dot { position: absolute; top: 9px; right: 9px; width: 8px; height: 8px; border-radius: 50%; border: 1.5px solid var(--panel); }
+.rail-dot.is-on { background: var(--good); }
+.rail-dot.is-wait { background: var(--warn); }
+.rail-pop { display: contents; }
+/* Name on hover and keyboard focus: short delay on first hover, none while moving along the rail. */
+.rail-tip {
+  position: absolute; left: calc(100% + 10px); top: 50%; transform: translateY(-50%); z-index: 40;
+  padding: 5px 9px; border-radius: var(--radius-sm, 6px); background: var(--ink); color: var(--paper);
+  font-size: 13px; font-weight: 600; white-space: nowrap; pointer-events: none;
+  opacity: 0; visibility: hidden; transition: opacity 80ms ease 300ms, visibility 0s linear 380ms;
+}
+.rail:hover .rail-tip { transition-delay: 0s; }
+.rail-item:hover .rail-tip, .rail-mark:hover .rail-tip,
+.rail-item:focus-visible .rail-tip, .rail-mark:focus-visible .rail-tip { opacity: 1; visibility: visible; transition: opacity 80ms ease 300ms, visibility 0s linear 300ms; }
+.rail:hover .rail-item:hover .rail-tip { transition-delay: 120ms; }
+.rail-item[aria-expanded="true"] .rail-tip { display: none; }
+
+/* =========================== bottom bar (phones) =========================== */
+.bbar {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 30; height: calc(var(--bbar-h) + env(safe-area-inset-bottom, 0px));
+  padding-bottom: env(safe-area-inset-bottom, 0px); display: grid; grid-template-columns: repeat(5, 1fr);
+  background: var(--panel); border-top: 1px solid var(--line);
+}
+.bbar-item {
+  position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+  border: 0; background: transparent; color: var(--ink-3); font: inherit; font-size: 11px; font-weight: 600; text-decoration: none; cursor: pointer;
+}
+.bbar-item.is-on { color: var(--ink); }
+.bbar-item.is-on::after { content: ''; position: absolute; top: 0; left: 30%; right: 30%; height: 2px; background: var(--ink); }
+.bbar-item .rail-badge { top: 4px; right: calc(50% - 22px); }
+.bbar-item:focus-visible { outline: 2px solid var(--focus); outline-offset: -4px; }
+
+/* =========================== page header + settings =========================== */
+.app-page { display: flex; flex-direction: column; gap: var(--space-4); }
+.app-page-head { display: flex; flex-direction: column; gap: 6px; }
+.app-page-title { margin: 0; font-family: var(--font-display); font-size: var(--text-3xl); line-height: var(--lh-tight); letter-spacing: var(--track-display); font-weight: var(--weight-display); color: var(--ink); }
+.app-page-title:focus { outline: none; }
+.app-page-lede { margin: 0; font-size: var(--text-lg); color: var(--ink-2); max-width: 70ch; }
+.app-approvals-page { max-width: 820px; }
+.app-settings, .app-help { padding: var(--space-3); display: flex; flex-direction: column; gap: var(--space-3); }
+.app-settings .app-menu-heading, .app-help .app-menu-heading { margin: 0; font-size: var(--text-lg); font-weight: 700; color: var(--ink); }
+.app-menu-row--stack { flex-direction: column; align-items: flex-start; gap: 6px; }
+.app-menu-note { font-size: 12px; color: var(--ink-3); margin: 0; }
+.app-keys { margin: 0; display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
+.app-keys div { display: flex; justify-content: space-between; gap: 12px; }
+.app-keys dt { color: var(--ink-2); } .app-keys dd { margin: 0; color: var(--ink-3); }
+.app-tenant-name { font-weight: 600; color: var(--ink); } .app-tenant-note { color: var(--ink-3); font-size: 12px; }
+
+/* Page headings take focus after navigation as a reading position, not a control: no ring (beats per-view rules). */
+h1#page-title:focus, h1#page-title:focus-visible { outline: none; }

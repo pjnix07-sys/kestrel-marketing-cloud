@@ -248,13 +248,17 @@
         if (o.direction === 'atMost') band = forecast <= target * 0.9 ? 'ahead' : (forecast <= target ? 'on' : 'behind');
         else band = pace >= 1.05 ? 'ahead' : (pace >= 0.95 ? 'on' : 'behind');
       }
+      // Past the deadline the forecast is the result: say met or missed, not a pace.
+      var ended = pr && pr.daysLeft === 0 && isNum(o.by) && MC.time && MC.time.dayOf && MC.time.dayOf(t) > o.by;
+      if (ended) { forecast = value; lo = value; hi = value; band = (o.direction === 'atMost' ? value <= target : value >= target) ? 'met' : 'missed'; }
       value = r1(o.metric, value); forecast = r1(o.metric, forecast); lo = r1(o.metric, lo); hi = r1(o.metric, hi);
       var fm = function (x) { return o.metric === 'revenue' ? MC.fmt.money(x, { compact: true }) : MC.fmt.num(Math.round(x)); };
       var byTxt = MC.time && MC.time.dayLabel && isNum(o.by) ? MC.time.dayLabel(o.by) : '';
-      var text = (band === 'early' || !(forecast > 0)) ? '' :
+      var text = (band === 'met' || band === 'missed') ? ('Ended' + (byTxt ? ' ' + byTxt : '') + ': ' + fm(value) + ' of ' + fm(target) + (band === 'met' ? ', goal met.' : ', ' + fm(Math.abs(target - value)) + (o.direction === 'atMost' ? ' over the limit.' : ' short.')))
+        : (band === 'early' || !(forecast > 0)) ? '' :
         ({ ahead: 'Ahead of pace: heading for ', on: 'On pace for ', behind: 'Behind pace: heading for ' }[band] || 'Heading for ') +
         fm(forecast) + ' of ' + fm(target) + ' (' + fm(lo) + ' to ' + fm(hi) + ')' + (byTxt ? ' by ' + byTxt : '') + '.';
-      var verdict = { early: 'too early', on: 'on pace', behind: 'behind', ahead: 'ahead' }[band] || 'too early';
+      var verdict = { early: 'too early', on: 'on pace', behind: 'behind', ahead: 'ahead', met: 'met', missed: 'missed' }[band] || 'too early';
       return {
         id: id, metric: o.metric, direction: o.direction || 'atLeast', value: value, target: target, by: o.by, forecast: { value: forecast, lo: lo, hi: hi }, lo: lo, hi: hi, band: band,
         pct: target > 0 ? value / target : 0, forecastPct: target > 0 ? forecast / target : 0, verdict: verdict, text: text,

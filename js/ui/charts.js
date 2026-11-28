@@ -313,9 +313,9 @@
   }
   function TipRow(p) {
     return html`<div style=${{ display: 'flex', alignItems: 'center', gap: 6 }}>
-      ${p.color ? html`<span aria-hidden="true" style=${{ width: 8, height: 8, borderRadius: 2, background: p.color, display: 'inline-block' }}></span>` : null}
+      ${p.color ? html`<span aria-hidden="true" style=${{ width: 12, height: 2, borderRadius: 1, background: p.color, display: 'inline-block', flex: 'none' }}></span>` : null}
       <span style=${{ color: 'var(--ink-2)' }}>${p.label}</span>
-      <span style=${{ marginLeft: 'auto', paddingLeft: 12, fontWeight: 600 }}>${p.value}</span>
+      <span style=${{ marginLeft: 'auto', paddingLeft: 12, fontWeight: 600, color: 'var(--ink)' }}>${p.value}</span>
     </div>`;
   }
   function svgPoint(evt, svgEl, W) {
@@ -324,6 +324,16 @@
     if (!rect.width) return null;
     var k = W / rect.width;
     return { x: (evt.clientX - rect.left) * k, y: (evt.clientY - rect.top) * k, k: k };
+  }
+
+  /* Keyboard + pointer reach for one mark: focus shows the same tooltip as hover. */
+  function markProps(id, setter, label, onPick) {
+    return {
+      tabIndex: 0, role: 'img', 'aria-label': label,
+      onPointerEnter: function () { setter(id); }, onPointerLeave: function () { setter(null); },
+      onFocus: function () { setter(id); }, onBlur: function () { setter(null); },
+      onKeyDown: function (e) { if (typeof onPick === 'function' && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); onPick(); } else if (e.key === 'Escape') setter(null); }
+    };
   }
 
   /* ================= Sparkline ================= */
@@ -536,6 +546,7 @@
           return html`<g key=${'s-' + (s.id || si)}>
             <path d=${linePath(pts)} fill="none" strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" strokeDasharray=${s.dashed ? '5 4' : null} style=${{ stroke: col }} />
             ${li >= 0 && !s.dashed ? html`<circle cx=${pts[li][0]} cy=${pts[li][1]} r="4" strokeWidth="2" style=${{ fill: col, stroke: 'var(--surface)' }} />` : null}
+            ${li >= 0 && !s.dashed && series.length <= 3 && pts[li][0] - x0 > 60 ? html`<text x=${pts[li][0]} y=${Math.max(y0 + 8, pts[li][1] - 10)} textAnchor="end" style=${{ fill: 'var(--ink)', fontSize: 11, fontWeight: 600 }}>${yf(s.points.filter(function (q) { return q && fin(q.x); })[li].y)}</text>` : null}
           </g>`;
         })}
         ${markers.filter(function (m) { return m.kind === 'anomaly'; }).map(function (m) {
@@ -691,7 +702,7 @@
           if (isH) { hover = d; tipX = Math.max(xe, zx); tipY = y; }
           var ci = d.ci && fin(d.ci[0]) && fin(d.ci[1]) ? [sx(d.ci[0]), sx(d.ci[1])] : null;
           var lx = v >= 0 ? Math.max(xe, ci ? ci[1] : xe) + 6 : zx + 6;
-          return html`<g key=${'b-' + d.key} onPointerEnter=${function () { setHk(d.key); }} onPointerLeave=${function () { setHk(null); }}
+          return html`<g key=${'b-' + d.key} className="ch-mark" ...${markProps(d.key, setHk, (d.label || d.key) + ': ' + f(d.value), function () { click(d); })}
               onClick=${function () { click(d); }} style=${{ cursor: p.onSelect ? 'pointer' : 'default' }}>
             <rect x="0" y=${y} width=${W} height=${rowH} style=${{ fill: isH ? 'var(--surface-2)' : 'transparent' }} />
             <text x=${labW - 8} y=${y + rowH / 2} textAnchor="end" dominantBaseline="central" style=${{ fill: 'var(--ink-2)', fontSize: 12, fontWeight: d.key === p.highlightKey ? 600 : 400 }}>${truncate(d.label || d.key, Math.floor((labW - 10) / 7))}</text>
@@ -727,7 +738,7 @@
         var cx = mlv + slot * i + slot / 2, v = fin(d.value) ? d.value : 0, ye = sy(v), isH = hk === d.key;
         if (isH) { hover = d; tipX = cx; tipY = Math.min(ye, zy) - 8; }
         var ci = d.ci && fin(d.ci[0]) && fin(d.ci[1]) ? [sy(d.ci[0]), sy(d.ci[1])] : null;
-        return html`<g key=${'b-' + d.key} onPointerEnter=${function () { setHk(d.key); }} onPointerLeave=${function () { setHk(null); }}
+        return html`<g key=${'b-' + d.key} className="ch-mark" ...${markProps(d.key, setHk, (d.label || d.key) + ': ' + f(d.value), function () { click(d); })}
             onClick=${function () { click(d); }} style=${{ cursor: p.onSelect ? 'pointer' : 'default' }}>
           <rect x=${cx - slot / 2} y=${mtv} width=${slot} height=${Hv - mtv - mbv} style=${{ fill: isH ? 'var(--surface-2)' : 'transparent' }} />
           <path d=${barPathV(zy, ye, cx - bw / 2, bw, 4)} style=${{ fill: colorOf(d, i), opacity: op(d) }} />
@@ -759,7 +770,7 @@
         ${d.ci && fin(d.ci[0]) ? html`<${TipRow} label="95% interval" value=${f(d.ci[0]) + DASH + f(d.ci[1])} />` : null}
       <//>`;
     }
-    return html`<${ChartFrame} className=${'ch-bar ch-bar-' + orient} ariaLabel=${aria} table=${p.noTable ? null : table} render=${render} />`;
+    return html`<${ChartFrame} className=${'ch-bar ch-bar-' + orient} ariaLabel=${aria} legend=${p.legend} table=${p.noTable ? null : table} render=${render} />`;
   }
 
   /* ================= StackedBar (horizontal, 2px surface gaps) ================= */
@@ -806,7 +817,7 @@
           var id = r.key + '|' + k.key, ki = keys.indexOf(k);
           if (hv === id) { hover = { r: r, k: k, v: v, t: totals[ri] }; tipX = (xa + xb) / 2; tipY = y; }
           segs.push(html`<path key=${'s-' + k.key} d=${last ? barPathH(xa, x1, by, bh, 4) : 'M' + r2(xa) + ' ' + r2(by) + 'H' + r2(x1) + 'V' + r2(by + bh) + 'H' + r2(xa) + 'Z'}
-            onPointerEnter=${function () { setHv(id); }} onPointerLeave=${function () { setHv(null); }}
+            ...${markProps(id, setHv, (r.label || r.key) + ', ' + (k.label || k.key) + ': ' + f(v))}
             style=${{ fill: tokenColor(k.color, ki), opacity: hv && hv !== id && hv.indexOf(r.key + '|') === 0 ? 0.6 : 1 }} />`);
         });
         return html`<g key=${'r-' + r.key}>
@@ -901,7 +912,7 @@
           <title>${aria}</title>
           ${bins.map(function (b, i) {
             var c = fin(b.count) ? b.count : 0, h = ph * c / maxC, x = i * slot;
-            return html`<g key=${'h' + i} onPointerEnter=${function () { setHi(i); }}>
+            return html`<g key=${'h' + i} className="ch-mark" ...${markProps(i, setHi, f(b.x0) + DASH + f(b.x1) + ': ' + FORMATS.int(c))}>
               <rect x=${x} y="0" width=${slot} height=${ph} style=${{ fill: 'transparent' }} />
               ${h > 0 ? html`<path d=${barPathV(ph, ph - Math.max(1, h), x + gap / 2, bw, Math.min(3, bw / 2))} style=${{ fill: col, opacity: hi == null || hi === i ? 1 : 0.55 }} />` : null}
             </g>`;
@@ -946,7 +957,7 @@
           ${vals.map(function (v, h) {
             var x = h * slot, q = inQuiet(h, p.quiet), isHl = hl.indexOf(h) >= 0;
             var bh = maxV > 0 ? Math.max(v > 0 ? 2 : 0, ph * v / maxV) : 0;
-            return html`<g key=${'hr' + h} onPointerEnter=${function () { setHh(h); }}>
+            return html`<g key=${'hr' + h} className="ch-mark" ...${markProps(h, setHh, hourLabel(h) + ': ' + vf(v))}>
               <rect x=${x} y="0" width=${slot} height=${ph} style=${{ fill: q ? 'var(--surface-2)' : 'transparent' }} />
               ${bh > 0 ? html`<path d=${barPathV(ph, ph - bh, x + 1, bw, Math.min(3, bw / 2))}
                   style=${{ fill: isHl ? 'var(--accent)' : 'var(--chart-1)', opacity: isHl || !hl.length ? (q ? 0.5 : 1) : (q ? 0.3 : 0.55) }} />` : null}
@@ -971,6 +982,7 @@
   function lab(x) { return x && typeof x === 'object' ? (x.label != null ? x.label : x.key) : String(x); }
   function keyOf(x, i) { return x && typeof x === 'object' ? (x.key != null ? x.key : i) : (x != null ? x : i); }
   function Heatmap(p) {
+    var hcs = R().useState(null), hc = hcs[0], setHc = hcs[1];
     var rows = p.rows || [], cols = p.cols || [], values = p.values || [];
     var f = resolveFmt(p.format, FORMATS.num);
     function val(r, c) { var row = values[r]; var v = row ? row[c] : null; return fin(v) ? v : null; }
@@ -996,7 +1008,8 @@
       var cell = Math.max(40, Math.min(72, (W - labW) / cols.length));
       var colLabH = Math.min(110, Math.max.apply(null, cols.map(function (c) { return textW(truncate(lab(c), 18), 11); })) * 0.72 + 14);
       var Wt = labW + cell * cols.length + Math.max(4, Math.round(colLabH * 0.95) - cell / 2), Ht = colLabH + cell * rows.length;
-      return html`<div className="k-scroll-x" style=${{ overflowX: 'auto', maxWidth: '100%' }}>
+      var hp = hc ? hc.split('|') : null, hri = hp ? Number(hp[0]) : -1, hci = hp ? Number(hp[1]) : -1;
+      return html`<div style=${{ position: 'relative' }}><div className="k-scroll-x" style=${{ overflowX: 'auto', maxWidth: '100%' }}>
         <svg role=${typeof p.onCell === 'function' ? 'group' : 'img'} aria-label=${aria} viewBox=${'0 0 ' + Wt + ' ' + Ht} width=${Wt} height=${Ht} style=${{ display: 'block', minWidth: Wt }}>
           <title>${aria}</title>
           ${cols.map(function (c, ci) {
@@ -1009,21 +1022,27 @@
               <text x=${labW - 8} y=${y + cell / 2} textAnchor="end" dominantBaseline="central" style=${{ fill: 'var(--ink-2)', fontSize: 12 }}>${truncate(lab(r), Math.floor((labW - 10) / 7))}</text>
               ${cols.map(function (c, ci) {
                 var v = val(ri, ci), t = v == null ? 0 : clamp((v - lo) / ((hiV - lo) || 1), 0, 1);
+                var step = Math.min(5, Math.floor(t * 5) + 1);
                 var x = labW + ci * cell, label = lab(r) + ' and ' + lab(c) + ': ' + f(v);
                 function fire() { if (act) p.onCell(ri, ci, { row: r, col: c, value: v }); }
-                return html`<g key=${'c' + ci} role=${act ? 'button' : null} tabIndex=${act ? 0 : null} aria-label=${label}
+                return html`<g key=${'c' + ci} className="ch-mark" role=${act ? 'button' : 'img'} tabIndex=${0} aria-label=${label}
+                    onPointerEnter=${function () { setHc(ri + '|' + ci); }} onPointerLeave=${function () { setHc(null); }} onFocus=${function () { setHc(ri + '|' + ci); }} onBlur=${function () { setHc(null); }}
                     onClick=${fire} onKeyDown=${function (e) { if (act && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); fire(); } }}
                     style=${{ cursor: act ? 'pointer' : 'default' }}>
-                  <rect x=${x + 1} y=${y + 1} width=${cell - 2} height=${cell - 2} rx="3"
-                    style=${v == null ? { fill: 'var(--surface-2)' } : { fill: 'var(--chart-1)', fillOpacity: 0.08 + 0.92 * t }} />
+                  <rect x=${x + 1} y=${y + 1} width=${cell - 2} height=${cell - 2} rx="4" strokeWidth=${hri === ri && hci === ci ? 2 : 0}
+                    style=${Object.assign(v == null ? { fill: 'var(--surface-2)' } : { fill: 'var(--seq-' + step + ')' }, { stroke: 'var(--ink)' })} />
                   <text x=${x + cell / 2} y=${y + cell / 2} textAnchor="middle" dominantBaseline="central"
-                    style=${{ fill: t > 0.55 ? 'var(--on-accent)' : 'var(--ink)', fontSize: 11 }}>${v == null ? DASH : f(v)}</text>
+                    style=${{ fill: v == null ? 'var(--ink-3)' : 'var(--seq-on-' + step + ')', fontSize: 11 }}>${v == null ? DASH : f(v)}</text>
                   <title>${label}</title>
                 </g>`;
               })}
             </g>`;
           })}
         </svg>
+      </div>
+      <${Tip} show=${hri >= 0 && !!rows[hri] && !!cols[hci]} x=${labW + hci * cell + cell / 2} y=${colLabH + hri * cell} width=${Wt}>
+        ${hri >= 0 && rows[hri] && cols[hci] ? html`<div><div style=${{ fontWeight: 600 }}>${lab(rows[hri])}</div><${TipRow} label=${lab(cols[hci])} value=${f(val(hri, hci))} /></div>` : null}
+      <//>
       </div>`;
     }
     return html`<${ChartFrame} className="ch-heat" ariaLabel=${aria} table=${p.noTable ? null : table} render=${render} />`;
@@ -1103,6 +1122,170 @@
     return html`<${ChartFrame} className="ch-resp" ariaLabel=${aria} legend=${legend} table=${p.noTable ? null : table} render=${render} />`;
   }
 
+  /* ================= GoalProgress (cumulative actual vs straight pace, forecast band, target rule) =================
+     props: points [{x:day,y:cumulative}], target, startDay, byDay, forecast {y,lo,hi} (value expected at byDay),
+     format, label, compact (height 120, no table) or height. */
+  function GoalProgress(p) {
+    var React = R();
+    var hs = React.useState(null), hx = hs[0], setHx = hs[1];
+    var svgRef = React.useRef(null);
+    var f = resolveFmt(p.format, FORMATS.moneyCompact);
+    var pts = (p.points || []).filter(function (q) { return q && fin(q.x) && fin(q.y); }).sort(function (a, b) { return a.x - b.x; });
+    var target = fin(p.target) && p.target > 0 ? p.target : null;
+    var d0 = fin(p.startDay) ? p.startDay : (pts.length ? pts[0].x : 0);
+    var d1 = fin(p.byDay) && p.byDay > d0 ? p.byDay : (pts.length ? Math.max(pts[pts.length - 1].x, d0) + 7 : d0 + 7);
+    var fc = p.forecast && fin(p.forecast.y) ? p.forecast : null;
+    var last = pts.length ? pts[pts.length - 1] : null;
+    var compactMode = !!p.compact;
+    var H = fin(p.height) ? p.height : (compactMode ? 120 : 240);
+    var name = p.label || 'Progress';
+    function paceAt(x) { return target ? clamp((x - d0) / (d1 - d0), 0, 1) * target : null; }
+    var aria = p.ariaLabel || (last && target ? name + ': ' + f(last.y) + ' of ' + f(target) + ' by ' + shortDay(d1) + (fc ? ', forecast ' + f(fc.y) : '') : name + ': no results yet');
+    var table = {
+      columns: [{ key: 'x', label: 'Day', align: 'left' }, { key: 'y', label: name + ' so far' }, { key: 'pace', label: 'Straight-line pace' }],
+      rows: pts.map(function (q) { return { _key: String(q.x), x: shortDay(q.x), y: f(q.y), pace: target ? f(paceAt(q.x)) : DASH }; })
+        .concat(fc && last ? [{ _key: 'fc', x: shortDay(d1) + ' (forecast)', y: f(fc.y) + (fin(fc.lo) && fin(fc.hi) ? ' (' + f(fc.lo) + DASH + f(fc.hi) + ')' : ''), pace: target ? f(target) : DASH }] : [])
+    };
+    if (!target || !pts.length) {
+      return html`<${ChartFrame} className="ch-goal" ariaLabel=${aria} render=${function () { return html`<${EmptyChart} height=${H} text=${p.emptyText || 'Results appear here as the first campaigns send.'} />`; }} />`;
+    }
+    var legend = compactMode ? null : [
+      { key: 'a', label: name + ' so far', kind: 'line', color: p.color || 'chart-1' },
+      { key: 'p', label: 'Straight-line pace to goal', kind: 'line', color: 'ink-3' }
+    ].concat(fc ? [{ key: 'f', label: 'Forecast range', kind: 'band' }] : []);
+    function render(W) {
+      var yMax = Math.max(target, fc && fin(fc.hi) ? fc.hi : (fc ? fc.y : 0), last.y) * 1.06;
+      var yt = niceTicks(0, yMax, compactMode ? 2 : 4), yl = yt.ticks.map(f);
+      var ml = compactMode ? 4 : clamp(Math.max.apply(null, yl.map(function (s) { return textW(s, 11); })) + 10, 30, W * 0.28);
+      var mt = compactMode ? 16 : 18, mr = compactMode ? 8 : 14, mb = compactMode ? 18 : 24;
+      var x0 = ml, x1 = Math.max(ml + 20, W - mr), y0 = mt, y1 = H - mb;
+      var sx = linScale(d0, d1, x0, x1), sy = linScale(yt.lo, Math.max(yt.hi, yMax), y1, y0);
+      var xs = pts.map(function (q) { return q.x; });
+      var actualPts = pts.map(function (q) { return [sx(q.x), sy(q.y)]; });
+      var lx = sx(last.x), ly = sy(last.y);
+      function onMove(e) {
+        var pt = svgPoint(e, svgRef.current, W);
+        if (!pt || pt.x < x0 - 12 || pt.x > x1 + 12) return;
+        var nx = nearest(xs, d0 + (pt.x - x0) / (x1 - x0) * (d1 - d0));
+        if (nx !== hx) setHx(nx);
+      }
+      function onKey(e) {
+        var idx = hx == null ? xs.length - 1 : xs.indexOf(hx);
+        if (e.key === 'ArrowLeft') idx = Math.max(0, idx - 1);
+        else if (e.key === 'ArrowRight') idx = Math.min(xs.length - 1, idx + 1);
+        else if (e.key === 'Home') idx = 0; else if (e.key === 'End') idx = xs.length - 1;
+        else if (e.key === 'Escape') { setHx(null); return; } else return;
+        e.preventDefault(); setHx(xs[idx]);
+      }
+      var hq = hx != null ? pts[xs.indexOf(hx)] : null, hpx = hq ? sx(hq.x) : 0;
+      var fcLo = fc && fin(fc.lo) ? fc.lo : null, fcHi = fc && fin(fc.hi) ? fc.hi : null;
+      var band = fc && fcLo != null && fcHi != null ? bandPath([[lx, ly], [x1, sy(fcHi)]], [[lx, ly], [x1, sy(fcLo)]]) : '';
+      var xt = compactMode ? [d0, d1] : xTicksFor(d0, d1, x1 - x0);
+      var svg = html`<svg ref=${svgRef} role="group" aria-label=${aria} viewBox=${'0 0 ' + W + ' ' + H} width=${W} height=${H} style=${S.svg}
+          onPointerMove=${onMove} onPointerLeave=${function () { setHx(null); }}>
+        <title>${aria}</title>
+        ${compactMode ? null : yt.ticks.map(function (t, k) {
+          return html`<g key=${'y' + k}><line x1=${x0} x2=${x1} y1=${sy(t)} y2=${sy(t)} strokeWidth="1" style=${k === 0 ? S.base : S.grid} />
+            <text x=${x0 - 6} y=${sy(t)} textAnchor="end" dominantBaseline="central" style=${S.axis}>${yl[k]}</text></g>`;
+        })}
+        ${compactMode ? html`<line x1=${x0} x2=${x1} y1=${y1} y2=${y1} strokeWidth="1" style=${S.base} />` : null}
+        ${xt.map(function (t, k) {
+          return html`<text key=${'x' + k} x=${sx(t)} y=${y1 + 15} textAnchor=${k === 0 ? 'start' : (k === xt.length - 1 && compactMode ? 'end' : 'middle')} style=${S.axis}>${shortDay(t)}</text>`;
+        })}
+        ${band ? html`<path d=${band} style=${{ fill: 'var(--chart-band)', stroke: 'none' }} />` : null}
+        <line x1=${x0} x2=${x1} y1=${sy(target)} y2=${sy(target)} strokeWidth="1" style=${{ stroke: 'var(--ink-2)' }} />
+        <text x=${x0 + 4} y=${sy(target) - 5} style=${S.axisStrong}>${'Goal ' + f(target)}</text>
+        <line x1=${sx(d0)} y1=${sy(0)} x2=${sx(d1)} y2=${sy(target)} strokeWidth="1.5" strokeLinecap="round" style=${{ stroke: 'var(--ink-3)' }} />
+        ${fc ? html`<line x1=${lx} y1=${ly} x2=${x1} y2=${sy(fc.y)} strokeWidth="2" strokeLinecap="round" strokeDasharray="5 4" style=${{ stroke: tokenColor(p.color || 'chart-1', 0) }} />` : null}
+        <path d=${linePath(actualPts)} fill="none" strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" style=${{ stroke: tokenColor(p.color || 'chart-1', 0) }} />
+        <circle cx=${lx} cy=${ly} r="4" strokeWidth="2" style=${{ fill: tokenColor(p.color || 'chart-1', 0), stroke: 'var(--surface)' }} />
+        ${compactMode ? null : html`<text x=${lx} y=${Math.max(y0 + 8, ly - 10)} textAnchor=${lx > x1 - 50 ? 'end' : 'middle'} style=${{ fill: 'var(--ink)', fontSize: 11, fontWeight: 600 }}>${f(last.y)}</text>`}
+        ${fc && !compactMode ? html`<text x=${x1} y=${sy(fc.y) + (fc.y >= target ? -8 : 16)} textAnchor="end" style=${{ fill: 'var(--ink-2)', fontSize: 11 }}>${'Forecast ' + f(fc.y)}</text>` : null}
+        ${hq ? html`<g pointerEvents="none"><line x1=${hpx} x2=${hpx} y1=${y0} y2=${y1} strokeWidth="1" style=${{ stroke: 'var(--ink-3)' }} />
+          <circle cx=${hpx} cy=${sy(hq.y)} r="4" strokeWidth="2" style=${{ fill: tokenColor(p.color || 'chart-1', 0), stroke: 'var(--surface)' }} /></g>` : null}
+      </svg>`;
+      return html`<div className="ch-plot" tabIndex="0" onKeyDown=${onKey} onBlur=${function () { setHx(null); }} aria-label=${aria + ' Use left and right arrow keys to read values.'} style=${{ position: 'relative', outlineOffset: 2 }}>
+        ${svg}
+        <${Tip} show=${!!hq} x=${hpx} y=${y0} width=${W}>
+          ${hq ? html`<div><div style=${{ fontWeight: 600, marginBottom: 2 }}>${shortDay(hq.x)}</div>
+            <${TipRow} color=${tokenColor(p.color || 'chart-1', 0)} label=${name} value=${f(hq.y)} />
+            <${TipRow} color="var(--ink-3)" label="Straight-line pace" value=${f(paceAt(hq.x))} />
+            <${TipRow} label="Share of goal" value=${FORMATS.pct(hq.y / target)} /></div>` : null}
+        <//>
+      </div>`;
+    }
+    return html`<${ChartFrame} className=${'ch-goal' + (compactMode ? ' ch-goal-compact' : '')} ariaLabel=${aria} legend=${legend} table=${compactMode || p.noTable ? null : table} render=${render} />`;
+  }
+
+  /* ================= DotInterval (value dot with a range, around a neutral line; diverging colour) =================
+     props: rows [{key,label,value,lo,hi,n?}], zero (neutral line, default 0), format, valueLabel, onSelect(key,row) */
+  function DotInterval(p) {
+    var React = R();
+    var hs = React.useState(null), hk = hs[0], setHk = hs[1];
+    var rows = (p.rows || []).filter(function (r) { return r && r.key != null && fin(r.value); });
+    var zero = fin(p.zero) ? p.zero : 0;
+    var f = resolveFmt(p.format, FORMATS.pct);
+    function tone(r) {
+      var lo = fin(r.lo) ? r.lo : r.value, hi = fin(r.hi) ? r.hi : r.value;
+      if (lo <= zero && hi >= zero) return { c: 'var(--ink-3)', t: 'Range includes ' + f(zero) + ': not clear yet' };
+      return r.value > zero ? { c: 'var(--div-pos)', t: 'Clearly above ' + f(zero) } : { c: 'var(--div-neg)', t: 'Clearly below ' + f(zero) };
+    }
+    var aria = p.ariaLabel || (rows.length ? (p.label || 'Results') + ': ' + rows.length + ' rows with ranges around ' + f(zero) : (p.label || 'Results') + ': no data yet');
+    var table = {
+      columns: [{ key: 'l', label: p.categoryLabel || 'Item', align: 'left' }, { key: 'v', label: p.valueLabel || 'Value' }, { key: 'r', label: 'Range' }, { key: 't', label: 'Read', align: 'left' }],
+      rows: rows.map(function (r) { return { _key: String(r.key), l: r.label || r.key, v: f(r.value), r: fin(r.lo) && fin(r.hi) ? f(r.lo) + DASH + f(r.hi) : DASH, t: tone(r).t }; })
+    };
+    if (!rows.length) {
+      return html`<${ChartFrame} className="ch-dots" ariaLabel=${aria} render=${function () { return html`<${EmptyChart} height=${p.height || 100} text=${p.emptyText || 'No results yet.'} />`; }} />`;
+    }
+    var legend = p.legend === false ? null : [
+      { key: 'pos', label: p.posLabel || 'Clearly above', color: 'div-pos' },
+      { key: 'unc', label: 'Not clear yet', color: 'ink-3' },
+      { key: 'neg', label: p.negLabel || 'Clearly below', color: 'div-neg' }
+    ];
+    function render(W) {
+      var vals = [zero];
+      rows.forEach(function (r) { vals.push(r.value); if (fin(r.lo)) vals.push(r.lo); if (fin(r.hi)) vals.push(r.hi); });
+      var ex = extent(vals), t = niceTicks(ex[0], ex[1], Math.max(2, Math.floor(W / 120)));
+      var labW = clamp(Math.max.apply(null, rows.map(function (r) { return textW(r.label || r.key, 12); })) + 12, 60, W * 0.36);
+      var valW = clamp(Math.max.apply(null, rows.map(function (r) { return textW(f(r.value), 11); })) + 14, 36, W * 0.2);
+      var rowH = 34, mt = 4, mb = 22, Hh = mt + rows.length * rowH + mb;
+      var sx = linScale(t.lo, t.hi, labW, W - valW), zx = sx(zero), hover = null, tx = 0, ty = 0;
+      var nodes = rows.map(function (r, i) {
+        var y = mt + i * rowH, cy = y + rowH / 2, c = tone(r), isH = hk === r.key;
+        var lo = fin(r.lo) ? sx(r.lo) : sx(r.value), hi = fin(r.hi) ? sx(r.hi) : sx(r.value), vx = sx(r.value);
+        if (isH) { hover = r; tx = vx; ty = y; }
+        var desc = (r.label || r.key) + ': ' + f(r.value) + (fin(r.lo) && fin(r.hi) ? ', range ' + f(r.lo) + ' to ' + f(r.hi) : '') + '. ' + c.t;
+        return html`<g key=${'d-' + r.key} className="ch-mark" ...${markProps(r.key, setHk, desc, typeof p.onSelect === 'function' ? function () { p.onSelect(r.key, r); } : null)}
+            onClick=${function () { if (typeof p.onSelect === 'function') p.onSelect(r.key, r); }} style=${{ cursor: p.onSelect ? 'pointer' : 'default' }}>
+          <rect x="0" y=${y} width=${W} height=${rowH} style=${{ fill: isH ? 'var(--surface-2)' : 'transparent' }} />
+          <text x=${labW - 10} y=${cy} textAnchor="end" dominantBaseline="central" style=${{ fill: 'var(--ink-2)', fontSize: 12 }}>${truncate(r.label || r.key, Math.floor((labW - 12) / 7))}</text>
+          <line x1=${lo} x2=${hi} y1=${cy} y2=${cy} strokeWidth="2" strokeLinecap="round" style=${{ stroke: c.c }} />
+          <circle cx=${vx} cy=${cy} r="5" strokeWidth="2" style=${{ fill: c.c, stroke: 'var(--surface)' }} />
+          <text x=${Math.max(hi, vx) + 10} y=${cy} dominantBaseline="central" style=${{ fill: 'var(--ink)', fontSize: 11, fontWeight: 600 }}>${f(r.value)}</text>
+        </g>`;
+      });
+      return html`<div style=${{ position: 'relative' }}>
+        <svg role="group" aria-label=${aria} viewBox=${'0 0 ' + W + ' ' + Hh} width=${W} height=${Hh} style=${S.svg}>
+          <title>${aria}</title>
+          ${t.ticks.map(function (tk, k) {
+            return html`<g key=${'t' + k}><line x1=${sx(tk)} x2=${sx(tk)} y1=${mt} y2=${Hh - mb} strokeWidth="1" style=${S.grid} />
+              <text x=${sx(tk)} y=${Hh - 6} textAnchor="middle" style=${S.axis}>${f(tk)}</text></g>`;
+          })}
+          <line x1=${zx} x2=${zx} y1=${mt} y2=${Hh - mb} strokeWidth="1.5" style=${S.base} />
+          ${nodes}
+        </svg>
+        ${hover ? html`<${Tip} show=${true} x=${tx} y=${ty} width=${W}>
+          <div style=${{ fontWeight: 600 }}>${hover.label || hover.key}</div>
+          <${TipRow} color=${tone(hover).c} label=${p.valueLabel || 'Value'} value=${f(hover.value)} />
+          ${fin(hover.lo) && fin(hover.hi) ? html`<${TipRow} label="Range" value=${f(hover.lo) + DASH + f(hover.hi)} />` : null}
+          <div style=${{ color: 'var(--ink-3)' }}>${tone(hover).t}</div>
+        <//>` : null}
+      </div>`;
+    }
+    return html`<${ChartFrame} className="ch-dots" ariaLabel=${aria} legend=${legend} table=${p.noTable ? null : table} render=${render} />`;
+  }
+
   /* ---------- exports ---------- */
   MC.charts.Sparkline = Sparkline;
   MC.charts.LineChart = LineChart;
@@ -1115,6 +1298,8 @@
   MC.charts.Heatmap = Heatmap;
   MC.charts.ResponseCurve = ResponseCurve;
   MC.charts.ScoreRing = ScoreRing;
+  MC.charts.GoalProgress = GoalProgress;
+  MC.charts.DotInterval = DotInterval;
   MC.charts.Legend = Legend;
   MC.charts.ChartFrame = ChartFrame;
   MC.charts.util = {

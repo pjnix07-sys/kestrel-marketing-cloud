@@ -785,7 +785,7 @@
     return html`<${U.Drawer} ...${p} side=${p.side || 'bottom'} className=${cx('k-sheet', p.className)} />`;
   };
 
-  // {anchorRef, open, onClose, children, label, id, placement:'bottom-start'|'bottom-end'|'top-start', width}
+  // {anchorRef, open, onClose, children, label, id, placement:'bottom-start'|'bottom-end'|'top-start'|'right'|'right-end', width}
   U.Popover = function Popover(p) {
     var html = H(), React = R();
     var box = React.useRef(null);
@@ -804,11 +804,19 @@
         var w = el ? el.offsetWidth : (p.width || 320);
         var hgt = el ? el.offsetHeight : 200;
         var pl = p.placement || 'bottom-start';
-        var left = pl.indexOf('end') >= 0 ? r.right - w : r.left;
-        left = Math.max(8, Math.min(left, vw - w - 8));
-        var top = pl.indexOf('top') === 0 ? r.top - hgt - 6 : r.bottom + 6;
-        if (top + hgt > vh - 8 && r.top - hgt - 6 > 8) top = r.top - hgt - 6;
-        top = Math.max(8, top);
+        var left, top;
+        if (pl.indexOf('right') === 0) {
+          // Beside the anchor (the side rail): aligned to its top, or its bottom for 'right-end'; kept on screen.
+          left = Math.min(r.right + 8, vw - w - 8);
+          top = pl === 'right-end' ? r.bottom - hgt : r.top;
+          top = Math.max(8, Math.min(top, vh - hgt - 8));
+        } else {
+          left = pl.indexOf('end') >= 0 ? r.right - w : r.left;
+          left = Math.max(8, Math.min(left, vw - w - 8));
+          top = pl.indexOf('top') === 0 ? r.top - hgt - 6 : r.bottom + 6;
+          if (top + hgt > vh - 8 && r.top - hgt - 6 > 8) top = r.top - hgt - 6;
+          top = Math.max(8, top);
+        }
         setPos(function (old) { return old && old.left === left && old.top === top ? old : { left: left, top: top }; });
       }
       place();
@@ -1075,7 +1083,7 @@
     if (kind === 'segment') cams.forEach(function (cid) { X.messagesOfCampaign(w, cid).forEach(function (x) { if (!msgs.some(function (y) { return y.id === x.id; })) msgs.push(x); }); });
     function L(lab, items) { if (items.length) parts.push(html`<span key=${lab} className="xref-part"><span className="xref-k">${lab}</span> ${items}</span>`); }
     function join(arr) { var out = []; arr.forEach(function (x, i) { if (i) out.push(', '); out.push(x); }); return out; }
-    L(ms.length === 1 ? 'Mission' : 'Missions', join(ms.slice(0, 3).map(function (m) { return html`<${U.Xlink} key=${m.id} kind="mission" id=${m.id}>${trunc(X.missionTitle(m), 46)}<//>`; })));
+    L(ms.length === 1 ? 'Goal' : 'Goals', join(ms.slice(0, 3).map(function (m) { return html`<${U.Xlink} key=${m.id} kind="mission" id=${m.id}>${trunc(X.missionTitle(m), 46)}<//>`; })));
     if (ag.made || ag.changed) {
       var items = [];
       if (ag.made) items.push(html`<span key="m">made by <${U.Xlink} kind="agent" id=${ag.made}>${agentName(ag.made)}<//></span>`);

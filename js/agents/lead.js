@@ -10,7 +10,7 @@
   var L = MC.lead = MC.lead || {};
 
   L.ID = 'lead';
-  L.NAME = 'Lead';
+  L.NAME = 'Planner';
   L.METRICS = ['reactivations', 'revenue', 'orders', 'signups', 'unsubs'];
   L.TEMPLATES = ['winback', 'launch', 'event', 'grow', 'protect'];
   L.CONSTRAINT_KINDS = ['maxDiscountPct', 'maxSpend', 'excludeChannel', 'maxSendsPerWeek'];
@@ -389,7 +389,7 @@
     if (p.template === 'protect') {
       return [
         step('s1', 'goal', 'Confirm the goal and the limit', []),
-        step('s2', 'audience', 'Find people who are hearing from us too often', ['s1']),
+        step('s2', 'audience', 'Find people who are hearing from the brand too often', ['s1']),
         step('s3', 'guard', 'Rest the people closest to unsubscribing', ['s2']),
         step('s4', 'monitor', 'Watch the unsubscribe rate every day', ['s3'])
       ];
@@ -401,7 +401,7 @@
       step('s2', 'audience', 'Find and size ' + a, ['s1']),
       step('s3', 'campaign', campaignTitle, ['s2']),
       step('s4', 'copy', 'Write the messages for each channel', ['s3']),
-      step('s5', 'guard', 'Rest anyone who has heard from us too often', ['s3']),
+      step('s5', 'guard', 'Rest anyone who has heard from the brand too often', ['s3']),
       step('s6', 'sendtime', 'Choose send times for each channel', ['s3']),
       step('s7', 'pacer', 'Split the budget across channels', ['s3']),
       step('s8', 'handoff', 'Hand the draft over for your sign-off', ['s4', 's5', 's6', 's7']),
@@ -443,7 +443,7 @@
       var vals = targetChoices(p, audienceSize(world, p));
       var label = function (v) { return p.metric === 'revenue' ? moneyS(v) : num(v); };
       a = { id: askId, stepId: stepId, agentId: 'lead', kind: 'goal-field', field: 'target', blocking: true,
-        question: 'How many ' + noun + ' should I aim for?',
+        question: 'How many ' + noun + ' is the target?',
         why: 'You didn’t give a number, and the plan (budget, channels, how hard to push) depends on it.',
         impact: { metric: noun, lo: vals[0], hi: vals[2] },
         options: vals.map(label), values: vals, default: label(vals[1]) };
@@ -486,7 +486,7 @@
     if (missing.indexOf('goal') >= 0) {
       asks.push({ id: 'a1', stepId: 's1', agentId: 'lead', kind: 'goal-template', field: 'template', blocking: true,
         question: 'What are you trying to get done: win back lapsed customers, launch something, hit a revenue number, grow a list, or protect it?',
-        why: 'I couldn’t tell the kind of result you want from that sentence, and the plan is different for each.',
+        why: 'The goal doesn’t say which kind of result is wanted, and the plan is different for each.',
         impact: { metric: 'plan', lo: 0, hi: 0 },
         options: ['Win back lapsed customers', 'Launch a product', 'Hit a revenue number', 'Grow a list', 'Protect the list'],
         values: ['winback', 'launch', 'event', 'grow', 'protect'], default: 'Hit a revenue number',
@@ -565,7 +565,7 @@
     if (ask.kind === 'goal-template') {
       var tmpl = idx >= 0 ? ask.values[idx] : null;
       if (!tmpl) { var p0 = L.parse(text, world); tmpl = p0.template; }
-      if (!tmpl) { say('lead', 'thought', 'I still can’t tell which of those you mean. Pick one of the options and I’ll take it from there.'); res.reask = true; return res; }
+      if (!tmpl) { say('lead', 'thought', 'Goal type still unclear. Pick one of the options to continue.'); res.reask = true; return res; }
       var base = L.parse(m.goalText || '', world);
       base.template = tmpl;
       base.metric = { winback: 'reactivations', launch: 'orders', event: 'revenue', grow: 'signups', protect: 'unsubs' }[tmpl];
@@ -575,7 +575,7 @@
       var np = L.plan(world, m.goalText, { parsed: base });
       res.replacePlan = np.plan; res.objective = np.objective; res.data = np.data; res.asks = np.asks;
       res.stepsKeep = true;
-      say('lead', 'replan', 'Okay, treating this as a ' + { winback: 'win-back', launch: 'launch', event: 'revenue push', grow: 'list-growth push', protect: 'list-protection' }[tmpl] + '. I’ve rebuilt the plan around that.');
+      say('lead', 'replan', 'Goal type set to ' + { winback: 'win-back', launch: 'launch', event: 'revenue push', grow: 'list-growth push', protect: 'list-protection' }[tmpl] + '. Plan rebuilt around it.');
       if (np.asks.length) say('lead', 'ask', np.asks[0].question, np.asks[0].id);
       return res;
     }
@@ -589,14 +589,14 @@
         if (dd.day !== null) objective.deadlineText = dd.text;
       }
       if (!isNum(val) || !(val > 0 || ask.field === 'deadline')) {
-        say('lead', 'thought', 'I couldn’t read “' + text.slice(0, 40) + '” as ' + (ask.field === 'target' ? 'a number' : 'a date') + '. Choose one of the options, or type it again.');
+        say('lead', 'thought', 'Could not read “' + text.slice(0, 40) + '” as ' + (ask.field === 'target' ? 'a number' : 'a date') + '. Choose one of the options, or type it again.');
         res.reask = true; return res;
       }
       if (ask.field === 'target') objective.target = val; else { objective.by = val; objective.deadlineText = 'by ' + dayShort(val); }
       var left = (data.missing || []).filter(function (f) { return f !== (ask.field === 'target' ? 'target' : 'deadline'); });
       data.missing = left;
       res.objective = objective; res.data = data;
-      say('lead', 'did', 'Got it: ' + L.objectiveText(objective) + '.');
+      say('lead', 'did', 'Goal set: ' + L.objectiveText(objective) + '.');
       if (left.length) {
         var pf = { metric: objective.metric, template: data.template, audience: data.audience || {}, target: objective.target };
         var nid = 'a' + ((m.asks || []).length + 1);
@@ -619,7 +619,7 @@
       } else {
         res.status = 'paused';
         res.steps[ask.stepId] = { status: 'blocked', note: 'Paused at your request.' };
-        say('lead', 'did', 'Okay, I’ve stopped here. The work so far is saved; tell me how you’d like to change it and I’ll re-plan.');
+        say('lead', 'did', 'Stopped. Work so far is saved. Steer the goal to change the plan.');
       }
       return res;
     }
@@ -629,7 +629,7 @@
       if (pick) {
         data.overrides = Object.assign({}, data.overrides || {}, { offer: pick });
         res.data = data;
-        say('copy', 'did', 'Using ' + L.offerLabel(pick) + '. I’ll assemble the messages around it.');
+        say('copy', 'did', 'Offer set to ' + L.offerLabel(pick) + '. Messages will be assembled around it.');
       } else say('lead', 'thought', 'Noted: ' + text.slice(0, 100) + '.');
       res.steps[ask.stepId] = { status: 'queued', note: '' };
       return res;
@@ -637,7 +637,7 @@
     if (ask.kind === 'extend') {
       if (no) {
         res.steps[ask.stepId] = { status: 'skipped', note: 'Left as is.' };
-        say('lead', 'replan', 'Okay, the campaign keeps its current end date. I’ll watch the pace and come back to you if it can’t get there.');
+        say('lead', 'replan', 'Campaign end date unchanged. Pace is tracked and a decision is requested if the goal is out of reach.');
       } else {
         res.steps[ask.stepId] = { status: 'queued', note: '' };
         say('planner', 'did', 'Extending the campaign now.');
@@ -646,12 +646,12 @@
     }
     if (ask.kind === 'launch') {
       if (no) say('lead', 'did', 'No problem. The draft stays ready in Campaigns whenever you want it.');
-      else say('lead', 'did', 'Great. The draft is in Campaigns. Before it can be scheduled it needs the launch checklist: test send, links, legal, consent and creative.');
+      else say('lead', 'did', 'The draft is in Campaigns. Before it can be scheduled it needs the launch checklist: test send, links, legal, consent and creative.');
       return res;
     }
     if (ask.kind === 'behind') {
-      if (no) say('lead', 'did', 'Understood, I’ll keep the budget where it is and keep working the other levers.');
-      else say('lead', 'did', 'Thanks. Raising the total takes a change on the campaign itself, so open its budget and I’ll keep pacing the new amount.');
+      if (no) say('lead', 'did', 'Budget unchanged. Other levers continue.');
+      else say('lead', 'did', 'Raising the total is a change on the campaign itself. Open its budget to set it; pacing follows the new amount.');
       return res;
     }
     say('lead', 'did', 'Thanks, noted.');
@@ -677,7 +677,7 @@
     var camp0 = world && m.data && m.data.campaignId ? world.campaigns.byId[m.data.campaignId] : null;
     function stNow(s) { return { running: 'running', waiting: 'waiting for you', paused: 'paused', planning: 'planning', done: 'done', stopped: 'stopped' }[s] || s; }
     // pause / stop / resume
-    if (STEER_STOP.test(low)) { res.status = 'stopped'; say('lead', 'did', 'Stopped. Everything the team made stays where it is, and nothing further will run.', [{ what: 'Mission', from: stNow(m.status), to: 'stopped' }]); return res; }
+    if (STEER_STOP.test(low)) { res.status = 'stopped'; say('lead', 'did', 'Stopped. Everything made so far is kept and nothing further will run.', [{ what: 'Mission', from: stNow(m.status), to: 'stopped' }]); return res; }
     var mm = /\b(?:pause|hold off|wait|freeze)\b[^.]*?\buntil\s+(?:next\s+)?([a-z]+(?:\s+\d{1,2})?)/.exec(low);
     if (STEER_PAUSE.test(low) && !/\bdon[’']?t pause\b/.test(low)) {
       res.status = 'paused';
@@ -685,7 +685,7 @@
         var dl = takeDeadline(' by ' + mm[1] + ' ', today);
         if (dl.day !== null) res.resumeDay = dl.day;
       }
-      say('lead', 'did', res.resumeDay ? 'Paused. I’ll pick this back up on ' + dayShort(res.resumeDay) + '.' : 'Paused. Tell me when to pick it back up.',
+      say('lead', 'did', res.resumeDay ? 'Paused. Resumes on ' + dayShort(res.resumeDay) + '.' : 'Paused. Steer to resume.',
         [{ what: 'Mission', from: stNow(m.status), to: res.resumeDay ? 'paused until ' + dayShort(res.resumeDay) : 'paused' }]);
       if (!newCons.length) return res;
     } else if (STEER_RESUME.test(low) && m.status === 'paused') {
@@ -699,7 +699,7 @@
     var changedObj = false;
     if (dline.day !== null && /\b(?:move|push|change|extend|make|set|deadline|by|before)\b/.test(low)) {
       obj.by = dline.day; obj.deadlineText = dline.text; changedObj = true;
-      say('lead', 'replan', 'New deadline: ' + dline.text + '. I’m adjusting the campaign dates to match.', [{ what: 'Deadline', from: isNum(m.objective.by) ? dayShort(m.objective.by) : '', to: dayShort(dline.day) }]);
+      say('lead', 'replan', 'New deadline: ' + dline.text + '. Campaign dates are being adjusted to match.', [{ what: 'Deadline', from: isNum(m.objective.by) ? dayShort(m.objective.by) : '', to: dayShort(dline.day) }]);
     }
     var tm = /\b(?:target|goal|aim)\b[^\d$]{0,30}\$?\s?([\d,]*\.?\d+\s*[km]?)\b/.exec(parsed.rest);
     if (tm) { var tv = amount(tm[1].replace(/\s+/g, '')); if (tv && tv > 0) { obj.target = tv; changedObj = true; say('lead', 'replan', 'New target: ' + L.fmtMetric(obj.metric, tv) + ' ' + L.metricNoun(obj.metric) + '.', [{ what: 'Target', from: L.fmtMetric(obj.metric, m.objective.target), to: L.fmtMetric(obj.metric, tv) }]); } }
@@ -719,7 +719,7 @@
       var old = L.constraintOf(before, c.kind);
       if (c.kind === 'maxDiscountPct') {
         res.changed.push(c);
-        say('lead', 'replan', c.value > 0 ? 'Capping discounts at ' + c.value + '%. ' + (hasCampaign ? 'I’m asking Copy Drafter to rewrite anything that goes deeper.' : 'The offer on the campaign and the copy will stay inside that.')
+        say('lead', 'replan', c.value > 0 ? 'Capping discounts at ' + c.value + '%. ' + (hasCampaign ? 'Copy Drafter rewrites anything that goes deeper.' : 'The offer on the campaign and the copy will stay inside that.')
           : 'No discounts from here on. Offers become free shipping or none, and the copy follows.',
           [{ what: 'Discount limit', from: old ? (old.value > 0 ? old.value + '%' : 'none allowed') : 'no limit', to: c.value > 0 ? c.value + '%' : 'none allowed' }].concat(camp0 ? [{ what: 'Offer', from: L.offerLabel(camp0.offer), to: L.offerLabel(offerFor((m.data || {}).template, newCons.concat((before || []).filter(function (x) { return x.kind !== 'maxDiscountPct'; })))) }] : []));
         if (hasCampaign) add('offer', 'Bring the offer within ' + (c.value > 0 ? c.value + '%' : 'no discount'), [], { limit: c.value });
@@ -728,13 +728,13 @@
         if (old && old.value === c.value) return;
         res.changed.push(c);
         var chNow = camp0 ? camp0.channels.slice() : [];
-        say('lead', 'replan', 'Dropping ' + chLower(c.value) + '. ' + (hasCampaign ? 'I’m taking it out of the campaign: its journey sends, its messages and its budget, which moves to the other channels.' : 'It won’t be part of the campaign.'),
+        say('lead', 'replan', 'Dropping ' + chLower(c.value) + '. ' + (hasCampaign ? 'Removed from the campaign: its journey sends, its messages and its budget, which moves to the other channels.' : 'It won’t be part of the campaign.'),
           chNow.length ? [{ what: 'Channels', from: chNow.map(chLower).join(', '), to: chNow.filter(function (x) { return x !== c.value; }).map(chLower).join(', ') }] : undefined);
         if (hasCampaign) add('channel', 'Take ' + chLower(c.value) + ' out of the campaign', [], { channel: c.value });
         if (hasCampaign) add('pacer', 'Re-split the budget without ' + chLower(c.value), [res.added[res.added.length - 1].id]);
       } else if (c.kind === 'maxSpend') {
         res.changed.push(c);
-        say('lead', 'replan', 'Keeping total spend at ' + money(c.value) + ' or less.' + (hasCampaign ? ' I’m scaling the campaign budget down to fit.' : ''),
+        say('lead', 'replan', 'Keeping total spend at ' + money(c.value) + ' or less.' + (hasCampaign ? ' The campaign budget is scaled down to fit.' : ''),
           [{ what: 'Spend limit', from: old ? money(old.value) : 'no limit', to: money(c.value) }].concat(camp0 ? [{ what: 'Campaign budget', from: money(camp0.budget.total), to: money(Math.min(camp0.budget.total, c.value)) }] : []));
         if (hasCampaign) add('budget', 'Fit the budget within ' + money(c.value), [], { limit: c.value });
       } else if (c.kind === 'maxSendsPerWeek') {
@@ -746,7 +746,7 @@
     });
     res.constraintsChanged = newCons.length > 0;
     if (changedObj && hasCampaign && dline.day !== null) add('extend', 'Move the campaign end to ' + dayShort(dline.day), []);
-    if (!res.beats.length && !newCons.length) say('lead', 'thought', 'Noted: “' + String(text || '').slice(0, 100) + '”. I couldn’t turn that into a limit or a change, so the plan stays as it is. Try something like “no SMS”, “keep discounts under 10%” or “spend under $3k”.');
+    if (!res.beats.length && !newCons.length) say('lead', 'thought', 'Not applied: “' + String(text || '').slice(0, 100) + '” did not map to a limit or a change, so the plan is unchanged. Try something like “no SMS”, “keep discounts under 10%” or “spend under $3k”.');
     // new steps start now and hold the monitor until they finish
     if (res.added.length) {
       var monitor = steps.filter(function (s) { return s.kind === 'monitor'; })[0];
@@ -764,20 +764,20 @@
     function add(kind, title, needs, extra) { var s = step('s' + (nextN++), kind, title, needs || [], extra); res.added.push(s); return s; }
     var by = m.objective.by, behindPct = Math.round((1 - st.pace) * 100);
     var gap = L.fmtMetric(m.objective.metric, Math.max(0, st.target - st.forecast));
-    var head = 'We’re running about ' + behindPct + '% behind where we need to be (heading for ' + L.fmtMetric(m.objective.metric, st.forecast) + ' of ' + L.fmtMetric(m.objective.metric, st.target) + ').';
+    var head = 'Running about ' + behindPct + '% behind pace (heading for ' + L.fmtMetric(m.objective.metric, st.forecast) + ' of ' + L.fmtMetric(m.objective.metric, st.target) + ').';
     if (c && isNum(by) && T().dayOf(c.endTick - 1) < by && st.replans === 0) {
       add('extend', 'Run the campaign through ' + dayShort(by), []);
-      res.beats.push({ agentId: 'lead', kind: 'replan', text: head + ' The campaign ends ' + dayShort(T().dayOf(c.endTick - 1)) + ', before your deadline, so I’m extending it to ' + dayShort(by) + '.' });
+      res.beats.push({ agentId: 'lead', kind: 'replan', text: head + ' The campaign ends ' + dayShort(T().dayOf(c.endTick - 1)) + ', before your deadline, so it is being extended to ' + dayShort(by) + '.' });
       return res;
     }
     if (c && st.replans <= 1 && !st.linked) {
       add('widen', 'Widen the audience with similar customers', []);
-      res.beats.push({ agentId: 'lead', kind: 'replan', text: head + ' I’m asking Segment Scout to find similar customers we aren’t reaching yet and add them to the campaign.' });
+      res.beats.push({ agentId: 'lead', kind: 'replan', text: head + ' Segment Scout is finding similar customers not yet reached to add to the campaign.' });
       return res;
     }
     var ask = { id: 'a' + ((m.asks || []).length + 1), stepId: null, agentId: 'lead', kind: 'behind', blocking: false,
       question: 'We’re still short by about ' + gap + '. Can the campaign budget go up?',
-      why: head + ' The team has already extended the run and widened the audience; more budget is the lever left, and only you can change the total.',
+      why: head + ' The run has been extended and the audience widened; more budget is the lever left, and only you can change the total.',
       impact: { metric: L.metricNoun(m.objective.metric), lo: Math.round(st.target - st.forecast) * 0.3, hi: Math.round(st.target - st.forecast) * 0.7 },
       options: ['Yes, raise the budget', 'No, keep it'], default: 'Yes, raise the budget', status: 'open', answer: null, by: null, createdTick: null, answeredTick: null };
     var pc = st.pacer;
@@ -785,13 +785,13 @@
       var mg = pc.marginal, pay = mg >= 1;
       var ret = mg >= 0.01 ? 'about $' + mg.toFixed(2) + ' back per $1' : 'under $0.01 back per $1';
       var pos2 = 'Today the next $1 on this campaign returns ' + ret + (pay ? ', so more spend still pays for itself.' : ', so more spend loses money on the margin. Moving budget toward ' + chLower(pc.hiCh || pc.lowCh) + ' would do more than raising the total.');
-      var resolution = pay ? 'Budget Pacer agrees the numbers support it, so the ask goes to you.' : 'Only you can change the total, so I’m asking, with Pacer’s numbers attached; if you say yes I’ll pair it with a re-split toward the channels that return most.';
+      var resolution = pay ? 'Budget Pacer agrees the numbers support it, so the ask goes to you.' : 'Only you can change the total, so the decision comes to you with Pacer’s numbers attached; if approved it is paired with a re-split toward the channels that return most.';
       ask.why += ' Budget Pacer ' + (pay ? 'agrees: ' : 'disagrees: ') + pos2.charAt(0).toLowerCase() + pos2.slice(1);
       if (!pay) res.beats.push({ agentId: 'pacer', kind: 'disagree', text: 'Budget Pacer pushed back on asking for more budget: the next $1 returns ' + ret + '. ' + resolution,
-        sides: [{ agentId: 'lead', position: 'We’re short by about ' + gap + ' and more budget is the last lever I control.' }, { agentId: 'pacer', position: pos2 }], resolution: resolution });
+        sides: [{ agentId: 'lead', position: 'Short by about ' + gap + ' and more budget is the last lever the Planner controls.' }, { agentId: 'pacer', position: pos2 }], resolution: resolution });
     }
     res.asks.push(ask);
-    res.beats.push({ agentId: 'lead', kind: 'replan', text: head + ' We’ve used the levers we control, so I’m asking you about the budget.' });
+    res.beats.push({ agentId: 'lead', kind: 'replan', text: head + ' The available levers are used, so the budget is now a decision for you.' });
     return res;
   };
 
@@ -843,25 +843,24 @@
   var V = L.voice = {};
   V.opening = function (m) {
     var o = m.objective, c = ((o && o.constraints) || []).map(L.constraintLabel);
-    return 'Got it: ' + L.objectiveText(o) + '.' + (c.length ? ' I’ll keep to ' + listJoin(c.map(lowerFirst)) + '.' : '') +
-      ' I’ll find the audience, draft the campaign and have the team check it before anything goes out.';
+    return 'Goal set: ' + L.objectiveText(o) + '.' + (c.length ? ' Limits: ' + listJoin(c.map(lowerFirst)) + '.' : '');
   };
   V.planned = function (m) {
     var n = m.plan.length, agents = {};
     m.plan.forEach(function (s) { agents[s.agentId] = true; });
     var k = Object.keys(agents).length;
-    return 'Here’s the plan: ' + n + ' steps across ' + k + (k === 1 ? ' teammate' : ' teammates') + '. ' + (m.brain === 'claude' ? '' : '') + 'You’ll hear from me if I need a decision.';
+    return 'Plan created: ' + n + ' steps across ' + k + (k === 1 ? ' agent' : ' agents') + '.';
   };
   V.start = {
-    goal: function () { return 'Reading the goal and lining up the team.'; },
+    goal: function () { return 'Reading the goal.'; },
     audience: function (m) { return 'Looking for ' + audienceWord({ template: (m.data || {}).template, audience: (m.data || {}).audience || {} }) + ' and checking who can actually be reached.'; },
     campaign: function () { return 'Drafting the campaign: journey, channels, dates and an opening budget split.'; },
     copy: function (m) { return 'Putting a message together from the approved headlines, bodies and buttons that have worked best, then rendering it for ' + listJoin(((m.data || {}).channels || ['email']).map(chLower)) + '.'; },
-    guard: function () { return 'Checking who has heard from us too often.'; },
+    guard: function () { return 'Checking who has heard from the brand too often.'; },
     sendtime: function () { return 'Looking at when this audience opens its messages.'; },
     pacer: function () { return 'Working out where the next dollar earns the most.'; },
-    handoff: function () { return 'Pulling the draft together for your sign-off.'; },
-    monitor: function () { return 'Setting up the daily check-in.'; },
+    handoff: function () { return 'Preparing the draft for your sign-off.'; },
+    monitor: function () { return 'Setting up the daily check.'; },
     extend: function () { return 'Changing the campaign dates.'; },
     widen: function () { return 'Looking for customers similar to the ones who already respond.'; },
     rewrite: function () { return 'Re-assembling the messages around the new offer from approved blocks.'; },
@@ -872,8 +871,8 @@
   V.progress = function (m, pr, status) {
     var o = m.objective, n = L.metricNoun(o.metric);
     var base = L.fmtMetric(o.metric, pr.value) + ' of ' + L.fmtMetric(o.metric, pr.target) + ' ' + n + ' so far';
-    if (o.metric === 'unsubs') return base + '; on this pace we finish near ' + num(pr.forecast) + '.';
-    return base + ' (' + pct(pr.target > 0 ? pr.value / pr.target : 0) + '). On this pace we land near ' + L.fmtMetric(o.metric, pr.forecast) + ', somewhere between ' + L.fmtMetric(o.metric, pr.lo) + ' and ' + L.fmtMetric(o.metric, pr.hi) + '.';
+    if (o.metric === 'unsubs') return base + '; on this pace it finishes near ' + num(pr.forecast) + '.';
+    return base + ' (' + pct(pr.target > 0 ? pr.value / pr.target : 0) + '). On this pace it lands near ' + L.fmtMetric(o.metric, pr.forecast) + ', somewhere between ' + L.fmtMetric(o.metric, pr.lo) + ' and ' + L.fmtMetric(o.metric, pr.hi) + '.';
   };
   // "On pace for 312 of 400 (260 to 365) by Dec 15": the forecast verdict beside the goal.
   V.verdict = function (m, v) {

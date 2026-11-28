@@ -777,7 +777,7 @@ async function secConsistency() {
     const cn = (await page.innerText('.ct-msgname')).replace(/\s*Rename\s*$/, '').trim();
     await check('links: the message link opens that message in Compose', (await routeNow(page)) === 'content' && cn.indexOf(mname.trim()) === 0, `${mname} -> ${cn}`, page);
     const cx = (await page.locator('.ct-compose .xref').first().innerText()).replace(/\s+/g, ' ');
-    await check('links: Compose names the missions and campaigns that use the message', /Mission/.test(cx) && /Campaign/.test(cx), cx, page);
+    await check('links: Compose names the missions and campaigns that use the message', /Goal/.test(cx) && /Campaign/.test(cx), cx, page);
     await page.locator('.ct-compose .xref a[data-xref^="mission:"]').first().click();
     await page.waitForTimeout(500);
     await check('links: the mission link in Compose opens the room', (await routeNow(page)) === 'missions' && /#missions\/m-/.test(await page.evaluate(() => location.hash)), await page.evaluate(() => location.hash), page);
@@ -785,7 +785,7 @@ async function secConsistency() {
     await page.evaluate(id => MC.nav.go('campaigns', { mode: 'detail', id: MC.xref.campaignIds(MC.store.getState(), MC.store.getState().missions.byId[id])[0], tab: 'overview' }), SEED_LHW);
     await page.waitForSelector('.cm-xref a', { timeout: 8000 });
     const xr = (await page.innerText('.cm-xref')).replace(/\s+/g, ' ');
-    await check('links: a campaign names its mission, the agent that made / changed it, its audience and messages', /Mission/.test(xr) && /made by/.test(xr) && /Audience/.test(xr) && /Message/.test(xr), xr.slice(0, 220), page);
+    await check('links: a campaign names its mission, the agent that made / changed it, its audience and messages', /Goal/.test(xr) && /made by/.test(xr) && /Audience/.test(xr) && /Message/.test(xr), xr.slice(0, 220), page);
     const rev = await page.evaluate(id => { const w = MC.store.getState(); return MC.metrics.campaign(w, MC.xref.campaignIds(w, w.missions.byId[id])[0]).revenue; }, SEED_LHW);
     const figs = (await page.innerText('.cm-figs')).replace(/\s+/g, ' ');
     const figRev = parseMoney((/Revenue\s+(\$[\d,.]+\s*[kKmM]?)/.exec(figs) || [])[1]);
@@ -805,7 +805,7 @@ async function secConsistency() {
     await check('counts: the Library count is MC.metrics.messages (messages, blocks, channel versions apart)', cnt.t.indexOf(cnt.m.messages + ' messages') === 0 && cnt.t.indexOf(cnt.m.blocks + ' blocks') > 0 && cnt.t.indexOf(cnt.m.channelVersions + ' channel versions') > 0, cnt.t, page);
     await page.locator('.ct-link[aria-expanded]').first().click();
     await page.waitForSelector('.ct-where .xref');
-    await check('links: an open block in the Library shows missions and campaigns using it', /Mission/.test(await page.innerText('.ct-where .xref')), (await page.innerText('.ct-where .xref')).replace(/\s+/g, ' '), page);
+    await check('links: an open block in the Library shows missions and campaigns using it', /Goal/.test(await page.innerText('.ct-where .xref')), (await page.innerText('.ct-where .xref')).replace(/\s+/g, ' '), page);
 
     /* Asks: one count, grouped by mission */
     const n = await askCount(page), mc = await page.evaluate(() => MC.metrics.asks(MC.store.getState()));

@@ -18,7 +18,9 @@ async function boot() {
   await MC.engine.boot({ seed: 'fernway', speed: 'pause', catchUp: false });
   return MC;
 }
-function adv(MC, n) { let w = MC.store.getState(); for (let i = 0; i < n; i++) MC.engine.advance(w); return w; }
+// One world tick, then one work pulse (the logged mission/work action) if any mission has work pending.
+function pulse(MC) { const w = MC.store.getState(); if (!MC.missions.hasWork(w)) return false; const r = MC.store.dispatch({ type: 'mission/work', payload: {}, by: null }); if (!r.ok) throw new Error(r.error); return true; }
+function adv(MC, n) { let w = MC.store.getState(); for (let i = 0; i < n; i++) { MC.engine.advance(w); pulse(MC); } return w; }
 const mission = (MC, id) => MC.store.getState().missions.byId[id];
 
 (async () => {
@@ -65,8 +67,8 @@ const mission = (MC, id) => MC.store.getState().missions.byId[id];
   check('create ok', r.ok && r.id, JSON.stringify(r));
   let m = mission(MC, r.id);
   check('plan forms over ticks, not at once', m.plan.every(s => s.status === 'queued' || s.status === 'blocked') && m.phase !== 'monitoring');
-  // §2 clock: one dependency level per tick; independent steps together
-  check('world pace is one hour per 5 s', MC.engine.PACE_MS === 5000 && MC.engine.SPEEDS['1x'] === 5000);
+  // §2 clock: one dependency level per work pulse; independent steps together
+  check('world clock runs in real time, missions on a 1 s pulse', MC.engine.PACE_MS === 3600000 && MC.engine.SPEEDS.live === 3600000 && MC.engine.DEFAULT_SPEED === 'live' && MC.engine.PULSE_MS === 1000);
   adv(MC, 1); m = mission(MC, r.id);
   check('level 1 (goal) claimed and run in one tick', m.plan[0].status === 'done' && m.plan[1].status === 'queued', m.plan.map(s => s.status).join());
   adv(MC, 1); m = mission(MC, r.id);
@@ -186,7 +188,7 @@ const mission = (MC, id) => MC.store.getState().missions.byId[id];
     const cr = M2.store.dispatch({ type: 'mission/create', payload: { goalText: 'Hit $9k in revenue by Dec 9', title: base.title, objective: base.objective, plan: pl, asks: [], data: base.data, brain: 'rules' } });
     check('plan without hand-off created', cr.ok, cr.error);
     adv(M2, 12);
-    const m3 = mission(M2, cr.created[0]), beat3 = m3.log.filter(b => /waiting for your sign-off/.test(b.text))[0];
+    const m3 = mission(M2, cr.created[0]), beat3 = m3.log.filter(b => /needs your sign-off/.test(b.text))[0];
     check('no hand-off step still raises the sign-off ask', m3.phase === 'monitoring' && m3.asks.some(a => a.kind === 'launch' && a.status === 'open'), m3.phase + JSON.stringify(m3.asks.map(a => a.kind + a.status)));
     check('"waiting for sign-off" appears only with an open ask', !beat3 || m3.asks.some(a => a.kind === 'launch'));
   }
@@ -242,6 +244,41 @@ const mission = (MC, id) => MC.store.getState().missions.byId[id];
     check('Pacer pushes back on an over-budget ask', pd && pd.agentId === 'pacer' && pd.sides.length === 2 && pd.resolution && rm.asks.length === 1 && /Budget Pacer/.test(rm.asks[0].why), JSON.stringify(rm));
     const rm2 = M4.lead.remediate(M4.store.getState(), mm, { pace: 0.5, forecast: 200, target: 400, daysLeft: 6, campaignId: null, replans: 2, linked: false, pacer: { marginal: 1.8, lowCh: 'push', hiCh: 'email' } });
     check('Pacer agrees when more budget pays back', !rm2.beats.some(b => b.kind === 'disagree') && /agrees/.test(rm2.asks[0].why));
+  }
+
+  // ---- work pulse: steps advance without the world clock; stops when idle; replay reproduces it
+  {
+    const P = await boot();
+    const r5 = P.missions.createSync('Win back 400 lapsed hikers before Dec 15 without discounting more than 15%');
+    const t0 = P.store.getState().meta.tick, log0 = P.store.getState().log.length;
+    check('pulse pending after create', P.missions.hasWork(P.store.getState()));
+    let pulses = 0; while (P.missions.hasWork(P.store.getState()) && pulses < 40) { P.engine.pulse(); pulses++; }
+    let pm = mission(P, r5.id), pw = P.store.getState();
+    check('pulses advance steps without advancing meta.tick', pw.meta.tick === t0 && pm.phase === 'monitoring' && pm.plan.every(s => s.status === 'done' || s.status === 'skipped'), pw.meta.tick + ' ' + t0 + ' ' + pm.phase);
+    check('whole plan takes six pulses (one level each)', pulses >= 6 && pulses <= 8, String(pulses));
+    check('every pulse is a logged mission/work action', pw.log.length - log0 === pulses && pw.log.slice(log0).every(e => e.type === 'mission/work' && e.tick === t0), pw.log.slice(log0).map(e => e.type).join());
+    check('pulse stops when idle', !P.missions.hasWork(pw) && P.engine.pulse() === false && !P.engine.pulsePending() && pw.log.length - log0 === pulses);
+    const lenIdle = pw.log.length; P.engine.pulse(); P.engine.pulse();
+    check('idle pulses log nothing', P.store.getState().log.length === lenIdle);
+    check('validate rejects work when idle', !P.store.dispatch({ type: 'mission/work', payload: {}, by: null }).ok);
+    // answering / steering re-arms the pulse
+    const r6 = P.missions.createSync('Hit $10k in revenue by Dec 3, SMS only');
+    let g = 0; while (P.missions.hasWork(P.store.getState()) && g++ < 40) P.engine.pulse();
+    const m6 = mission(P, r6.id), ask6 = m6.asks.filter(a => a.status === 'open' && a.blocking)[0];
+    if (ask6) {
+      check('blocked mission is idle', !P.missions.hasWork(P.store.getState()));
+      P.missions.answer(m6.id, ask6.id, ask6.options[0]);
+      check('answer re-arms the pulse', P.missions.hasWork(P.store.getState()));
+      g = 0; while (P.missions.hasWork(P.store.getState()) && g++ < 40) P.engine.pulse();
+    }
+    P.engine.advance(P.store.getState()); // a world tick adds no step work by itself
+    // replay: tick, pulses and user actions in one log reproduce the digest
+    P.engine.advance(P.store.getState());
+    const lv = P.store.getState(), ldig = P.replay.digestWorld(lv).state;
+    check('log contains pulses', lv.log.filter(e => e.type === 'mission/work').length >= 6);
+    const prep = await P.replay.run({ seed: lv.meta.seed, seedTarget: lv.meta.seedTarget, log: lv.log.slice(), toTick: lv.meta.tick });
+    check('replay of a log with pulses reproduces the digest', P.replay.digestWorld(prep).state === ldig, ldig + ' ' + P.replay.digestWorld(prep).state);
+    check('replay had no diverging action', !prep._diverged, JSON.stringify(prep._diverged));
   }
 
   // ---- determinism + replay
