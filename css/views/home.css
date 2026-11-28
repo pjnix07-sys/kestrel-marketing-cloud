@@ -76,3 +76,4 @@
 @media (min-width: 1100px) { .v-home .hm-grid { grid-template-columns: minmax(0, 1.65fr) minmax(320px, 1fr); } .v-home .hm-side { position: sticky; top: var(--space-4); } }
 .v-home .hm-main { display: flex; flex-direction: column; gap: var(--space-5); min-width: 0; }
 .v-home .dec-q--sm { font-size: var(--text-md); }
+@media (max-width: 1099.98px) { .v-home .hm-side { order: -1; } }

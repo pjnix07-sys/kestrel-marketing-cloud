@@ -20,15 +20,15 @@
   var FRESH = { step: 1, done: false, skipped: false, resumes: 0, shown: 0 };
 
   var STEPS = {
-    1: { route: 'missions', sel: ['[data-tour="goal"]', '#page-title', '#app-mission-tabs', '#app-mission-menu'], where: 'after',
-      copy: 'This is a goal, in one sentence. Each agent works it on its own lane: finished work fills in, queued work waits, and hand-offs show who passed what to whom.' },
-    2: { route: 'missions', sel: ['[data-tour="ask"]', '#app-asks-btn'], where: 'after',
-      copy: 'When the team needs a decision only you can make, it lands here as an ask with the reason and what each answer changes.',
-      zeroCopy: 'Nothing is waiting on you right now. When an agent needs a decision, it appears under Asks with the reason and the impact.' },
-    3: { route: 'missions', sel: ['[data-tour="lead"]', '#app-mission-tabs', '#app-mission-menu'], where: 'after',
-      copy: 'Steer in plain language in the Lead column, for example "keep it under 10%" or "skip SMS". The Lead answers and the plan re-forms on the board.' },
+    1: { route: 'missions', sel: ['[data-tour="goal"]', '#page-title'], where: 'after',
+      copy: 'This is a goal, in one sentence. Below it is the plan: each step, which agent does it, and what it produced. The forecast says whether you will hit the target.' },
+    2: { route: 'missions', sel: ['[data-tour="ask"]', '#rail-approvals'], where: 'after',
+      copy: 'When a choice is yours to make, the agents stop and ask here, with the reason and what each answer changes. Everything waiting is also under Approvals in the rail.',
+      zeroCopy: 'Nothing is waiting for you right now. When an agent needs a decision, it appears under Approvals with the reason and the impact.' },
+    3: { route: 'missions', sel: ['[data-tour="lead"]', '#page-title'], where: 'after',
+      copy: 'Change course in plain language, for example "keep it under 10%" or "skip SMS". The plan updates and Activity records what changed.' },
     4: { route: 'missions', sel: ['#app-new-goal'], where: 'after',
-      copy: 'Give the team a new goal in one sentence. It joins the missions here and the Lead starts planning.' }
+      copy: 'Set a new goal here: the outcome, a deadline and any limits, in one sentence. The agents plan it and start.' }
   };
 
   /* ---------------- runtime (not persisted) ---------------- */
@@ -61,7 +61,7 @@
     if (ms && ms.order) ms.order.forEach(function (id) { var m = ms.byId[id]; if (m && m.status !== 'done' && m.status !== 'stopped') (m.asks || []).forEach(function (a) { if (a.status === 'open') n++; }); });
     return n;
   }
-  function routeKey() { var r = ui().route; return r === 'home' ? 'missions' : r; }
+  function routeKey() { return ui().route; }
   function pendingIds() {
     var w = MC.store.getState();
     var p = w && w.proposals;
@@ -111,7 +111,9 @@
   function start() {
     R.shown = null; R.sawDrawer = false; R.pending = null; R.manual = true; R.lastInput = 0;
     MC.uiStore.set({ firstRun: Object.assign({}, FRESH), drawer: null });
-    if (routeKey() !== 'missions') MC.nav.go('missions');
+    var w = MC.store.getState(), first = null;
+    try { first = MC.missions.list(w).filter(function (m) { return m.status !== 'done' && m.status !== 'stopped'; })[0] || null; } catch (e) { first = null; }
+    MC.nav.go('missions', first ? first.id : null);
     emit();
   }
 
@@ -120,7 +122,7 @@
     var s = ui(), f = current();
     if (!isActive(f)) { if (R.shown !== null) hide(); return; }
     var step = f.step;
-    if (s.drawer === 'approvals' && step === 2) { hide(); write({ step: 3 }); return; }   // opening Asks on their own marks step 2 done
+    if ((s.drawer === 'approvals' || s.route === 'approvals') && step === 2) { hide(); write({ step: 3 }); return; }   // opening Asks on their own marks step 2 done
     if (s.drawer === 'goal' && step === 4) { hide(); write({ step: 4, done: true }); return; }
     if (R.shown !== null) {
       var def = stepDef(R.shown);
