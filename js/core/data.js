@@ -777,11 +777,11 @@
       m.data = Object.assign({}, m.data, { audience: { segmentId: spec.segmentId, resolvedId: spec.segmentId, label: 'lapsed hikers', hints: ['lapsed hikers'], size: rc.n, reach: rc.reach, primary: 'email' },
         linked: true, campaignId: c.id, channels: c.channels.slice(), missing: [] });
       beat(m, t0, 'lead', 'thought', L.voice.opening(m));
-      beat(m, t0 + 1, 'lead', 'thought', 'Wave 1 is already running, so I’m building on it rather than starting a second campaign.');
+      beat(m, t0 + 1, 'lead', 'thought', 'Wave 1 was already running, so the plan builds on it instead of starting a second campaign.');
       stepDone(m, 's1', t0 + 2);
       beat(m, t0 + 6, 'scout', 'did', 'Found ' + fm.num(rc.n) + ' lapsed hikers (no order in 120+ days); ' + fm.num(rc.reach) + ' (' + fm.pct(rc.n ? rc.reach / rc.n : 0, 0) + ') can be reached by email.');
       stepDone(m, 's2', t0 + 6, { artifact: { kind: 'segment', id: spec.segmentId }, note: 'Found ' + fm.num(rc.n) + ' lapsed hikers.', decision: audienceDecision(spec) });
-      beat(m, t0 + 7, 'scout', 'handoff', 'Passing the audience to Campaign Planner.');
+      beat(m, t0 + 7, 'scout', 'handoff', 'Audience passed to Campaign Planner.');
       beat(m, t0 + 12, 'planner', 'did', 'Wave 1 is “' + c.name + '”: ' + joinWords(c.channels.map(chWord)) + (offerPct ? ', ' + offerPct + '% off' : '') + ', ' + fm.money(c.budget.total) + ', running through ' + L.dayShort(lastDay) + '.');
       stepDone(m, 's3', t0 + 12, { artifact: { kind: 'campaign', id: c.id }, note: 'Wave 1 is live.' });
       m.artifacts = [{ kind: 'segment', id: spec.segmentId }, { kind: 'campaign', id: c.id }];
@@ -814,7 +814,7 @@
       stepDone(m, 's1', t0 + 3);
       beat(m, t0 + 6, 'scout', 'did', 'Found ' + fm.num(rc.n) + ' ' + lc1(sg.name) + '; ' + fm.num(rc.reach) + ' (' + fm.pct(rc.n ? rc.reach / rc.n : 0, 0) + ') can be reached by email. They get first access.');
       stepDone(m, 's2', t0 + 6, { artifact: { kind: 'segment', id: spec.segmentId }, note: 'Found ' + fm.num(rc.n) + ' members.', decision: audienceDecision(spec) });
-      beat(m, t0 + 7, 'scout', 'handoff', 'Passing the audience to Campaign Planner.');
+      beat(m, t0 + 7, 'scout', 'handoff', 'Audience passed to Campaign Planner.');
       beat(m, t0 + 14, 'planner', 'did', '“' + c.name + '” covers ' + joinWords(chs.map(chWord)) + ' with ' + fm.money(c.budget.total) + ', starting ' + L.dayShort(Math.floor(c.startTick / 24)) + '.');
       stepDone(m, 's3', t0 + 14, { artifact: { kind: 'campaign', id: c.id }, note: 'Drafted and scheduled.' });
       beat(m, t0 + 20, 'copy', 'did', 'The campaign carries ' + vs.length + ' messages across ' + joinWords(chs.map(chWord)) + ', all checked against the brand book.');
@@ -824,7 +824,7 @@
       stepDone(m, 's6', t0 + 22, { note: joinWords(hours) });
       beat(m, t0 + 24, 'pacer', 'did', 'The ' + fm.money(c.budget.total) + ' is split across ' + joinWords(chs.map(chWord)) + '; ' + chWord(big) + ' takes the largest share at ' + fm.money(c.budget.byChannel[big] || 0) + '.');
       stepDone(m, 's7', t0 + 24, { note: 'Split set.', decision: channelDecision(c) });
-      beat(m, t0 + 25, 'lead', 'did', 'The draft is ready and the team has checked it.');
+      beat(m, t0 + 25, 'lead', 'did', 'Draft ready; every check passed.');
       stepDone(m, 's8', t0 + 26, { note: 'Handed over for sign-off.' });
       var launch = { id: 'a1', stepId: 's8', agentId: 'lead', kind: 'launch', blocking: false, question: '“' + c.name + '” is drafted. Ready to schedule it for ' + L.dayShort(Math.floor(c.startTick / 24)) + '?',
         why: 'Nothing sends until it passes the launch checklist and you schedule it.', impact: { metric: 'revenue', lo: 0, hi: 0 }, options: ['Yes, schedule it', 'Not yet'], default: 'Yes, schedule it',
@@ -832,12 +832,12 @@
       m.asks = [launch];
       beat(m, t0 + 26, 'lead', 'ask', launch.question, 'a1');
       beat(m, t0 + 30, 'lead', 'did', 'You answered: Yes, schedule it.', 'a1');
-      beat(m, t0 + 31, 'lead', 'did', 'Great. It’s in Campaigns and scheduled for ' + L.dayShort(Math.floor(c.startTick / 24)) + '.');
+      beat(m, t0 + 31, 'lead', 'did', 'Scheduled in Campaigns for ' + L.dayShort(Math.floor(c.startTick / 24)) + '.');
       stepDone(m, 's9', t0 + 36, { note: 'Tracking daily.' });
-      beat(m, t0 + 37, 'analyst', 'did', 'I’ll check in every morning at ' + fm.hour(9) + ' against ' + fm.money(m.objective.target) + ' in revenue ' + m.objective.deadlineText + '.');
+      beat(m, t0 + 37, 'analyst', 'did', 'Daily check-in set for ' + fm.hour(9) + ' against ' + fm.money(m.objective.target) + ' in revenue ' + m.objective.deadlineText + '.');
       // the re-plan in its history
       var rt = t0 + 24 * 2 + 9;
-      beat(m, rt, 'lead', 'replan', 'Reviewed the plan against the ' + fm.money(m.objective.target) + ' goal. With only a few days of runway the margin is thin, so I asked Budget Pacer to tilt spend toward the channels that return the most per dollar and Variant Optimizer to watch the first results closely.');
+      beat(m, rt, 'lead', 'replan', 'Reviewed the plan against the ' + fm.money(m.objective.target) + ' goal. With only a few days of runway the margin is thin, so Budget Pacer was asked to tilt spend toward the channels that return the most per dollar and Variant Optimizer to watch the first results closely.');
       m.plan = m.plan.concat([L.step('s10', 'pacer', 'Re-split the budget toward the higher-return channels', [])]);
       m.plan = m.plan.map(function (s) { return s.id === 's10' ? Object.assign({}, s, { status: 'done', startedTick: rt, doneTick: rt + 8, note: 'Budget tilted toward ' + chWord(big) + ' and the other high-return channels.' }) : s; });
       beat(m, rt + 8, 'pacer', 'did', 'Re-split the budget toward the channels returning the most per extra dollar; the ' + fm.money(c.budget.total) + ' total did not change.');

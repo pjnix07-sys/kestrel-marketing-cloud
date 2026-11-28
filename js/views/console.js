@@ -1,5 +1,5 @@
-/* Marketing Cloud - Team (#team; still MC.views.agents): each agent as a working teammate (what it is doing now and on which
-   mission, hand-offs, record, settings behind a disclosure). Activity, Approvals, Guardrails and Run history remain reachable
+/* Marketing Cloud - Agents (#team; still MC.views.agents): each agent as a feature (what it does, its current work and which
+   goal it is on, its record; settings behind Details). Activity, Approvals, Guardrails and Run history remain reachable
    and exported on MC.views.teamParts.
    Run traces read as plain language (what the agent saw, what it decided, what changed) and are
    rendered from data fields only (step text, rows, rationale, optional summary), so richer
@@ -1090,7 +1090,7 @@
     </div>`;
   }
 
-  /* ================= Team: each agent as a working teammate ================= */
+  /* ================= Agents: each agent as a feature ================= */
   var LEAD_ID = 'lead';
   var ORDER = ['lead', 'scout', 'copy', 'guard', 'sendtime', 'pacer', 'planner', 'optimizer', 'analyst'];
   var GLYPH = {
@@ -1105,9 +1105,9 @@
     sendtime: '<circle cx="8" cy="8" r="6"/><path d="M8 4.5V8l2.6 1.8"/>'
   };
   var ROLE = {
-    lead: 'Turns your goal into a plan, hands out the work, re-plans when results drift.'
+    lead: 'Turns your goal into a plan, assigns the steps, re-plans when results drift.'
   };
-  var STATE_WORD = { work: 'Working', wait: 'Waiting on you', watch: 'Watching', idle: 'Idle', off: 'Off', paused: 'Paused' };
+  var STATE_WORD = { work: 'Working', wait: 'Needs your decision', watch: 'Watching', idle: 'Idle', off: 'Off', paused: 'Paused' };
 
   function Mark(p) {
     return html`<svg className="tm-mark" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" focusable="false"
@@ -1115,7 +1115,7 @@
   }
   function selMissionState(w) { return w.missions || null; }
   function missionsOf(ms) { return ms && ms.order ? ms.order.map(function (id) { return ms.byId[id]; }).filter(Boolean) : EMPTY; }
-  function shortGoal(m) { return m.title || m.goalText || 'this mission'; }
+  function shortGoal(m) { return m.title || m.goalText || 'this goal'; }
   function missionHref(m) { return '#missions/' + encodeURIComponent(m.id); }
   function firstSentence(s) { s = String(s || ''); var i = s.search(/[.!?](\s|$)/); return i > 12 && i < s.length - 1 ? s.slice(0, i + 1) : s; }
 
@@ -1179,9 +1179,9 @@
     var on = useAiOn();
     if (!row) {
       return html`<div className="tm-settings-body">
-        <p className="tm-note">${on ? 'Lead plans from your own words with Claude, and checks every plan against your limits before anything moves.'
-          : 'Lead plans with its built-in planner. Connect Claude and it plans from free text instead.'}</p>
-        <p className="tm-note">Lead has no schedule: it acts when you set a goal, steer a mission or answer an ask.</p>
+        <p className="tm-note">${on ? 'Planner plans from your own words with Claude, and checks every plan against your limits before anything moves.'
+          : 'Planner uses its built-in planning rules. Connect Claude and it plans from free text instead.'}</p>
+        <p className="tm-note">Planner has no schedule: it acts when you set a goal, steer a goal or answer a decision.</p>
       </div>`;
     }
     var st = stateOf(row), paused = row.agentStatus === 'paused' || st === 'paused', def = agentDef(id);
@@ -1211,6 +1211,7 @@
     </div>`;
   }
 
+  function DetailsC(p) { var D = MC.ui && MC.ui.Details; return D ? html`<${D} summary=${p.summary} open=${p.open}>${p.children}<//>` : html`<div>${p.children}</div>`; }
   function TeamRow(p) {
     var React = R();
     var id = p.id, row = p.row, w = p.work, tick = p.tick;
@@ -1244,20 +1245,18 @@
         ${w.voice && firstSentence(w.voice.b.text) !== firstSentence(nowText) ? html`<p className="tm-voice">“${firstSentence(w.voice.b.text)}” <span className="tm-voice-t num">${when(w.voice.b.tick, tick)}</span></p>` : null}
       </div>
       <div className="tm-hands">
-        <p className="tm-k">Hand-offs</p>
-        ${w.hands.length ? html`<ul className="tm-hand-list">${w.hands.map(function (h, i) { return html`<${Hand} key=${i} h=${h} tick=${tick} />`; })}</ul>` : html`<p className="tm-none">None yet.</p>`}
+        <p className="tm-k">How it runs</p>
+        <p className="tm-now-text">${row ? (AUTONOMY_LABEL[row.autonomy] || DASH) + ', ' + cadenceLabel(row.cadence).toLowerCase() : 'When you set, steer or answer a goal'}</p>
       </div>
       <div className="tm-rec">
         <p className="tm-k">Record</p>
-        <p className="tm-rec-main"><span className="tm-big num">${applied}</span> <span>${id === LEAD_ID ? 'steps handed out' : (applied === 1 ? 'change applied' : 'changes applied')}</span></p>
+        <p className="tm-rec-main"><span className="tm-big num">${applied}</span> <span>${id === LEAD_ID ? 'steps assigned' : (applied === 1 ? 'change applied' : 'changes applied')}</span></p>
         <p className="tm-rec-sub num">${row ? (undone ? undone + ' undone' : 'None undone') : plural(w.asks, 'ask') + ' raised'}${itext ? MID + itext : (row && tr && /measuring/.test(tr.text) ? MID + 'impact still measuring' : '')}</p>
         ${row && row.pending > 0 ? html`<p className="tm-rec-sub"><${Link} onClick=${function () { openAsks(); }}>${plural(row.pending, 'suggestion') + ' waiting for you'}<//></p>` : null}
       </div>
-      <div className="tm-foot">
-        <button type="button" className="tm-toggle" aria-expanded=${open ? 'true' : 'false'} aria-controls=${sid}
-          onClick=${function () { setOpen(!open); }}>${open ? 'Hide settings' : 'Settings'}<span className="tm-toggle-sub">${row ? ' · ' + (AUTONOMY_LABEL[row.autonomy] || DASH) + ', ' + cadenceLabel(row.cadence).toLowerCase() : ''}</span></button>
+      <div className="tm-settings-wrap">
+        <${DetailsC} summary="Settings and run history" open=${p.open ? true : undefined}><${SettingsPanel} id=${id} row=${row} tick=${tick} impact=${p.impact} entries=${p.entries} auditId=${p.auditId} /><//>
       </div>
-      ${open ? html`<div className="tm-settings" id=${sid}><${SettingsPanel} id=${id} row=${row} tick=${tick} impact=${p.impact} entries=${p.entries} auditId=${p.auditId} /></div>` : null}
     </li>`;
   }
 
@@ -1269,7 +1268,7 @@
   function missionAgentState(m, aid) {
     var mine = (m.plan || EMPTY).filter(function (s) { return s.agentId === aid; });
     var cur = mine.filter(function (s) { return s.status === 'working'; })[0], bl = mine.filter(function (s) { return s.status === 'blocked'; })[0];
-    if (bl) return { cls: 'wait', word: 'waiting on you', title: bl.title };
+    if (bl) return { cls: 'wait', word: 'needs your decision', title: bl.title };
     if (cur) return { cls: 'work', word: 'working', title: cur.title };
     if (mine.every(function (s) { return s.status === 'done' || s.status === 'skipped'; })) return { cls: 'ok', word: 'done', title: mine.length ? mine[mine.length - 1].title : '' };
     var q = mine.filter(function (s) { return s.status === 'queued'; })[0];
@@ -1278,13 +1277,13 @@
   function ByMission(p) {
     var live = p.missions.filter(function (m) { return m.status !== 'stopped' && m.status !== 'done'; });
     if (!live.length) return null;
-    return html`<section className="tm-bym" aria-label="Who is on each mission">
-      <h2 className="tm-bym-h">By mission</h2>
+    return html`<section className="tm-bym" aria-label="Which agents are on each goal">
+      <h2 className="tm-bym-h">By goal</h2>
       <ul className="tm-bym-list">${live.map(function (m) {
         var seen = {}, agents = [], asks = (m.asks || EMPTY).filter(function (a) { return a.status === 'open'; }).length;
         (m.plan || EMPTY).forEach(function (s) { if (!seen[s.agentId]) { seen[s.agentId] = 1; agents.push(s.agentId); } });
         return html`<li key=${m.id} className="tm-bym-m" data-mission=${m.id}>
-          <p className="tm-bym-t"><a href=${missionHref(m)}>${m.goalText || shortGoal(m)}</a>${asks ? html` <span className="tm-bym-ask">${plural(asks, 'ask')} waiting on you</span>` : null}</p>
+          <p className="tm-bym-t"><a href=${missionHref(m)}>${m.goalText || shortGoal(m)}</a>${asks ? html` <span className="tm-bym-ask">${plural(asks, 'decision')} needed</span>` : null}</p>
           <ul className="tm-bym-agents">${agents.map(function (aid) {
             var st = missionAgentState(m, aid);
             return html`<li key=${aid} className=${'is-' + st.cls}><a href=${'#team'} onClick=${function (e) { e.preventDefault(); setFocus({ tab: 'roster', agentId: aid, auditId: null }); var el = document.getElementById('agents-row-' + aid); if (el && el.scrollIntoView) el.scrollIntoView({ block: 'center' }); }}><${Mark} id=${aid} />${agentName(aid)}</a>
@@ -1333,7 +1332,7 @@
 
   /* ================= View ================= */
   var SUBNAV = [
-    { id: 'team', label: 'Team' },
+    { id: 'team', label: 'Agents' },
     { id: 'activity', label: 'Activity' },
     { id: 'approvals', label: 'Approvals' },
     { id: 'guardrails', label: 'Guardrails' },
@@ -1364,26 +1363,26 @@
     ORDER.forEach(function (id) { var s = deriveWork(missions, id, tick).state; if (s === 'work') working++; else if (s === 'watch') watching++; else if (s === 'wait') asking++; });
     var liveMissions = missions.filter(function (m) { return m.status !== 'stopped' && m.status !== 'done'; }).length;
     var body;
-    if (ready === undefined) body = html`<p className="cn-muted">Loading the team${ELL}</p>`;
+    if (ready === undefined) body = html`<p className="cn-muted">Loading agents${ELL}</p>`;
     else if (tab === 'team') body = html`<${TeamBoard} roster=${roster} tick=${tick} focusId=${focus.agentId || null} auditId=${focus.auditId || null} />`;
     else if (tab === 'activity') body = html`<${ActivityTab} roster=${roster} tick=${tick} />`;
     else if (tab === 'approvals') body = html`<${ApprovalsTab} roster=${roster} tick=${tick} />`;
     else if (tab === 'guardrails') body = html`<${GuardrailsTab} />`;
     else body = html`<${HistoryTab} roster=${roster} tick=${tick} />`;
     var subBits = [];
-    if (liveMissions) subBits.push(plural(liveMissions, 'mission') + ' running');
-    if (working) subBits.push(plural(working, 'teammate') + ' working');
-    if (watching) subBits.push(plural(watching, 'teammate') + ' watching');
-    if (asking) subBits.push(asking + ' waiting on you');
+    if (liveMissions) subBits.push(plural(liveMissions, 'goal') + ' in progress');
+    if (working) subBits.push(plural(working, 'agent') + ' working');
+    if (watching) subBits.push(plural(watching, 'agent') + ' watching');
+    if (asking) subBits.push(asking + (asking === 1 ? ' needs' : ' need') + ' your decision');
     if (openCount) subBits.push(plural(openCount, 'suggestion') + ' to review');
-    var sub = subBits.length ? subBits.join(MID) : 'No missions running. Give the team a goal in Missions.';
+    var sub = subBits.length ? subBits.join(MID) : 'No goals in progress. Give the agents a goal to start.';
     return html`<section className="v-agents v-team">
       <header className="tm-head">
-        <h1 id="page-title" tabIndex="-1" className="tm-title">Your team of nine</h1>
+        <h1 id="page-title" tabIndex="-1" className="tm-title">Agents</h1>
         <p className="cn-sr" role="status" aria-live="polite">${roster.filter(function (r) { return r.awaiting; }).map(function (r) { return displayName(r) + ' is thinking' + ELL; }).join(' ')}</p>
         <p className="tm-sub num">${sub}</p>
         ${!connected ? html`<p className="tm-sub tm-connect">Agents follow built-in rules for now. Connect Claude so they can explain their choices and write copy.</p>` : null}
-        <nav className="tm-subnav" aria-label="Team sections">
+        <nav className="tm-subnav" aria-label="Agents sections">
           ${SUBNAV.map(function (s) {
             var on = s.id === tab;
             return html`<button key=${s.id} type="button" className=${cx('tm-subnav-btn', on && 'is-on')} aria-current=${on ? 'page' : null}

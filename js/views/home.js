@@ -39,11 +39,16 @@
     if (m.status === 'stopped') return { text: 'Stopped', tone: 'idle' };
     if (m.status === 'paused') return { text: 'Paused', tone: 'idle' };
     if (openAsksOf(m).length) return { text: 'Needs your decision', tone: 'ask' };
+    var r = null;
+    try { r = MC.metrics.mission(world(), m.id); } catch (e) { r = null; }
+    if (r && r.band === 'met') return { text: 'Ended, goal met', tone: 'done' };
+    if (r && r.band === 'missed') return { text: 'Ended, short of goal', tone: 'idle' };
     if ((m.plan || EMPTY).some(function (s) { return s.status === 'working'; })) return { text: 'Working', tone: 'work' };
     return { text: m.phase === 'monitoring' ? 'Tracking results' : 'Planning', tone: 'work' };
   }
   function verdictText(m, r) {
     if (!r || m.status === 'stopped') return '';
+    if (r.band === 'met' || r.band === 'missed') return r.text;
     try {
       var f = r.forecast && typeof r.forecast === 'object' ? r.forecast.value : r.forecast;
       return L().voice.verdict(m, { verdict: r.verdict, value: r.value, target: r.target, lo: r.lo, hi: r.hi, forecast: f });
@@ -161,6 +166,28 @@
       ${msg ? html`<p className="dec-err" role="alert">${msg}</p>` : null}
     </li>`;
   }
+  // One line per proposal: what, who, why in a sentence. Low-risk ones can be approved here; the rest open in Approvals.
+  function PropRow(p) {
+    var React = window.React, es = React.useState(null), msg = es[0], setMsg = es[1], x = p.p;
+    var can = true;
+    try { can = MC.catalog.can(MC.uiStore.getState().persona, 'approve'); } catch (e) { can = true; }
+    function approve() {
+      var r = null;
+      try { r = MC.store.dispatch({ type: 'proposal/approve', payload: { id: x.id } }); } catch (e) { r = { ok: false, error: String(e.message || e) }; }
+      setMsg(r && r.ok === false ? (r.error || 'That did not go through.') : null);
+    }
+    var quick = can && x.risk === 'low';
+    return html`<li className="dec-row dec-prop" data-proposal=${x.id}>
+      <p className="dec-from"><${Mark} id=${x.agentId} size=${13} /> ${agentName(x.agentId)}${x.risk ? ' ' + DOT + ' ' + x.risk + ' risk' : ''}</p>
+      <h3 className="dec-q dec-q--sm">${x.title}</h3>
+      ${x.rationale ? html`<p className="dec-why">${trunc(x.rationale, 140)}</p>` : null}
+      <div className="dec-act">
+        ${quick ? html`<button type="button" className="dec-btn is-default" onClick=${approve}>Approve</button>` : null}
+        <button type="button" className="dec-btn" onClick=${function () { go('approvals'); }}>${quick ? 'Details' : 'Review'}</button>
+      </div>
+      ${msg ? html`<p className="dec-err" role="alert">${msg}</p>` : null}
+    </li>`;
+  }
   function Decisions(p) {
     var w = p.world, PC = ui('ProposalCard'), asks = [], props = [];
     var snap = null;
@@ -174,12 +201,9 @@
       <h2 id="hm-dec-h" className="hm-h">Needs your decision${n ? html` <span className="hm-count">${n}</span>` : null}</h2>
       ${n ? html`<ul className="dec-list">
         ${asks.map(function (x) { return html`<${AskRow} key=${x.m.id + ':' + x.ask.id} ask=${x.ask} m=${x.m} />`; })}
-        ${props.slice(0, 3).map(function (x) {
-          var m = missionOfProposal(w, x);
-          return html`<li key=${x.id} className="dec-row dec-prop">${m ? html`<p className="dec-from">${trunc(m.goalText, 72)}</p>` : null}${PC ? html`<${PC} id=${x.id} showTarget=${true} />` : html`<h3 className="dec-q">${x.title}</h3>`}</li>`;
-        })}
+        ${props.slice(0, 3).map(function (x) { return html`<${PropRow} key=${x.id} p=${x} />`; })}
       </ul>
-      ${props.length > 3 ? html`<p className="hm-more"><a href="#approvals" onClick=${function (e) { e.preventDefault(); go('approvals'); }}>${plural(props.length - 3, 'more proposal', 'more proposals')}</a></p>` : null}`
+      ${props.length > 3 ? html`<p className="hm-more"><a href="#approvals" onClick=${function (e) { e.preventDefault(); go('approvals'); }}>${plural(props.length - 3, 'more suggestion', 'more suggestions')} in Approvals</a></p>` : null}`
       : html`<p className="hm-quiet">Nothing needs a decision. Agents ask here when a choice is yours to make.</p>`}
     </section>`;
   }
@@ -215,7 +239,8 @@
         </div>
         <div className="hm-head-actions">${newBtn}</div>
       </header>
-      <${Decisions} world=${w} />
+      <div className="hm-grid">
+      <div className="hm-main">
       <section className="hm-sec" aria-labelledby="hm-goals-h">
         <h2 id="hm-goals-h" className="hm-h">Goals <a className="hm-all" href="#missions" onClick=${function (e) { e.preventDefault(); go('missions'); }}>All goals</a></h2>
         ${goals.length ? html`<${GoalRows} world=${w} goals=${goals} />` : (function () {
@@ -232,6 +257,9 @@
         ${facts.length ? html`<ul className="act-list">${facts.map(function (f) { return html`<${FactRow} key=${f.key} fact=${f} now=${now} showGoal=${goals.length > 1} />`; })}</ul>`
           : html`<p className="hm-quiet">Agent work shows here as it is done.</p>`}
       </section>
+      </div>
+      <aside className="hm-side"><${Decisions} world=${w} /></aside>
+      </div>
     </section>`;
   }
 

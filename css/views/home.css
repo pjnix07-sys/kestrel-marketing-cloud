@@ -1,7 +1,7 @@
 /* Marketing Cloud - Home (#home) and the shared goal row, decision row and activity list (MC.goalUi).
    Calm and typographic: one column, thin rules, no tiles. Colors from tokens only. */
 
-.v-home { display: grid; gap: 32px; min-width: 0; max-width: 980px; color: var(--ink); }
+.v-home { display: grid; gap: 32px; min-width: 0; max-width: 1320px; color: var(--ink); }
 .v-home *, .gl-list *, .act-list * { box-sizing: border-box; }
 .v-home :focus-visible, .gl-list :focus-visible, .act-list :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 .v-home h1, .v-home h2, .v-home h3, .v-home p, .v-home ul { margin: 0; padding: 0; }
@@ -48,7 +48,7 @@
 .gl-status { font-weight: 650; color: var(--ink); }
 .gl-status.is-ask { color: var(--signal-ink, var(--ink)); }
 .gl-status.is-idle { color: var(--ink-3); }
-.gl-num { font-variant-numeric: tabular-nums; }
+.gl-num { font-variant-numeric: normal; }
 .gl-verdict { margin: 0; font-size: 13.5px; color: var(--ink-2); }
 .gl-verdict.is-behind { color: var(--crit); }
 .gl-verdict.is-ahead, .gl-verdict.is-on { color: var(--good); }
@@ -70,3 +70,9 @@
 .act-text { color: var(--ink); }
 .act-row.k-ask .act-text { font-weight: 600; }
 .act-goal { font-size: 12px; color: var(--ink-3); }
+
+/* Home layout: goals, revenue and recent work on the left; decisions beside them. */
+.v-home .hm-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-5); align-items: start; }
+@media (min-width: 1100px) { .v-home .hm-grid { grid-template-columns: minmax(0, 1.65fr) minmax(320px, 1fr); } .v-home .hm-side { position: sticky; top: var(--space-4); } }
+.v-home .hm-main { display: flex; flex-direction: column; gap: var(--space-5); min-width: 0; }
+.v-home .dec-q--sm { font-size: var(--text-md); }
