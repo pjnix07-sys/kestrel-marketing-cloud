@@ -672,10 +672,12 @@
     var parsed = takeConstraints(low);
     var newCons = given && given.length ? clone(given) : parsed.constraints;
     var res = { constraints: L.mergeConstraints((m.objective && m.objective.constraints) || [], newCons), beats: [], added: [], changed: [] };
-    function say(agentId, kind, t) { res.beats.push({ agentId: agentId, kind: kind, text: t }); }
+    function say(agentId, kind, t, diff) { var b = { agentId: agentId, kind: kind, text: t }; if (diff) b.diff = diff; res.beats.push(b); }
     var today = todayOf(world);
+    var camp0 = world && m.data && m.data.campaignId ? world.campaigns.byId[m.data.campaignId] : null;
+    function stNow(s) { return { running: 'running', waiting: 'waiting for you', paused: 'paused', planning: 'planning', done: 'done', stopped: 'stopped' }[s] || s; }
     // pause / stop / resume
-    if (STEER_STOP.test(low)) { res.status = 'stopped'; say('lead', 'did', 'Stopped. Everything the team made stays where it is, and nothing further will run.'); return res; }
+    if (STEER_STOP.test(low)) { res.status = 'stopped'; say('lead', 'did', 'Stopped. Everything the team made stays where it is, and nothing further will run.', [{ what: 'Mission', from: stNow(m.status), to: 'stopped' }]); return res; }
     var mm = /\b(?:pause|hold off|wait|freeze)\b[^.]*?\buntil\s+(?:next\s+)?([a-z]+(?:\s+\d{1,2})?)/.exec(low);
     if (STEER_PAUSE.test(low) && !/\bdon[’']?t pause\b/.test(low)) {
       res.status = 'paused';
@@ -683,11 +685,12 @@
         var dl = takeDeadline(' by ' + mm[1] + ' ', today);
         if (dl.day !== null) res.resumeDay = dl.day;
       }
-      say('lead', 'did', res.resumeDay ? 'Paused. I’ll pick this back up on ' + dayShort(res.resumeDay) + '.' : 'Paused. Tell me when to pick it back up.');
+      say('lead', 'did', res.resumeDay ? 'Paused. I’ll pick this back up on ' + dayShort(res.resumeDay) + '.' : 'Paused. Tell me when to pick it back up.',
+        [{ what: 'Mission', from: stNow(m.status), to: res.resumeDay ? 'paused until ' + dayShort(res.resumeDay) : 'paused' }]);
       if (!newCons.length) return res;
     } else if (STEER_RESUME.test(low) && m.status === 'paused') {
       res.status = 'running';
-      say('lead', 'did', 'Picking this back up.');
+      say('lead', 'did', 'Picking this back up.', [{ what: 'Mission', from: 'paused', to: 'running' }]);
       if (!newCons.length) return res;
     }
     // deadline / target changes
@@ -696,10 +699,10 @@
     var changedObj = false;
     if (dline.day !== null && /\b(?:move|push|change|extend|make|set|deadline|by|before)\b/.test(low)) {
       obj.by = dline.day; obj.deadlineText = dline.text; changedObj = true;
-      say('lead', 'replan', 'New deadline: ' + dline.text + '. I’m adjusting the campaign dates to match.');
+      say('lead', 'replan', 'New deadline: ' + dline.text + '. I’m adjusting the campaign dates to match.', [{ what: 'Deadline', from: isNum(m.objective.by) ? dayShort(m.objective.by) : '', to: dayShort(dline.day) }]);
     }
     var tm = /\b(?:target|goal|aim)\b[^\d$]{0,30}\$?\s?([\d,]*\.?\d+\s*[km]?)\b/.exec(parsed.rest);
-    if (tm) { var tv = amount(tm[1].replace(/\s+/g, '')); if (tv && tv > 0) { obj.target = tv; changedObj = true; say('lead', 'replan', 'New target: ' + L.fmtMetric(obj.metric, tv) + ' ' + L.metricNoun(obj.metric) + '.'); } }
+    if (tm) { var tv = amount(tm[1].replace(/\s+/g, '')); if (tv && tv > 0) { obj.target = tv; changedObj = true; say('lead', 'replan', 'New target: ' + L.fmtMetric(obj.metric, tv) + ' ' + L.metricNoun(obj.metric) + '.', [{ what: 'Target', from: L.fmtMetric(obj.metric, m.objective.target), to: L.fmtMetric(obj.metric, tv) }]); } }
     if (changedObj) res.objective = obj;
     var steps = m.plan || [], nextN = steps.length + 1, last = steps.length ? steps[steps.length - 1].id : null;
     function add(kind, title, needs, extra) {
@@ -717,22 +720,27 @@
       if (c.kind === 'maxDiscountPct') {
         res.changed.push(c);
         say('lead', 'replan', c.value > 0 ? 'Capping discounts at ' + c.value + '%. ' + (hasCampaign ? 'I’m asking Copy Drafter to rewrite anything that goes deeper.' : 'The offer on the campaign and the copy will stay inside that.')
-          : 'No discounts from here on. Offers become free shipping or none, and the copy follows.');
+          : 'No discounts from here on. Offers become free shipping or none, and the copy follows.',
+          [{ what: 'Discount limit', from: old ? (old.value > 0 ? old.value + '%' : 'none allowed') : 'no limit', to: c.value > 0 ? c.value + '%' : 'none allowed' }].concat(camp0 ? [{ what: 'Offer', from: L.offerLabel(camp0.offer), to: L.offerLabel(offerFor((m.data || {}).template, newCons.concat((before || []).filter(function (x) { return x.kind !== 'maxDiscountPct'; })))) }] : []));
         if (hasCampaign) add('offer', 'Bring the offer within ' + (c.value > 0 ? c.value + '%' : 'no discount'), [], { limit: c.value });
         if (hasCampaign) add('rewrite', 'Rewrite messages for the new offer', [res.added[res.added.length - 1].id]);
       } else if (c.kind === 'excludeChannel') {
         if (old && old.value === c.value) return;
         res.changed.push(c);
-        say('lead', 'replan', 'Dropping ' + chLower(c.value) + '. ' + (hasCampaign ? 'The campaign pauses it and its budget moves to the other channels.' : 'It won’t be part of the campaign.'));
+        var chNow = camp0 ? camp0.channels.slice() : [];
+        say('lead', 'replan', 'Dropping ' + chLower(c.value) + '. ' + (hasCampaign ? 'I’m taking it out of the campaign: its journey sends, its messages and its budget, which moves to the other channels.' : 'It won’t be part of the campaign.'),
+          chNow.length ? [{ what: 'Channels', from: chNow.map(chLower).join(', '), to: chNow.filter(function (x) { return x !== c.value; }).map(chLower).join(', ') }] : undefined);
         if (hasCampaign) add('channel', 'Take ' + chLower(c.value) + ' out of the campaign', [], { channel: c.value });
         if (hasCampaign) add('pacer', 'Re-split the budget without ' + chLower(c.value), [res.added[res.added.length - 1].id]);
       } else if (c.kind === 'maxSpend') {
         res.changed.push(c);
-        say('lead', 'replan', 'Keeping total spend at ' + money(c.value) + ' or less.' + (hasCampaign ? ' I’m scaling the campaign budget down to fit.' : ''));
+        say('lead', 'replan', 'Keeping total spend at ' + money(c.value) + ' or less.' + (hasCampaign ? ' I’m scaling the campaign budget down to fit.' : ''),
+          [{ what: 'Spend limit', from: old ? money(old.value) : 'no limit', to: money(c.value) }].concat(camp0 ? [{ what: 'Campaign budget', from: money(camp0.budget.total), to: money(Math.min(camp0.budget.total, c.value)) }] : []));
         if (hasCampaign) add('budget', 'Fit the budget within ' + money(c.value), [], { limit: c.value });
       } else if (c.kind === 'maxSendsPerWeek') {
         res.changed.push(c);
-        say('lead', 'replan', 'No more than ' + c.value + (c.value === 1 ? ' message' : ' messages') + ' a week per person. Fatigue Guard rests anyone who is already at that.');
+        say('lead', 'replan', 'No more than ' + c.value + (c.value === 1 ? ' message' : ' messages') + ' a week per person. Fatigue Guard rests anyone who is already at that.',
+          [{ what: 'Sends per week', from: old ? String(old.value) : 'no limit', to: String(c.value) }]);
         add('guard', 'Rest people who are at ' + c.value + ' messages a week', []);
       }
     });
@@ -772,6 +780,16 @@
       why: head + ' The team has already extended the run and widened the audience; more budget is the lever left, and only you can change the total.',
       impact: { metric: L.metricNoun(m.objective.metric), lo: Math.round(st.target - st.forecast) * 0.3, hi: Math.round(st.target - st.forecast) * 0.7 },
       options: ['Yes, raise the budget', 'No, keep it'], default: 'Yes, raise the budget', status: 'open', answer: null, by: null, createdTick: null, answeredTick: null };
+    var pc = st.pacer;
+    if (pc && isNum(pc.marginal)) {
+      var mg = pc.marginal, pay = mg >= 1;
+      var ret = mg >= 0.01 ? 'about $' + mg.toFixed(2) + ' back per $1' : 'under $0.01 back per $1';
+      var pos2 = 'Today the next $1 on this campaign returns ' + ret + (pay ? ', so more spend still pays for itself.' : ', so more spend loses money on the margin. Moving budget toward ' + chLower(pc.hiCh || pc.lowCh) + ' would do more than raising the total.');
+      var resolution = pay ? 'Budget Pacer agrees the numbers support it, so the ask goes to you.' : 'Only you can change the total, so I’m asking, with Pacer’s numbers attached; if you say yes I’ll pair it with a re-split toward the channels that return most.';
+      ask.why += ' Budget Pacer ' + (pay ? 'agrees: ' : 'disagrees: ') + pos2.charAt(0).toLowerCase() + pos2.slice(1);
+      if (!pay) res.beats.push({ agentId: 'pacer', kind: 'disagree', text: 'Budget Pacer pushed back on asking for more budget: the next $1 returns ' + ret + '. ' + resolution,
+        sides: [{ agentId: 'lead', position: 'We’re short by about ' + gap + ' and more budget is the last lever I control.' }, { agentId: 'pacer', position: pos2 }], resolution: resolution });
+    }
     res.asks.push(ask);
     res.beats.push({ agentId: 'lead', kind: 'replan', text: head + ' We’ve used the levers we control, so I’m asking you about the budget.' });
     return res;
@@ -856,6 +874,14 @@
     var base = L.fmtMetric(o.metric, pr.value) + ' of ' + L.fmtMetric(o.metric, pr.target) + ' ' + n + ' so far';
     if (o.metric === 'unsubs') return base + '; on this pace we finish near ' + num(pr.forecast) + '.';
     return base + ' (' + pct(pr.target > 0 ? pr.value / pr.target : 0) + '). On this pace we land near ' + L.fmtMetric(o.metric, pr.forecast) + ', somewhere between ' + L.fmtMetric(o.metric, pr.lo) + ' and ' + L.fmtMetric(o.metric, pr.hi) + '.';
+  };
+  // "On pace for 312 of 400 (260 to 365) by Dec 15": the forecast verdict beside the goal.
+  V.verdict = function (m, v) {
+    var o = m.objective, n = L.metricNoun(o.metric), f = function (x) { return L.fmtMetric(o.metric, x); };
+    var by = isNum(o.by) ? ' by ' + dayShort(o.by) : '', range = ' (' + f(v.lo) + ' to ' + f(v.hi) + ')';
+    if (v.verdict === 'too early') return 'Too early to call: ' + f(v.value) + ' of ' + f(v.target) + ' ' + n + ' so far' + by + '.';
+    if (o.metric === 'unsubs') return (v.verdict === 'behind' ? 'Over the limit: heading for ' : 'Under the limit: heading for ') + f(v.forecast) + ' against ' + f(v.target) + range + by + '.';
+    return (v.verdict === 'behind' ? 'Behind: heading for ' : (v.verdict === 'ahead' ? 'Ahead: heading for ' : 'On pace for ')) + f(v.forecast) + ' of ' + f(v.target) + range + by + '.';
   };
   V.listJoin = listJoin;
   V.audienceWord = audienceWord;

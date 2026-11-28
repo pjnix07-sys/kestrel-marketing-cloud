@@ -406,6 +406,17 @@
     return null;
   }
 
+  function overlapCount(world, p) {
+    var P = world.proposals, cid = campaignOf(world, p), ch = (p.target && p.target.channel) || '', n = 0, h = p.horizon || 0;
+    P.order.forEach(function (id) {
+      var q = P.byId[id];
+      if (!q || (q.status !== 'applied' && q.status !== 'auto') || !DID_KINDS[q.kind] || !(q.horizon > 0)) return;
+      if (((q.target && q.target.channel) || '') !== ch || campaignOf(world, q) !== cid) return;
+      if (q.appliedTick < p.appliedTick + h && p.appliedTick < q.appliedTick + q.horizon) n++;
+    });
+    return Math.max(1, n);
+  }
+
   function realizeDue(world, t) {
     var P = world.proposals;
     if (!P) return;
@@ -416,6 +427,10 @@
       var r = null;
       try { r = realizeOne(world, p); } catch (e) { report(e); r = null; }
       if (!r) return;
+      // Several proposals on one campaign and channel whose windows overlap are all measured against the same treatment-vs-control
+      // cells, so each would claim the whole difference. Split it evenly among them so the same dollars are never counted twice.
+      var k = overlapCount(world, p);
+      if (k > 1 && DID_KINDS[p.kind]) r = assign({}, r, { delta: r.delta / k, lo: r.lo / k, hi: r.hi / k, share: k });
       put(world, 'proposals', assign({}, prop(world, pid), { realized: r }));
       if (p.impact && p.impact.unit === '$' && isNum(r.delta)) addStats(world, p.agentId, { realized: r.delta });
     });

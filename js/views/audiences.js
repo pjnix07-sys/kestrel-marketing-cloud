@@ -186,7 +186,7 @@
   /* ---------------- attributes and rules ---------------- */
   var OP_LABEL = { gt: 'more than', gte: 'at least', lt: 'less than', lte: 'at most', between: 'between', in: 'is any of', notIn: 'is none of', is: 'is' };
   var OPS_BY_TYPE = { num: ['gt', 'gte', 'lt', 'lte', 'between'], cat: ['in', 'notIn'], bool: ['is'] };
-  var GROUPS = ['Profile', 'Behavior', 'Predictions'];
+  var GROUPS = ['Profile', 'Behavior', 'Content', 'Predictions'];
   var DEFAULTS = {
     lastOrderDays: ['gt', 120], orders: ['gte', 2], spend: ['gte', 300], aov: ['gte', 100], visits30: ['gte', 2],
     affHike: ['gte', 0.3], affCamp: ['gte', 0.3], affClimb: ['gte', 0.3], affRun: ['gte', 0.3], affApparel: ['gte', 0.3],
@@ -221,7 +221,7 @@
     return attrCache;
   }
   function attrOf(key) { return attrs().byKey[key] || null; }
-  function isPredicted(a) { return !!a && a.group === 'Predictions'; }
+  function isPredicted(a) { return !!a && (a.group === 'Predictions' || !!(a.raw && a.raw.predicted && a.group === 'Content')); }
   function unitIsMoney(a) { return !!a && (a.unit === '$' || a.unit === 'usd' || a.key === 'spend' || a.key === 'aov' || a.key === 'ltv'); }
   function fmtAttrValue(a, v) {
     if (!a || !fin(v)) return String(v);
@@ -921,7 +921,7 @@
           <h2 id="aud-seg-detail-title" className="aud-h2">${s.name}</h2>
           <button type="button" className="aud-x" aria-label="Close segment details" onClick=${function () { setFocus({ segmentId: null }); }}>${TIMES}</button>
         </div>
-        <${MadeBy} kind="segment" id=${s.id} />
+        ${MC.ui && MC.ui.Xref ? h`<${MC.ui.Xref} kind="segment" id=${s.id} />` : h`<${MadeBy} kind="segment" id=${s.id} />`}
         <p>${describeRule(s.rule) || 'Matches everyone.'}</p>
         <div className="aud-detail-stats">
           <div><span className="aud-stat-k">Size</span><span className="aud-stat-v num">${fmtNum(s.count)}</span></div>
@@ -939,10 +939,79 @@
               onConfirm=${remove} onCancel=${function () { setConfirm(false); }} />`
             : h`<${Btn} kind="danger" size="sm" id="aud-seg-delete" onClick=${function () { setConfirm(true); }}>Delete segment<//>`}
         </div>
+        <${Responds} segmentId=${s.id} onMakeResponders=${function (angle) {
+          builderMemo = { rule: { op: 'all', items: [{ attr: 'respondsTo:' + angle, cmp: 'is', value: true }] }, name: '', editingId: null, text: '', parsed: null, prevRule: null };
+          builderListeners.forEach(function (fn) { fn(); });
+          p.onTab('builder');
+        }} />
         <${Msg} msg=${msg} />
       </section>` : null}
       <${ScoutPanel} onTab=${p.onTab} />
     </div>`;
+  }
+
+  /* ---------------- what this audience responds to (MC.affinity) ---------------- */
+  function aff() { return MC.affinity && has(MC.affinity, 'forSegment') ? MC.affinity : null; }
+  function clipT(t, n) { t = String(t || ''); return t.length > n ? t.slice(0, n - 1).replace(/\s+\S*$/, '') + '…' : t; }
+  function liftText(r) {
+    if (!r || !fin(r.lift)) return DASH;
+    return (r.lift >= 0 ? '+' : '') + Math.round(r.lift * 100) + '%';
+  }
+  function rangeText(r) { return fin(r.lo) && fin(r.hi) ? Math.round(r.lo * 100) + '% to ' + Math.round(r.hi * 100) + '%' : ''; }
+  // One row per angle: a bar from the interval's low to high end on a shared axis, the estimate as a tick; the zero line is the audience's own average.
+  function AngleRow(p) {
+    var r = p.row, lo = p.min, hi = p.max, span = Math.max(0.01, hi - lo);
+    function pos(v) { return Math.max(0, Math.min(100, ((v - lo) / span) * 100)); }
+    var tone = r.enough ? (r.lo > 0 ? 'good' : (r.hi < 0 ? 'crit' : 'neutral')) : 'none';
+    return h`<li className=${'aud-angle is-' + tone}>
+      <span className="aud-angle-name">${r.label}</span>
+      <span className="aud-angle-chart" role="img" aria-label=${r.enough ? r.label + ': ' + liftText(r) + ' (' + rangeText(r) + ')' : r.label + ': not enough data'}>
+        <span className="aud-angle-zero" style=${{ left: pos(0) + '%' }}></span>
+        ${r.enough ? h`<span className="aud-angle-range" style=${{ left: pos(r.lo) + '%', width: Math.max(1, pos(r.hi) - pos(r.lo)) + '%' }}></span>
+          <span className="aud-angle-est" style=${{ left: pos(r.lift) + '%' }}></span>` : null}
+      </span>
+      <span className="aud-angle-val num">${r.enough ? liftText(r) : DASH}</span>
+      <span className="aud-angle-note aud-muted aud-small">${r.enough ? '(' + rangeText(r) + ') on ' + fmtNum(r.n) + ' sends' : (r.reason || 'Not enough data yet.')}</span>
+    </li>`;
+  }
+  function BlockLine(p) {
+    var b = p.b;
+    return h`<li className="aud-block-line">
+      <button type="button" className="aud-link" onClick=${function () { go('content', { blockId: b.blockId }); }}>“${clipT(b.text || b.blockId, 70)}”</button>
+      <span className="aud-muted aud-small"> ${DOT} ${(MC.content && MC.content.KIND_LABEL && MC.content.KIND_LABEL[b.kind]) || b.kind}${p.tired ? '' : ''}</span>
+      <span className="aud-small num"> ${p.tired ? DASH + ' ' + fmtPct(b.tiredPct, 0) + ' have seen it ' + (b.meanExposures >= 2 ? 'about ' + Math.round(b.meanExposures) + ' times' : 'repeatedly') : DASH + ' ' + liftText(b) + ' (' + rangeText(b) + ')'}</span>
+    </li>`;
+  }
+  function Responds(p) {
+    var tick = useSel(function (w) { return w.meta.tick; });
+    var segCounts = useSel(function (w) { return w.rev ? w.rev.segCounts : 0; });
+    var W = world(), A = aff(), d = null;
+    try { d = W && A ? A.forSegment(W, p.segmentId) : null; } catch (e) { d = null; }
+    if (!d) return null;
+    var rows = d.angles.slice().sort(function (a, b) { return A.ANGLES.indexOf(a.angle) - A.ANGLES.indexOf(b.angle); });
+    var min = 0, max = 0;
+    rows.forEach(function (r) { if (r.enough) { min = Math.min(min, r.lo); max = Math.max(max, r.hi); } });
+    min = Math.min(min, -0.2); max = Math.max(max, 0.2);
+    var bestRow = d.best ? rows.filter(function (r) { return r.angle === d.best; })[0] : null;
+    return h`<section className="aud-responds" aria-labelledby="aud-resp-title">
+      <h3 id="aud-resp-title" className="aud-h3">What this audience responds to</h3>
+      ${d.exposures ? h`<p className="aud-resp-lead">${bestRow
+        ? h`These ${fmtNum(d.members)} people respond most to <strong>${bestRow.label.toLowerCase()}</strong> content: ${liftText(bestRow)} (${rangeText(bestRow)}) against their other angles.`
+        : 'No angle stands clear of this audience’s average yet.'} <span className="aud-muted aud-small">${fmtNum(d.exposures)} messages delivered so far.</span></p>
+        <ul className="aud-angles">${rows.map(function (r) { return h`<${AngleRow} key=${r.angle} row=${r} min=${min} max=${max} />`; })}</ul>
+        <p className="aud-muted aud-small">${d.basis}</p>
+        <div className="aud-resp-blocks">
+          <div><h4 className="aud-h4">Best blocks for them</h4>
+            ${d.topBlocks.length ? h`<ul className="aud-plain">${d.topBlocks.map(function (b) { return h`<${BlockLine} key=${b.blockId} b=${b} />`; })}</ul>` : h`<p className="aud-muted aud-small">No block stands out yet.</p>`}</div>
+          <div><h4 className="aud-h4">Tired for them</h4>
+            ${d.tiredBlocks.length ? h`<ul className="aud-plain">${d.tiredBlocks.map(function (b) { return h`<${BlockLine} key=${b.blockId} b=${b} tired=${true} />`; })}</ul>` : h`<p className="aud-muted aud-small">Nothing is worn out for this audience.</p>`}</div>
+        </div>
+        <div className="aud-detail-actions">
+          ${bestRow ? h`<${Btn} kind="secondary" size="sm" id="aud-resp-make" onClick=${function () { p.onMakeResponders(bestRow.angle); }}>Make an audience of people who respond to ${A.phraseOf(bestRow.angle)}<//>` : null}
+          <${Btn} kind="ghost" size="sm" id="aud-resp-content" onClick=${function () { go('content', { tab: 'intelligence' }); }}>See content intelligence<//>
+        </div>`
+        : h`<p className="aud-muted">Nothing has been sent to this audience yet, so there is nothing to learn from. Once messages go out, this shows which angles they respond to.</p>`}
+    </section>`;
   }
 
   /* ---------------- Profiles tab ---------------- */
@@ -1070,6 +1139,27 @@
     return { label: 'Low', tone: 'good' };
   }
 
+  function ProfileContent(p) {
+    var tick = useSel(function (w) { return w.meta.tick; });
+    var W = world(), A = aff(), d = null;
+    try { d = W && A ? A.forProfile(W, p.idx) : null; } catch (e) { d = null; }
+    if (!d) return null;
+    var best = d.bestAngle ? d.angles.filter(function (r) { return r.angle === d.bestAngle; })[0] : null;
+    var K = MC.content && MC.content.KIND_LABEL || {};
+    return h`<div className="aud-profcontent">
+      <h3 className="aud-h3">Content they have seen</h3>
+      <p>${best ? h`Likely to respond to <strong>${best.label.toLowerCase()}</strong> content. <span className="aud-muted aud-small">${d.basis}</span>` : h`<span className="aud-muted">${d.basis}</span>`}</p>
+      ${d.history.length ? h`<ul className="aud-hist">${d.history.filter(function (x) { return x.kind === 'headline' || x.kind === 'body' || x.kind === 'offer'; }).slice(0, 8).map(function (x) {
+        return h`<li key=${x.blockId}><button type="button" className="aud-link" onClick=${function () { go('content', { blockId: x.blockId }); }}>“${clipT(x.text || x.blockId, 56)}”</button>
+          <span className="aud-muted aud-small"> ${DOT} ${K[x.kind] || x.kind} ${DOT} seen ${x.seen}${x.seen === 1 ? ' time' : ' times'}${x.clicked ? ', clicked ' + x.clicked : ''}${x.ordered ? ', ordered ' + x.ordered : ''}${fin(x.lastTick) ? ' ' + DOT + ' last ' + fmtDayShort(x.lastDay) : ''}</span></li>`;
+      })}</ul>` : h`<p className="aud-muted">No content sent to them yet.</p>`}
+      ${d.fatigue.filter(function (f) { return f.tired; }).length ? h`<h4 className="aud-h4">Worn out for them</h4><ul className="aud-plain">${d.fatigue.filter(function (f) { return f.tired; }).slice(0, 4).map(function (f) {
+        var hb = d.history.filter(function (x) { return x.blockId === f.blockId; })[0];
+        return h`<li key=${f.blockId}>${hb ? '“' + clipT(hb.text || f.blockId, 50) + '”' : f.blockId}<span className="aud-muted aud-small"> ${DOT} seen ${f.exposures} times, ${fmtPct(1 - f.retention, 0)} less effective</span></li>`;
+      })}</ul>` : null}
+    </div>`;
+  }
+
   function ProfileDetail(p) {
     var React = R();
     var rev = useSel(function (w) { return w.rev ? w.rev.profiles : 0; });
@@ -1129,6 +1219,7 @@
       <h3 className="aud-h3">Fatigue</h3>
       <p><${Pill} tone=${fl.tone}>${fl.label}<//> <span className="num">${DASH} ${plural(r.sent7, 'message', 'messages')} in 7 days</span></p>
       <div className="aud-meter" role="img" aria-label=${'Fatigue score ' + r.fatigue.toFixed(1)}><span className=${'is-' + fl.tone} style=${{ width: Math.min(100, (r.fatigue / 5) * 100) + '%' }}></span></div>
+      <${ProfileContent} idx=${i} />
       <h3 className="aud-h3">Recent touches</h3>
       ${touches.length ? h`<ol className="aud-timeline">${touches.map(function (t) {
         return h`<li key=${t.key}><span className="aud-mono aud-small">${fmtStamp(t.t)}</span> <span>${chLabel(t.ch)} ${DOT} ${t.name}</span></li>`;

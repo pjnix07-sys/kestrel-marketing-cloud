@@ -925,6 +925,71 @@
     describe: function (world, p) { return 'You ' + (p.paused ? 'paused ' : 'resumed ') + chLabel(p.channel) + ' on “' + cname(world, p.id) + '”'; }
   });
 
+  // Takes a channel out of a campaign for good: the channel list, budget, send hour, traffic split, journey sends and the
+  // channel's message versions all go, so nothing about it lingers in the journey, the budget or the published messages.
+  // The budget it held moves to the remaining channels (keepTotal, default true). Used by missions when a limit says "no <channel>".
+  C.define('campaign/dropChannel', {
+    by: ['user', 'agent:planner'],
+    label: 'Remove channel',
+    entity: function (p) { return feedEntity('campaign', p.id); },
+    validate: function (world, p, ctx) {
+      var e = campErr(world, p.id, ctx); if (e) return e;
+      var c = camp(world, p.id);
+      if (ctx.agent && !ctx.mission) return 'Agents can’t remove channels directly.';
+      if (c.channels.indexOf(p.channel) < 0) return 'This campaign doesn’t use ' + chLabel(p.channel) + '.';
+      if (c.channels.length < 2) return 'A campaign needs at least one channel.';
+      return null;
+    },
+    reduce: function (world, p, ctx) {
+      var c = camp(world, p.id), ch = p.channel;
+      var channels = c.channels.filter(function (x) { return x !== ch; });
+      var freed = c.budget.byChannel[ch] || 0, by = {}, rest = 0;
+      channels.forEach(function (x) { rest += c.budget.byChannel[x] || 0; });
+      var keep = p.keepTotal !== false, used = 0, big = channels[0];
+      channels.forEach(function (x) {
+        var b = c.budget.byChannel[x] || 0;
+        if (keep && freed > 0) b += rest > 0 ? freed * (b / rest) : freed / channels.length;
+        b = Math.round(b / 10) * 10;
+        by[x] = b; used += b;
+        if (b > by[big]) big = x;
+      });
+      if (keep && freed > 0) by[big] += Math.round((c.budget.total - used) / 10) * 10;
+      var tot = 0; channels.forEach(function (x) { tot += by[x]; });
+      function omit(o) { var r = {}; sortedKeys(o || {}).forEach(function (k) { if (k !== ch) r[k] = o[k]; }); return r; }
+      // journey: relink around the removed sends so every path still reaches an exit
+      var steps = U().clone(c.journey.steps), gone = {};
+      steps.forEach(function (s) { if (s.type === 'send' && s.channel === ch) gone[s.id] = s; });
+      var exitId = (steps.filter(function (s) { return s.type === 'exit'; })[0] || {}).id;
+      function through(id, guard) { var g = gone[id]; return g && guard < 12 ? through(g.next || exitId, guard + 1) : id; }
+      var kept = steps.filter(function (s) { return !gone[s.id]; });
+      kept.forEach(function (s) {
+        ['next', 'yes', 'no'].forEach(function (k) { if (s[k] !== undefined) s[k] = through(s[k], 0); });
+      });
+      if (stepsErr(kept)) kept = defaultSteps(c.goal.type, channels);
+      var en = world.enroll && world.enroll[p.id];
+      if (en && en.step) {
+        var old = c.journey.steps, idx = {};
+        kept.forEach(function (s, i) { idx[s.id] = i; });
+        for (var i = 0; i < en.step.length; i++) {
+          var sx = en.step[i];
+          if (sx < 0) continue;
+          var ni = old[sx] ? idx[old[sx].id] : undefined;
+          if (ni === undefined) { en.step[i] = -2; en.exited = (en.exited || 0) + 1; } else en.step[i] = ni;
+        }
+        U().bump(world, 'enroll');
+      }
+      var vb = assign({}, world.variants.byId);
+      variantsOf(world, c.id, ch).forEach(function (v) { delete vb[v.id]; });
+      world.variants = assign({}, world.variants, { byId: vb });
+      var patch = { channels: channels, budget: { total: tot, byChannel: by }, alloc: omit(c.alloc), sendHour: omit(c.sendHour), channelPaused: omit(c.channelPaused),
+        journey: { steps: kept } };
+      if (c.ctl) patch.ctl = assign({}, c.ctl, { alloc: omit(c.ctl.alloc), sendHour: omit(c.ctl.sendHour), channelPaused: omit(c.ctl.channelPaused) });
+      putCampaign(world, stamp(c, ctx, patch));
+    },
+    inverse: function () { return []; },
+    describe: function (world, p) { return 'You removed ' + chLabel(p.channel) + ' from “' + cname(world, p.id) + '”'; }
+  });
+
   C.define('campaign/applyPlan', {
     by: ['user'],
     label: 'Save plan to draft',
@@ -1998,6 +2063,15 @@
     if (isStale(world, p)) return null;
     var bf = blockingFail(world, p);
     if (bf) return 'Blocked by guardrail: ' + bf.label;
+    // A suggestion that builds on a content block retired since it was proposed can't apply; say which block.
+    if (p.kind !== 'retire-block' && world.content && world.content.blocks) {
+      var payloads = JSON.stringify((p.actions || []).map(function (a) { return a.payload || {}; })), byId = world.content.blocks.byId || {};
+      var gone = Object.keys(byId).filter(function (bid) { return byId[bid] && byId[bid].retired && payloads.indexOf('"' + bid + '"') >= 0; })[0];
+      if (gone) {
+        var v = byId[gone].value, txt = typeof v === 'string' ? v : (v && (v.text || v.label || v.name)) || gone;
+        return 'This suggestion uses “' + String(txt).slice(0, 60) + '”, which was retired after it was made.';
+      }
+    }
     if (!(MC.runtime && typeof MC.runtime.apply === 'function')) return 'The agent runtime isn’t available.';
     return null;
   }

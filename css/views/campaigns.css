@@ -392,3 +392,15 @@
 .v-campaigns .cm-h1 { font-size: clamp(30px, 3.6vw, 44px); line-height: 1.05; font-weight: 700; letter-spacing: -0.025em; }
 .v-campaigns ..cm-card, .v-campaigns .cm-fpanel { background: transparent; border: 0; border-top: 1px solid var(--line); border-radius: 0; box-shadow: none; padding-left: 0; padding-right: 0; }
 .v-campaigns .k-btn-primary { background: var(--moss, #1F5C46); border-color: var(--moss, #1F5C46); color: #fff; }
+
+/* cross-links and the message each journey step sends */
+.v-campaigns .cm-xref { margin: 6px 0 0; font-size: 13px; color: var(--ink-3, #53645A); line-height: 1.5; overflow-wrap: anywhere; }
+.v-campaigns .xlink { color: var(--ink); font-weight: 600; text-decoration: underline; text-decoration-color: var(--line-strong, #B4C0B5); text-underline-offset: 3px; }
+.cm-sends { display: grid; gap: 8px; margin: 6px 0 8px; }
+.cm-send { padding: 6px 0; border-top: 1px solid var(--line, #D5DCD2); min-width: 0; }
+.cm-send-n { margin: 0; font-size: 13px; font-weight: 600; }
+.cm-send-v { margin: 3px 0 0; font-size: 13px; overflow-wrap: anywhere; }
+.cm-send-b { list-style: none; margin: 4px 0 0; padding: 0; display: grid; gap: 2px; font-size: 12.5px; color: var(--ink-3, #53645A); }
+.cm-sends-all { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--line, #D5DCD2); }
+.cm-sends-list { list-style: none; margin: 8px 0 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 4px 24px; }
+.cm-sends-step { border: 0; background: none; padding: 0; font: inherit; font-weight: 700; font-size: 13px; color: var(--ink); cursor: pointer; text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--line-strong, #B4C0B5); }

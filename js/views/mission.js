@@ -55,23 +55,27 @@
     for (i = 0; i < arts.length; i++) if (arts[i].kind === 'segment' && w.segments.byId[arts[i].id]) return w.segments.byId[arts[i].id];
     return null;
   }
-  // Engine totals for the mission's campaigns: sent, delivered, revenue, cost, conversions.
-  function totalsOf(w, cids) {
-    var F = MC.F, out = { sent: 0, deliv: 0, rev: 0, cost: 0, conv: 0 }, days = (w.metrics && w.metrics.days) || EMPTY;
-    for (var i = 0; i < days.length; i++) {
-      var c = days[i] && days[i].c;
-      if (!c) continue;
-      for (var k = 0; k < cids.length; k++) {
-        var cd = c[cids[k]];
-        if (!cd || !cd.tot) continue;
-        out.sent += cd.tot[F.SENT] || 0; out.deliv += cd.tot[F.DELIV] || 0; out.rev += cd.tot[F.REV] || 0;
-        out.cost += cd.tot[F.COST] || 0; out.conv += cd.tot[F.CONV] || 0;
-      }
-    }
-    return out;
+  // One definition per quantity (docs/CONSISTENCY.md section 1): the mission's numbers come from MC.metrics.mission.
+  function metricsOf(w, m) {
+    try { if (MC.metrics && typeof MC.metrics.mission === 'function') return MC.metrics.mission(w, m.id) || null; } catch (e) { /* use fallback */ }
+    return null;
+  }
+  function pick(o, keys) { for (var i = 0; i < keys.length; i++) if (o && fin(o[keys[i]])) return o[keys[i]]; return null; }
+  function totalsFromMetrics(r) {
+    if (!r) return null;
+    var sent = pick(r, ['sent', 'sends']), rev = pick(r, ['revenue', 'rev']);
+    if (sent === null && rev === null) return null;
+    return { sent: sent || 0, deliv: pick(r, ['delivered', 'deliv']) || 0, reached: pick(r, ['reached', 'people']), rev: rev || 0, cost: pick(r, ['cost', 'spend', 'spent']) || 0, conv: pick(r, ['orders', 'conv']) || 0 };
   }
   function openAsks(m) { return (m.asks || EMPTY).filter(function (a) { return a.status === 'open'; }); }
   function progressOf(w, m) {
+    var r = metricsOf(w, m);
+    var fv = r ? (r.forecast && typeof r.forecast === 'object' ? r.forecast.value : r.forecast) : null;
+    if (r && fin(fv) && fin(r.value)) {
+      var base = null;
+      try { base = MC.missions.progressOf(w, m, w.meta.tick); } catch (e) { base = null; }
+      return Object.assign({}, base || {}, { value: r.value, target: fin(r.target) ? r.target : m.objective.target, forecast: fv, lo: fin(r.lo) ? r.lo : fv, hi: fin(r.hi) ? r.hi : fv, band: r.band || (base && base.band) || 'early' });
+    }
     try { var p = MC.missions.progressOf(w, m, w.meta.tick); if (p) return p; } catch (e) { /* use stored */ }
     return m.progress || { value: 0, target: m.objective.target };
   }
@@ -125,6 +129,82 @@
     return { short: trunc(s.note || s.title, 18), full: s.note || s.title };
   }
 
+  /* ---- forecast verdict beside the goal: "On pace for 312 of 400 (260 to 365) by Dec 15" ---- */
+  function fm(m, v) { return L().fmtMetric ? L().fmtMetric(m.objective.metric, v) : num(v); }
+  function verdictOf(w, m, pr) {
+    var o = m.objective, tone = pr.band || 'early', by = dayShort(o.by);
+    if (m.status === 'done') return { tone: 'on', text: 'Finished at ' + fm(m, pr.value) + ' of ' + fm(m, o.target) };
+    if (m.status === 'stopped') return null;
+    if (!pr.hasCampaign && !fin(pr.forecast)) return { tone: 'early', text: 'No forecast yet. It appears once a campaign is planned.' };
+    var range = fin(pr.lo) && fin(pr.hi) && pr.hi > pr.lo ? ' (' + fm(m, pr.lo) + ' to ' + fm(m, pr.hi) + ')' : '';
+    var atMost = o.direction === 'atMost', of = ' of ' + fm(m, o.target);
+    if (tone === 'early') return { tone: 'early', text: 'Too early to call: plan expects ' + fm(m, pr.forecast) + of + range + ' by ' + by };
+    if (atMost) return { tone: tone, text: (tone === 'behind' ? 'Over the limit: heading for ' : 'On pace to stay under ' + fm(m, o.target) + ', ending near ') + fm(m, pr.forecast) + range + ' by ' + by };
+    return { tone: tone, text: (tone === 'ahead' ? 'Ahead of pace for ' : tone === 'behind' ? 'Behind pace: ' : 'On pace for ') + fm(m, pr.forecast) + of + range + ' by ' + by };
+  }
+  function Verdict(p) {
+    var v = verdictOf(p.world, p.m, p.progress);
+    if (!v) return null;
+    return html`<p className=${cx('mr-verdict', 'is-' + v.tone)} data-verdict=${v.tone}><span className="mr-verdict-k">Forecast</span><b>${v.text}</b></p>`;
+  }
+
+  /* ---- what an agent weighed: step.decision = {options:[{label, value, note}], chose, why} ---- */
+  function optValue(v) { return fin(v) ? (Math.abs(v) < 1 && v !== 0 ? (Math.round(v * 1000) / 10) + '%' : num(v)) : (v === undefined || v === null ? '' : String(v)); }
+  function isChosen(d, o) { return d.chose === o.label || d.chose === o.id || (d.chose && o.label && String(d.chose).toLowerCase() === String(o.label).toLowerCase()); }
+  function decisionLine(d) {
+    var opts = (d.options || EMPTY).map(function (o) { return o.label + (o.value !== undefined && o.value !== null && o.value !== '' ? ' (' + optValue(o.value) + ')' : ''); });
+    return (opts.length ? 'Weighed ' + opts.join(', ') + '. ' : '') + (d.chose ? 'Chose ' + d.chose + (d.why ? ': ' + d.why : '.') : (d.why || ''));
+  }
+  function Decision(p) {
+    var d = p.d;
+    if (!d || !(d.options || EMPTY).length) return d && d.why ? html`<p className="mr-why-t">${d.why}</p>` : null;
+    return html`<div className=${cx('mr-dec', p.compact && 'is-compact')}>
+      <ul className="mr-opts" aria-label="Options considered">${d.options.map(function (o, i) {
+        var on = isChosen(d, o);
+        return html`<li key=${i} className=${cx('mr-opt', on && 'is-chosen')}>
+          <span className="mr-opt-l">${o.label}${on ? html`<em className="mr-opt-flag"> chosen</em>` : null}</span>
+          ${o.value !== undefined && o.value !== null && o.value !== '' ? html`<span className="mr-opt-v num">${optValue(o.value)}</span>` : null}
+          ${o.note ? html`<span className="mr-opt-n">${o.note}</span>` : null}</li>`;
+      })}</ul>
+      ${d.why ? html`<p className="mr-why-t"><b>Why:</b> ${d.why}</p>` : null}
+    </div>`;
+  }
+  function StepWhy(p) {
+    var s = p.step;
+    if (!s) return null;
+    return html`<section className="mr-why" aria-label=${'What ' + agentName(s.agentId) + ' weighed'} data-tour="why">
+      <h2 className="mr-h"><${Mark} id=${s.agentId} size=${13} /> What ${agentName(s.agentId)} weighed <span className="mr-why-step">${DOT} ${s.title}</span></h2>
+      <${Decision} d=${s.decision} />
+    </section>`;
+  }
+
+  /* ---- beats that carry structure: steering diffs and two agents disagreeing ---- */
+  function diffOf(b) { return Array.isArray(b.diff) ? b.diff.filter(function (x) { return x && (x.what || x.from || x.to); }) : EMPTY; }
+  function DiffList(p) {
+    var d = p.diff;
+    if (!d.length) return null;
+    return html`<div className="mr-diff"><p className="mr-diff-h">What changed</p>
+      <ul>${d.map(function (x, i) {
+        return html`<li key=${i}><span className="mr-diff-w">${x.what}</span>${x.from !== undefined && x.from !== null && x.from !== '' ? html`<s className="mr-diff-f">${String(x.from)}</s>` : null}
+          ${x.to !== undefined && x.to !== null && x.to !== '' ? html`<span className="mr-diff-t" aria-label=${'now ' + x.to}><span aria-hidden="true">now </span>${String(x.to)}</span>` : html`<span className="mr-diff-t">removed</span>`}</li>`;
+      })}</ul></div>`;
+  }
+  function sidesOf(b) {
+    var raw = b.positions || b.sides || b.agents || b.views || (b.a && b.b ? [b.a, b.b] : null) || EMPTY;
+    return raw.map(function (x) { return { agentId: x.agentId || x.agent || x.id, text: x.text || x.position || x.says || x.stance || x.say || '' }; }).filter(function (x) { return x.agentId; });
+  }
+  function Disagree(p) {
+    var b = p.b, sides = sidesOf(b), res = b.resolution || b.resolved || b.outcome || '';
+    if (!sides.length) return null;
+    return html`<div className="mr-dis" role="group" aria-label="Two agents disagreed">
+      <p className="mr-diff-h">They disagreed</p>
+      <div className="mr-dis-sides">${sides.slice(0, 2).map(function (x, i) {
+        return html`<div key=${i} className="mr-dis-side"><p className="mr-dis-who"><${Mark} id=${x.agentId} size=${13} />${agentName(x.agentId)}</p><p>${x.text}</p></div>`;
+      })}</div>
+      ${res ? html`<p className="mr-dis-res"><b>Resolved:</b> ${typeof res === 'string' ? res : (res.text || res.summary || '')}</p>` : null}
+    </div>`;
+  }
+
   /* ---- the one live sentence under the goal ---- */
   var NOUN = { reactivations: 'win-back', revenue: 'campaign', orders: 'campaign', signups: 'sign-up push', unsubs: 'list-protection plan' };
   function statusSentence(w, m, tot, seg, camp) {
@@ -145,6 +225,24 @@
     else out.push('The plan is forming.');
     if (asks.length) out.push(' One decision needs you.');
     return out;
+  }
+
+  // Campaign, audience and message this mission made, each a link into its own screen.
+  function MissionLinks(p) {
+    var w = p.world, m = p.m, X = MC.xref, Lk = MC.ui && MC.ui.Xlink;
+    if (!X || !Lk) return null;
+    var cids = X.campaignIds(w, m), sids = X.segmentIds(w, m), mids = [];
+    cids.forEach(function (cid) { X.messagesOfCampaign(w, cid).forEach(function (x) { if (!mids.some(function (y) { return y.id === x.id; })) mids.push(x); }); });
+    var parts = [];
+    function add(lab, kind, items, nameOf) {
+      if (!items.length) return;
+      parts.push(html`<span key=${lab} className="mr-links-p"><span className="mr-links-k">${lab}</span> ${items.slice(0, 3).map(function (x, i) { return html`<span key=${kind + (x.id || x)}>${i ? ', ' : ''}<${Lk} kind=${kind} id=${x.id || x}>${nameOf(x)}<//></span>`; })}</span>`);
+    }
+    add(cids.length === 1 ? 'Campaign' : 'Campaigns', 'campaign', cids, function (id) { return w.campaigns.byId[id].name; });
+    add(sids.length === 1 ? 'Audience' : 'Audiences', 'segment', sids, function (id) { return w.segments.byId[id].name; });
+    add(mids.length === 1 ? 'Message' : 'Messages', 'message', mids, function (x) { return trunc(x.name, 44); });
+    if (!parts.length) return null;
+    return html`<p className="mr-links" aria-label="What this mission made">${parts}</p>`;
   }
 
   /* ======================= small hooks ======================= */
@@ -227,10 +325,15 @@
     var s = p.step, pos = p.pos, st = s.status, frac = 0;
     if (st === 'working') frac = clamp((p.tick - (s.startedTick || p.tick)) / ((MC.missions.DUR && MC.missions.DUR[s.kind]) || 6), 0.05, 1);
     var label = st === 'done' ? 'done' : st === 'working' ? 'working' : st === 'blocked' ? 'waiting on you' : st === 'skipped' ? 'skipped' : 'queued';
-    return html`<div className=${cx('mr-blk', 's-' + st, p.flash && 'is-flash')} role="listitem" title=${s.note || s.title}
-        aria-label=${agentName(s.agentId) + ': ' + s.title + ', ' + label}
+    var dec = s.decision && (s.decision.options || s.decision.why) ? s.decision : null;
+    function pickMe(e) { if (p.onSelect) p.onSelect(s.id); }
+    return html`<div className=${cx('mr-blk', 's-' + st, p.flash && 'is-flash', dec && 'has-why', p.selected && 'is-picked')} role="listitem" title=${dec ? decisionLine(dec) : (s.note || s.title)}
+        aria-label=${agentName(s.agentId) + ': ' + s.title + ', ' + label + (dec ? '. Weighed ' + (dec.options || EMPTY).length + ' options' + (dec.chose ? ', chose ' + dec.chose : '') : '')}
+        tabIndex="0" aria-current=${p.selected ? 'true' : undefined} data-step=${s.id} onClick=${pickMe} onFocus=${pickMe}
+        onKeyDown=${function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pickMe(e); } }}
         style=${{ left: pos.x + 'px', top: pos.y + 'px', width: pos.w + 'px', height: BLOCK_H + 'px' }}>
       <span className="mr-blk-t">${s.title}</span>
+      ${dec && dec.chose ? html`<span className="mr-blk-c">${trunc(dec.chose, 28)}</span>` : null}
       <span className="mr-sr">${label}</span>
       ${st === 'working' ? html`<i className="mr-blk-fill" style=${{ width: (frac * 100).toFixed(0) + '%' }}></i>` : null}
     </div>`;
@@ -255,7 +358,7 @@
       return html`<li key=${aid} className=${cx('mr-row', 'is-' + ln.state)}>
         <span className="mr-row-h"><span className="mr-led" aria-hidden="true"></span><span className="mr-nm"><${Mark} id=${aid} size=${14} />${agentName(aid)}</span>
           <span className="mr-row-w">${ln.word}</span></span>
-        <span className="mr-row-t">${ln.title}</span>
+        <span className="mr-row-t">${ln.title}${(function () { var ds = mine.filter(function (x) { return x.decision && x.decision.options; }).pop(); return ds && p.onSelect ? html` <button type="button" className="mr-row-why" onClick=${function () { p.onSelect(ds.id); }}>What it weighed</button>` : null; })()}</span>
         <span className="mr-row-n">${done} of ${mine.length} ${mine.length === 1 ? 'step' : 'steps'} done</span>
       </li>`;
     })}</ul>`;
@@ -287,7 +390,7 @@
       });
     });
     return html`<div className="mr-scroll" data-tour="lanes" ref=${ref} role="region" aria-label="Agent team board" tabIndex="0">
-      ${narrow ? html`<${AgentRows} m=${m} lay=${lay} />` : html`<div className="mr-lanes" style=${{ width: stageW + 'px', minWidth: '100%' }}>
+      ${narrow ? html`<${AgentRows} m=${m} lay=${lay} onSelect=${p.onSelect} />` : html`<div className="mr-lanes" style=${{ width: stageW + 'px', minWidth: '100%' }}>
         ${lay.rows.map(function (aid, ri) {
           var ln = stepLine(m, aid);
           return html`<div key=${aid} className=${cx('mr-lane', 'is-' + ln.state)} style=${{ height: ROW_H + 'px' }}>
@@ -298,7 +401,7 @@
           ${wires.map(function (x) { return html`<path key=${x.k} d=${x.d} className=${cx(x.active && 'is-active', x.passed && 'is-passed')} />`; })}
         </svg>
         <div className="mr-stage" role="list" aria-label="Steps" style=${{ left: 0, width: stageW + 'px', height: H + 'px' }}>
-          ${(m.plan || EMPTY).map(function (s) { return lay.cells[s.id] ? html`<${Block} key=${s.id} step=${s} pos=${pos(s)} tick=${tick} flash=${p.flash[s.id]} />` : null; })}
+          ${(m.plan || EMPTY).map(function (s) { return lay.cells[s.id] ? html`<${Block} key=${s.id} step=${s} pos=${pos(s)} tick=${tick} flash=${p.flash[s.id]} selected=${p.selId === s.id} onSelect=${p.onSelect} />` : null; })}
           ${chips.map(function (c) {
             return html`<span key=${'c' + c.k} className=${cx('mr-baton', c.active && 'is-active')} style=${{ left: (c.x + 3) + 'px', top: c.y + 'px', maxWidth: Math.max(colW + gap, 150) + 'px' }}
               title=${agentName(c.from) + ' handed ' + c.p.full + ' to ' + agentName(c.to)}>${c.p.short}</span>`;
@@ -347,6 +450,7 @@
     for (var i = 0; i < dots; i++) items.push(html`<i key=${i} className=${i < lit ? '' : 'out'}></i>`);
     return html`<div className="mr-seg-n"><${Live} value=${count} text=${num(count)} /><span>${seg ? lcFirst(seg.name) : ''}</span></div>
       <div className="mr-dots" aria-hidden="true">${items}</div>
+      ${seg && MC.ui.Xlink ? html`<p className="mr-art-note"><${MC.ui.Xlink} kind="segment" id=${seg.id}>Open this audience<//></p>` : null}
       <p className="mr-art-note">${per > 1 ? '1 dot is about ' + Math.round(per) + ' people. ' : ''}${share < 1 ? 'Hollow dots can’t be reached by ' + (aud.primary || 'email') + '.' : 'Everyone here can be reached.'}</p>`;
   }
   function vtext(v) { var f = v.fields || {}; return f.subject || f.pushTitle || f.socialHeadline || f.sms || f.pushBody || f.socialText || f.body || ''; }
@@ -377,11 +481,25 @@
     }
     return out;
   }
+  function plainTokens(t) { return String(t || '').replace(/\{(\w+)(?:\|([^}]*))?\}/g, function (x, n, fb) { return fb || n.replace(/_/g, ' '); }); }
+  // The message a send step delivers: the campaign's live message on that channel and the words its channel version carries.
+  function stepMessage(w, c, ch) {
+    var K = MC.content, X = MC.xref, out = null;
+    if (!K || !X) return null;
+    X.messagesOfCampaign(w, c.id).forEach(function (x) { if (!out && x.channels.indexOf(ch) >= 0) out = x; });
+    if (!out) return null;
+    var r = K.render(w, out.id, ch, {}), f = (r && r.fields) || {};
+    var t = ch === 'email' ? (f.headline || f.subject) : ch === 'sms' ? f.sms : ch === 'push' ? ((f.pushTitle || '') + ' ' + (f.pushBody || '')) : (f.socialHeadline || f.socialText);
+    return { id: out.id, name: out.name, text: trunc(plainTokens(t), 52) };
+  }
   function JourneyPanel(p) {
-    var c = p.camp, steps = journeyOrder(c.journey && c.journey.steps || EMPTY);
+    var c = p.camp, w = p.world;
+    var steps = journeyOrder(c.journey && c.journey.steps || EMPTY).filter(function (s) { return s.type !== 'send' || !s.channel || c.channels.indexOf(s.channel) >= 0; });
     return html`<ol className="mr-jr">${steps.map(function (s) {
       var sub = s.type === 'send' ? (MC.CH && MC.CH.LABEL ? MC.CH.LABEL[s.channel] || s.channel : s.channel) : s.type === 'wait' ? Math.round(s.waitH / 24 * 10) / 10 + ' days' : s.type === 'decide' ? 'Branches yes or no' : '';
-      return html`<li key=${s.id}><b>${s.label}</b>${sub ? html`<span>${sub}</span>` : null}</li>`;
+      var msg = s.type === 'send' && w ? stepMessage(w, c, s.channel) : null;
+      return html`<li key=${s.id}><b>${s.label}</b>${sub ? html`<span>${sub}</span>` : null}
+        ${msg ? html`<span className="mr-jr-msg"><${MC.ui.Xlink} kind="message" id=${msg.id}>${msg.name}<//>${msg.text ? html` ${DOT} “${msg.text}”` : null}</span>` : null}</li>`;
     })}</ol>`;
   }
   function BudgetPanel(p) {
@@ -405,6 +523,7 @@
         return html`<li key=${b.id}><em>${K.KIND_LABEL[b.kind] || b.kind}</em><span>${trunc(K.textOf(b).replace(/\{(\w+)(?:\|([^}]*))?\}/g, function (x, n, fb) { return fb || n.replace(/_/g, ' '); }), 54)}</span></li>`;
       })}</ul>
       <div className="mr-msg-vers" aria-label="Channel versions">${MSG_CH.map(function (ch) {
+        if (p.channels && p.channels.indexOf(ch) < 0) return null;
         var r = K.render(w, id, ch, {}), f = r.fields || {}, t;
         if (r.error) return null;
         t = ch === 'email' ? (f.headline || f.subject) : ch === 'sms' ? f.sms : ch === 'push' ? (f.pushTitle + ' ' + f.pushBody) : f.socialHeadline;
@@ -426,21 +545,31 @@
     var brand = w.meta && w.meta.tenant ? w.meta.tenant : 'Fernway Outfitters';
     return html`<div className="mr-arts">
       <${Panel} title="Segment" agent="scout" ready=${!!seg} working=${busy(['audience', 'widen'])} flash=${p.flash.seg}>${seg ? html`<${SegmentPanel} seg=${seg} m=${m} />` : null}<//>
-      <${Panel} title=${msgId ? "Message" : "Email"} agent="copy" ready=${vs.length > 0} working=${busy(['copy', 'rewrite'])} flash=${p.flash.mail}>${vs.length ? (msgId && MC.content && MC.content.message ? html`<${MessagePanel} world=${w} messageId=${msgId} />` : html`<${EmailPanel} variants=${vs} brand=${brand} />`) : null}<//>
-      <${Panel} title="Journey" agent="planner" ready=${!!camp} working=${busy(['campaign', 'extend', 'offer', 'channel'])} flash=${p.flash.jour}>${camp ? html`<${JourneyPanel} camp=${camp} />` : null}<//>
+      <${Panel} title=${msgId ? "Message" : "Email"} agent="copy" ready=${vs.length > 0} working=${busy(['copy', 'rewrite'])} flash=${p.flash.mail}>${vs.length ? (msgId && MC.content && MC.content.message ? html`<${MessagePanel} world=${w} messageId=${msgId} channels=${camp ? camp.channels : null} />` : html`<${EmailPanel} variants=${vs} brand=${brand} />`) : null}<//>
+      <${Panel} title="Journey" agent="planner" ready=${!!camp} working=${busy(['campaign', 'extend', 'offer', 'channel'])} flash=${p.flash.jour}>${camp ? html`<${JourneyPanel} camp=${camp} world=${w} />` : null}<//>
       <${Panel} title="Budget" agent="pacer" ready=${!!camp && camp.budget.total > 0} working=${busy(['pacer', 'budget'])} flash=${p.flash.bud}>${camp ? html`<${BudgetPanel} camp=${camp} stats=${st} />` : null}<//>
     </div>`;
   }
 
   function Narration(p) {
-    var log = (p.m.log || EMPTY).slice(-5), last = log[log.length - 1], tick = p.tick, T = MC.time;
+    var m = p.m, all = m.log || EMPTY, tick = p.tick, last = all[all.length - 1], byId = {};
+    (m.plan || EMPTY).forEach(function (s) { byId[s.id] = s; });
+    var log = all.slice(-5);
+    // a disagreement or a steering diff stays visible until five newer beats have pushed it out
+    var pin = null;
+    for (var k = all.length - 1; k >= 0 && k >= all.length - 12; k--) if (all[k].kind === 'disagree' && log.indexOf(all[k]) < 0) { pin = all[k]; break; }
+    if (pin) log = [pin].concat(log.slice(1));
     return html`<div className="mr-narr">
       <h2 className="mr-h">What the team is saying</h2>
       <ol>${log.map(function (b, i) {
-        var newest = i === log.length - 1;
+        var newest = i === log.length - 1, dis = b.kind === 'disagree', diff = diffOf(b);
+        var st = b.stepId ? byId[b.stepId] : null, dec = b.decision || (st && st.decision && b.kind !== 'ask' ? st.decision : null);
         return html`<li key=${b.tick + ':' + b.agentId + ':' + b.text.slice(0, 24)} className=${cx(newest && 'is-new', 'k-' + b.kind)}>
           <b><${Mark} id=${b.agentId} size=${13} />${agentName(b.agentId)}<span>${DOT} ${ago(b.tick, tick)}</span></b>
-          <span className="mr-narr-t">${b.text}</span></li>`;
+          <span className="mr-narr-t">${b.text}</span>
+          ${dis ? html`<${Disagree} b=${b} />` : null}
+          ${diff.length ? html`<${DiffList} diff=${diff} />` : null}
+          ${dec && dec.options && dec.options.length ? html`<details className="mr-narr-why"><summary>What ${agentName(b.agentId)} weighed</summary><${Decision} d=${dec} compact=${true} /></details>` : null}</li>`;
       })}</ol>
       <div className="mr-sr" role="status" aria-live="polite">${last ? agentName(last.agentId) + ': ' + last.text : ''}</div>
     </div>`;
@@ -449,7 +578,7 @@
   function Counters(p) {
     var t = p.tot, camp = p.camp, live = t.sent > 0, chs = camp ? camp.channels.length : 0;
     return html`<div className=${cx('mr-ctrs', live && 'is-live')} role="group" aria-label="Live results">
-      <div className="mr-ctr"><span className="k">Reached</span><${Live} value=${Math.round(t.deliv)} text=${num(t.deliv)} /><small>${live ? 'delivered so far' : 'not sent yet'}</small></div>
+      <div className="mr-ctr"><span className="k">Reached</span><${Live} value=${Math.round(fin(t.reached) ? t.reached : t.deliv)} text=${num(fin(t.reached) ? t.reached : t.deliv)} /><small>${live ? (fin(t.reached) ? 'people delivered to' : 'delivered so far') : 'not sent yet'}</small></div>
       <div className="mr-ctr"><span className="k">Sent</span><${Live} value=${Math.round(t.sent)} text=${num(t.sent)} /><small>${chs ? 'across ' + chs + (chs === 1 ? ' channel' : ' channels') : 'no campaign yet'}</small></div>
       <div className="mr-ctr is-rev"><span className="k">Revenue</span><${Live} value=${Math.round(t.rev)} text=${money(t.rev)} /><small>${t.cost > 0 ? 'against ' + money(t.cost) + ' spent' : 'nothing spent yet'}</small></div>
     </div>`;
@@ -459,7 +588,7 @@
   function threadOf(m) {
     var items = [{ k: 'g', who: 'you', text: m.goalText, tick: m.createdTick, o: 0 }], n = 1;
     (m.steers || EMPTY).forEach(function (s) { items.push({ k: 's' + n, who: 'you', text: s.text, tick: s.tick, o: n++ }); });
-    (m.log || EMPTY).forEach(function (b) { if (b.agentId === 'lead') items.push({ k: 'l' + b.tick + ':' + b.text.slice(0, 20), who: 'lead', text: b.text, tick: b.tick, o: n++ }); });
+    (m.log || EMPTY).forEach(function (b) { if (b.agentId === 'lead') items.push({ k: 'l' + b.tick + ':' + b.text.slice(0, 20), who: 'lead', text: b.text, tick: b.tick, o: n++, diff: diffOf(b) }); });
     items.sort(function (a, b) { return a.tick - b.tick || a.o - b.o; });
     return items.slice(-30);
   }
@@ -500,7 +629,7 @@
           ${steerMode ? null : html`<p className="mr-msg lead"><span className="who">Lead</span>What should the team get done? Give me an outcome, a deadline and any limits, in a sentence.</p>`}
           ${thread.map(function (x) {
             return x.who === 'you' ? html`<p key=${x.k} className="mr-msg you">${x.text}</p>`
-              : html`<p key=${x.k} className="mr-msg lead"><span className="who">Lead</span>${x.text}</p>`;
+              : html`<div key=${x.k} className="mr-msg lead"><span className="who">Lead</span>${x.text}${x.diff && x.diff.length ? html`<${DiffList} diff=${x.diff} />` : null}</div>`;
           })}
           ${asks.map(function (a) {
             return html`<div key=${a.id} className="mr-msg ask"><span className="who">${agentName(a.agentId)} asks</span>${a.question}
@@ -540,6 +669,7 @@
     var es = useState(null), error = es[0], setError = es[1];
     var fs = useState(0), focusTick = fs[0], setFocusTick = fs[1];
     var as = useState(false), busy = as[0], setBusy = as[1];
+    var ss = useState(null), selStep = ss[0], setSelStep = ss[1];
 
     useEffect(function () {
       function on() { var h = hashId(); if (h) { setWantId(h); setNewMode(false); } else if (/^#?\/?missions\/new/.test(window.location.hash || '')) { setNewMode(true); setLeadOpen(true); setFocusTick(function (t) { return t + 1; }); } }
@@ -608,7 +738,14 @@
         <${LeadColumn} ...${leadProps} open=${true} /></div></section>`;
     }
 
-    var tick = w.meta.tick, camp = campaignOf(w, m), seg = segmentOf(w, m), cids = campaignIds(w, m), tot = totalsOf(w, cids), pr = progressOf(w, m);
+    var tick = w.meta.tick, camp = campaignOf(w, m), seg = segmentOf(w, m), cids = campaignIds(w, m), pr = progressOf(w, m);
+    var tot = totalsFromMetrics(metricsOf(w, m)) || { sent: 0, deliv: 0, reached: null, rev: 0, cost: 0, conv: 0 };
+    var whyStep = (m.plan || EMPTY).filter(function (x) { return x.id === selStep && x.decision; })[0] || null;
+    if (!whyStep) {
+      var withDec = (m.plan || EMPTY).filter(function (x) { return x.decision && (x.decision.options || x.decision.why) && x.status !== 'queued'; });
+      withDec.sort(function (a, b) { return (b.doneTick || b.startedTick || 0) - (a.doneTick || a.startedTick || 0); });
+      whyStep = withDec[0] || null;
+    }
     var asks = openAsks(m), ask = asks[0], sentence = statusSentence(w, m, tot, seg, camp);
     var anyWork = workingSteps(m).length > 0;
     return html`<section className=${cx('v-missions', leadOpen && 'lead-open')} aria-label="Mission room">
@@ -617,16 +754,19 @@
         <div className="mr-center">
           <header className="mr-goal">
             <h1 className="mr-goal-h" id="page-title" tabIndex="-1" data-tour="goal">${m.goalText}</h1>
+            <${Verdict} world=${w} m=${m} progress=${pr} />
             <${Meta} world=${w} m=${m} progress=${pr} />
+            <${MissionLinks} world=${w} m=${m} />
           </header>
           <p className="mr-status">${sentence.map(function (x, i) { return typeof x === 'string' ? x : html`<${Live} key=${i} value=${x.b} text=${x.b} />`; })}</p>
           ${ask ? html`<${AskCard} ask=${ask} m=${m} count=${asks.length} busy=${busy} error=${error} onAnswer=${answer} />` : null}
           <div className="mr-board">
             <div className="mr-board-lanes">
-              <${Board} m=${m} world=${w} lay=${lay} flash=${flash} />
+              <${Board} m=${m} world=${w} lay=${lay} flash=${flash} selId=${whyStep ? whyStep.id : selStep} onSelect=${setSelStep} />
             </div>
             <p className="mr-board-foot">${m.status === 'paused' ? 'Paused. Tell Lead when to pick it back up.' : m.status === 'done' ? 'This mission has finished.' : m.status === 'stopped' ? 'This mission was stopped.' : ask ? 'Waiting on your decision. Steps that don’t depend on it keep going.' : anyWork ? 'The team is working. This board updates as they finish.' : m.phase === 'monitoring' ? 'The plan is in place. Insight Analyst checks results every morning.' : 'Next steps start as soon as their inputs are ready.'}</p>
           </div>
+          <${StepWhy} step=${whyStep} />
           <div className="mr-bay">
             <${Artifacts} world=${w} m=${m} camp=${camp} seg=${seg} flash=${flash} />
             <${Narration} m=${m} tick=${tick} />

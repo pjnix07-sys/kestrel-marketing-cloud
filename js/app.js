@@ -155,7 +155,6 @@
 
   /* ---------------- selectors (module-level, stable) ---------------- */
   function selReady(w) { return !!w; }
-  function selOpenCount(w) { return w && w.proposals && w.proposals.open ? w.proposals.open.length : 0; }
   function selProposals(w) { return w ? w.proposals : null; }
   function selCampaigns(w) { return w ? w.campaigns : null; }
   function selRoute(s) { return s.route; }
@@ -164,14 +163,20 @@
   function selSample(s) { return s.sampleDismissed; }
   function selMissions(w) { return w ? w.missions : null; }
   function selMissionFocus(s) { return s.missionFocus || null; }
+  // One Asks count everywhere: MC.metrics.asks (docs/CONSISTENCY.md section 1).
   function selAskCount(w) {
     if (!w) return 0;
-    var n = w.proposals && w.proposals.open ? w.proposals.open.length : 0, ms = w.missions;
-    if (ms && ms.order) ms.order.forEach(function (id) {
-      var m = ms.byId[id];
-      if (m && m.status !== 'done' && m.status !== 'stopped') (m.asks || []).forEach(function (a) { if (a.status === 'open') n++; });
-    });
-    return n;
+    try {
+      if (MC.metrics && typeof MC.metrics.asks === 'function') {
+        var r = MC.metrics.asks(w);
+        if (fin(r)) return r;
+        if (Array.isArray(r)) return r.length;
+        if (r && fin(r.count)) return r.count;
+        if (r && fin(r.total)) return r.total;
+        if (r && fin(r.n)) return r.n;
+      }
+    } catch (e) { report(e); }
+    return 0;
   }
   function isLive(m) { return !!m && m.status !== 'done' && m.status !== 'stopped'; }
   function liveMissions(slice) {
@@ -469,6 +474,7 @@
         <${Mark} compact=${true} />
         <${MissionMenu} />
         <${NewGoalButton} compact=${true} />
+        <${SearchButton} />
         <${AsksButton} />
         ${IB ? html`<${IB} id="app-menu-btn" icon="menu" label="Menu" onClick=${function () { setUi({ drawer: 'menu' }); }} />` : null}
       </header>`;
@@ -479,6 +485,7 @@
       ${p.narrow ? html`<${MissionMenu} />` : html`<${MissionTabs} />`}
       <${NewGoalButton} />
       <div className="app-topbar-tools">
+        <${SearchButton} />
         <${AsksButton} />
         <${TeamLink} />
         <${ArtifactsMenu} />
@@ -511,7 +518,7 @@
   function proposalLists(props) {
     var out = { needs: [], applied: [], history: [] };
     if (!props || !props.byId) return out;
-    (props.open || []).forEach(function (id) { var x = props.byId[id]; if (x && x.status === 'pending') out.needs.push(x); });
+    (props.open || []).forEach(function (id) { var x = props.byId[id]; if (x && x.status === 'pending' && !x.supersededBy) out.needs.push(x); });
     (props.order || []).forEach(function (id) {
       var x = props.byId[id];
       if (!x) return;
@@ -530,8 +537,9 @@
     </article>`;
   }
 
-  function ApprovalsPanel() {
+  function ApprovalsPanel(pp) {
     var props = useSel(selProposals);
+    var hideIds = (pp && pp.hideIds) || null;
     var tabSt = useState('needs'), tab = tabSt[0], setTab = tabSt[1];
     var agSt = useState(''), agentF = agSt[0], setAgentF = agSt[1];
     var rkSt = useState(''), riskF = rkSt[0], setRiskF = rkSt[1];
@@ -542,7 +550,11 @@
     var msgSt = useState(null), msg = msgSt[0], setMsg = msgSt[1];
     var moreSt = useState(30), limit = moreSt[0], setLimit = moreSt[1];
     var holdSt = useState(false), hold = holdSt[0], setHold = holdSt[1];
-    var lists = useMemo(function () { return proposalLists(props); }, [props]);
+    var lists = useMemo(function () {
+      var l = proposalLists(props);
+      if (hideIds) l.needs = l.needs.filter(function (x) { return !hideIds[x.id]; });
+      return l;
+    }, [props, hideIds]);
     var Tabs = ui('Tabs'), PC = ui('ProposalCard'), Empty = ui('EmptyState'), IC = ui('InlineConfirm'), Btn = ui('Button'), NewPill = ui('NewItemsPill');
 
     var base = lists[tab] || [];
@@ -649,24 +661,183 @@
       <button type="button" className="app-ask-open" onClick=${function () { setUi({ drawer: null }); go('missions', m.id); }}>Open mission</button>
     </article>`;
   }
+  // The mission a proposal belongs to: its own missionId, else the mission that made the campaign or audience it targets.
+  function missionOfProposal(w, x) {
+    var X = MC.xref, t = x.target || {}, ms;
+    if (x.missionId && w.missions && w.missions.byId[x.missionId]) return w.missions.byId[x.missionId];
+    if (!X || !t.kind || !t.id) return null;
+    ms = X.missionsOf(w, t.kind, t.id).filter(isLive);
+    return ms[0] || null;
+  }
   function AsksPanel() {
     var slice = useSel(selMissions);
-    var asks = useMemo(function () {
-      var out = [];
-      liveMissions(slice).forEach(function (m) { (m.asks || []).forEach(function (a) { if (a.status === 'open') out.push({ m: m, a: a }); }); });
-      return out;
-    }, [slice]);
+    var props = useSel(selProposals);
+    var w = MC.store.getState();
+    var groups = useMemo(function () {
+      var out = [], byM = {}, loose = {};
+      liveMissions(slice).forEach(function (m) {
+        var g = { m: m, asks: [], props: [] };
+        (m.asks || []).forEach(function (a) { if (a.status === 'open') g.asks.push(a); });
+        byM[m.id] = g; out.push(g);
+      });
+      ((props && props.open) || []).forEach(function (id) {
+        var x = props.byId[id];
+        if (!x || x.status !== 'pending' || x.supersededBy || !w) return;
+        var m = missionOfProposal(w, x);
+        if (m && byM[m.id]) { byM[m.id].props.push(x); loose[x.id] = 1; }
+      });
+      return { list: out.filter(function (g) { return g.asks.length || g.props.length; }), taken: loose };
+    }, [slice, props]);
+    var PC = ui('ProposalCard');
+    var anyAsk = groups.list.some(function (g) { return g.asks.length; });
     return html`<div className="app-asks">
-      <section aria-labelledby="asks-h" className="app-asks-sec">
-        <h3 id="asks-h" className="app-asks-sub">From your missions</h3>
-        ${asks.length ? html`<ul className="app-ask-list">${asks.map(function (x) { return html`<li key=${x.m.id + ':' + x.a.id}><${AskCard} m=${x.m} a=${x.a} /></li>`; })}</ul>`
-          : html`<p className="app-asks-none">No mission is waiting on you.</p>`}
-      </section>
+      ${!anyAsk && groups.list.length ? html`<p className="app-asks-none">No mission is waiting on you.</p>` : null}
+      ${groups.list.length ? groups.list.map(function (g) {
+        return html`<section key=${g.m.id} aria-labelledby=${'asks-m-' + g.m.id} className="app-asks-sec app-asks-mission" data-mission=${g.m.id}>
+          <h3 id=${'asks-m-' + g.m.id} className="app-asks-sub app-asks-msub"><a href=${'#missions/' + encodeURIComponent(g.m.id)} onClick=${function (e) { e.preventDefault(); setUi({ drawer: null }); go('missions', g.m.id); }}>${missionGoal(g.m)}</a>
+            <span className="app-asks-n">${(g.asks.length + g.props.length) + ' waiting'}</span></h3>
+          ${g.asks.length ? html`<ul className="app-ask-list">${g.asks.map(function (a) { return html`<li key=${g.m.id + ':' + a.id}><${AskCard} m=${g.m} a=${a} /></li>`; })}</ul>` : null}
+          ${g.props.length ? html`<ul className="app-prop-list">${g.props.map(function (x) { return html`<li key=${x.id}>${PC ? html`<${PC} id=${x.id} showTarget=${true} />` : html`<${ProposalFallback} p=${x} />`}</li>`; })}</ul>` : null}
+        </section>`;
+      }) : html`<section aria-labelledby="asks-h" className="app-asks-sec"><h3 id="asks-h" className="app-asks-sub">From your missions</h3><p className="app-asks-none">No mission is waiting on you.</p></section>`}
       <section aria-labelledby="props-h" className="app-asks-sec">
-        <h3 id="props-h" className="app-asks-sub">Agent proposals</h3>
-        <${ApprovalsPanel} />
+        <h3 id="props-h" className="app-asks-sub">${groups.list.some(function (g) { return g.props.length; }) ? 'Other agent proposals' : 'Agent proposals'}</h3>
+        <${ApprovalsPanel} hideIds=${groups.taken} />
       </section>
     </div>`;
+  }
+
+  /* ---------------- global search (Cmd/Ctrl+K or "/"): missions, campaigns, audiences, messages, blocks, agents ---------------- */
+  var KIND_NOUN = { mission: 'Mission', campaign: 'Campaign', segment: 'Audience', message: 'Message', block: 'Block', agent: 'Agent' };
+  var KIND_RANK = { mission: 0, campaign: 1, segment: 2, message: 3, agent: 4, block: 5 };
+  function plainText(t) { return String(t || '').replace(/\{(\w+)(?:\|([^}]*))?\}/g, function (x, n, fb) { return fb || n.replace(/_/g, ' '); }); }
+  function clip(t, n) { t = String(t || ''); return t.length > n ? t.slice(0, n - 1).replace(/\s+\S*$/, '') + ELL : t; }
+  function buildIndex(w) {
+    var out = [], K = MC.content, X = MC.xref;
+    if (!w) return out;
+    function add(kind, id, label, sub, extra) { out.push({ kind: kind, id: id, label: label, sub: sub, hay: (label + ' ' + (extra || '') + ' ' + KIND_NOUN[kind]).toLowerCase() }); }
+    (X ? X.missions(w) : []).forEach(function (m) {
+      add('mission', m.id, missionGoal(m), 'Mission' + (isLive(m) ? '' : ', ' + m.status), m.title + ' ' + (m.objective ? m.objective.metric : ''));
+    });
+    if (w.campaigns) (w.campaigns.order || Object.keys(w.campaigns.byId)).forEach(function (id) {
+      var c = w.campaigns.byId[id]; if (c) add('campaign', id, c.name, 'Campaign, ' + c.status, (c.channels || []).join(' ') + ' ' + (c.goal ? c.goal.type : ''));
+    });
+    if (w.segments) (w.segments.order || Object.keys(w.segments.byId)).forEach(function (id) {
+      var sg = w.segments.byId[id]; if (sg) add('segment', id, sg.name, 'Audience, ' + nfmt(sg.count) + ' people', '');
+    });
+    if (K && w.content && w.content.messages) {
+      K.messages(w).forEach(function (m) { add('message', m.id, m.name, 'Message', Object.keys(m.tags || {}).map(function (k) { return m.tags[k]; }).join(' ')); });
+      K.blocks(w).forEach(function (b) {
+        if (b.archived) return;
+        var txt = plainText(K.textOf(b));
+        add('block', b.id, clip(txt, 90), 'Block, ' + ((K.KIND_LABEL && K.KIND_LABEL[b.kind]) || b.kind).toLowerCase(), txt + ' ' + Object.keys(b.tags || {}).map(function (k) { return b.tags[k]; }).join(' '));
+      });
+    }
+    var seen = {};
+    try { (MC.runtime && MC.runtime.defs ? MC.runtime.defs() : []).forEach(function (d) { seen[d.id] = 1; add('agent', d.id, agentName(d.id), 'Agent', d.id + ' ' + (d.role || d.description || '')); }); } catch (e) { /* no runtime */ }
+    if (!seen.lead) add('agent', 'lead', 'Lead', 'Agent', 'lead plans missions');
+    return out;
+  }
+  function searchScore(e, words) {
+    var l = e.label.toLowerCase(), sc = 0;
+    for (var i = 0; i < words.length; i++) {
+      var wd = words[i], at = e.hay.indexOf(wd);
+      if (at < 0) return -1;
+      sc += l.indexOf(wd) === 0 ? 30 : (l.indexOf(' ' + wd) >= 0 ? 20 : (l.indexOf(wd) >= 0 ? 12 : (e.hay.indexOf(' ' + wd) >= 0 ? 6 : 2)));
+    }
+    return sc;
+  }
+  function runSearch(index, q) {
+    q = String(q || '').trim().toLowerCase();
+    var words = q.split(/\s+/).filter(Boolean), res = [];
+    if (!words.length) {
+      index.forEach(function (e) { if (e.kind === 'mission' && e.sub === 'Mission') res.push({ e: e, s: 0 }); });
+      return res.map(function (r) { return r.e; }).slice(0, 8);
+    }
+    index.forEach(function (e) { var sc = searchScore(e, words); if (sc >= 0) res.push({ e: e, s: sc }); });
+    res.sort(function (a, b) { return (b.s - a.s) || (KIND_RANK[a.e.kind] - KIND_RANK[b.e.kind]) || (a.e.label < b.e.label ? -1 : a.e.label > b.e.label ? 1 : 0); });
+    return res.slice(0, 14).map(function (r) { return r.e; });
+  }
+  function openSearch() { setUi({ drawer: 'search' }); }
+  function SearchButton() {
+    return html`<button type="button" id="app-search-btn" className="app-search-btn" aria-label="Search" aria-haspopup="dialog" onClick=${openSearch}>
+      <${Icon} name="search" size=${16} /><span className="app-search-label">Search</span><kbd className="app-kbd" aria-hidden="true">/</kbd></button>`;
+  }
+  function SearchDialog() {
+    var drawer = useUi(selDrawer), open = drawer === 'search';
+    var qs = useState(''), q = qs[0], setQ = qs[1];
+    var cs = useState(0), cur = cs[0], setCur = cs[1];
+    var inp = useRef(null), prev = useRef(null);
+    var index = useMemo(function () { return open ? buildIndex(MC.store.getState()) : []; }, [open]);
+    var results = useMemo(function () { return open ? runSearch(index, q) : []; }, [open, index, q]);
+    useEffect(function () {
+      if (!open) return undefined;
+      prev.current = document.activeElement; setQ(''); setCur(0);
+      var raf = window.requestAnimationFrame(function () { if (inp.current) inp.current.focus(); });
+      return function () {
+        window.cancelAnimationFrame(raf);
+        var b = prev.current;
+        if (b && b.focus && document.contains(b)) { try { b.focus(); } catch (e) { /* gone */ } }
+      };
+    }, [open]);
+    useEffect(function () { setCur(0); }, [q]);
+    useEffect(function () {
+      var el = open && document.getElementById('app-search-opt-' + cur);
+      if (el && el.scrollIntoView) { try { el.scrollIntoView({ block: 'nearest' }); } catch (e) { /* ignore */ } }
+    }, [cur, open, results]);
+    if (!open) return null;
+    function close() { setUi({ drawer: null }); }
+    function choose(e) {
+      if (!e) return;
+      close();
+      if (MC.xref) MC.xref.go(e.kind, e.id);
+    }
+    function onKey(ev) {
+      if (ev.key === 'Escape') { ev.preventDefault(); close(); }
+      else if (ev.key === 'ArrowDown') { ev.preventDefault(); setCur(results.length ? (cur + 1) % results.length : 0); }
+      else if (ev.key === 'ArrowUp') { ev.preventDefault(); setCur(results.length ? (cur + results.length - 1) % results.length : 0); }
+      else if (ev.key === 'Home' && ev.ctrlKey) { ev.preventDefault(); setCur(0); }
+      else if (ev.key === 'Enter') { ev.preventDefault(); choose(results[cur]); }
+      else if (ev.key === 'Tab') { ev.preventDefault(); if (inp.current) inp.current.focus(); }
+    }
+    var status = q.trim() ? (results.length ? results.length + (results.length === 1 ? ' result' : ' results') : 'No matches') : 'Missions';
+    return html`<div className="app-search-layer k-layer">
+      <div className="k-scrim" onClick=${close} aria-hidden="true"></div>
+      <div id="app-search" className="app-search" role="dialog" aria-modal="true" aria-label="Search" onKeyDown=${onKey}>
+        <div className="app-search-bar"><${Icon} name="search" size=${18} />
+          <input id="app-search-input" ref=${inp} className="app-search-input" type="text" role="combobox" autoComplete="off" spellCheck="false"
+            aria-expanded="true" aria-controls="app-search-list" aria-autocomplete="list" aria-activedescendant=${results.length ? 'app-search-opt-' + cur : undefined}
+            aria-label="Search missions, campaigns, audiences, messages, blocks and agents" placeholder="Search missions, campaigns, audiences, messages, agents"
+            value=${q} onChange=${function (e) { setQ(e.target.value); }} />
+          <button type="button" className="app-search-esc" onClick=${close} aria-label="Close search">Esc</button>
+        </div>
+        <p className="app-search-status" role="status" aria-live="polite">${status}</p>
+        <ul id="app-search-list" className="app-search-list" role="listbox" aria-label="Results">
+          ${results.map(function (e, i) {
+            return html`<li key=${e.kind + ':' + e.id} id=${'app-search-opt-' + i} role="option" aria-selected=${i === cur ? 'true' : 'false'} data-kind=${e.kind} data-id=${e.id}
+                className=${cx('app-search-opt', i === cur && 'is-cur')} onMouseMove=${function () { if (cur !== i) setCur(i); }} onClick=${function () { choose(e); }}>
+              <span className="app-search-kind">${KIND_NOUN[e.kind]}</span><span className="app-search-t">${e.label}</span><span className="app-search-sub">${e.sub}</span></li>`;
+          })}
+        </ul>
+      </div>
+    </div>`;
+  }
+  function useSearchHotkey() {
+    useEffect(function () {
+      function typing(t) { return !!t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable); }
+      function on(e) {
+        if (e.defaultPrevented) return;
+        var cmdK = (e.metaKey || e.ctrlKey) && !e.altKey && (e.key === 'k' || e.key === 'K');
+        var slash = e.key === '/' && !e.metaKey && !e.ctrlKey && !e.altKey && !typing(e.target);
+        if (!cmdK && !slash) return;
+        var d = MC.uiStore.getState().drawer;
+        if (d && d !== 'search') return;
+        e.preventDefault();
+        setUi({ drawer: d === 'search' && cmdK ? null : 'search' });
+      }
+      document.addEventListener('keydown', on);
+      return function () { document.removeEventListener('keydown', on); };
+    }, []);
   }
 
   /* ---------------- new goal drawer ---------------- */
@@ -1022,6 +1193,7 @@
     var Drawer = ui('Drawer'), Toasts = ui('ToastHost');
     var first = useRef(true);
     useLazyVersion();
+    useSearchHotkey();
     useEffect(function () {
       if (!ready) return undefined;
       if (tourWanted) loadLazy('tour').catch(report);
@@ -1068,6 +1240,7 @@
       ${Drawer ? html`<${Drawer} id="app-menu" side="bottom" open=${drawer === 'menu'} onClose=${closeDrawer} title="Menu">
         <${MenuContent} />
       <//>` : null}
+      <${SearchDialog} />
       ${Toasts ? html`<${Toasts} />` : null}
       ${MC.tour && MC.tour.Host ? html`<${MC.tour.Host} />` : null}
     </div>`;

@@ -621,7 +621,7 @@
       } }
     ];
     return html`<${Card} id="analytics-agent-impact" title="Agent impact"
-        sub="Every applied agent change, what it promised, and what it delivered against the 10% control group.">
+        sub="Every applied agent change, what it promised, and what it delivered against the part of the campaign kept on the original plan.">
       ${rows.length ? html`<p className="an-headline">
           Agents added <strong className="num">${moneySigned(totals.realized)}</strong> realized
           (expected <span className="num">${moneySigned(totals.expected)}</span>) since ${since}.
@@ -633,7 +633,8 @@
     <//>`;
   }
 
-  /* ---------------- Lift vs control ---------------- */
+  /* ---------------- Lift vs holdout ---------------- */
+  var HOLD = (MC.metrics && MC.metrics.HOLDOUT_LABEL) || '5% held out';
   function LiftSection(p) {
     var React = R(), H = hooks(), ids = p.f.campaignIds || EMPTY;
     var campaigns = H.useSelect(selCampaigns);
@@ -642,14 +643,14 @@
       return (ids.length ? ids : campaigns.order).filter(function (id) { var c = campaigns.byId[id]; return c && c.status !== 'draft' && c.status !== 'scheduled'; });
     }, [campaigns, ids]);
     var lifts = H.useSelect(React.useCallback(function (w) {
-      return liftIds.map(function (id) { return has(sel(), 'campaignLift') ? sel().campaignLift(w, id) : null; });
+      return liftIds.map(function (id) { return MC.metrics ? MC.metrics.lift(w, { campaignId: id }) : null; });
     }, [liftIds]), sameItems) || EMPTY;
     var rows = liftIds.map(function (id, k) { return { id: id, name: campaigns.byId[id].name, status: campaigns.byId[id].status, lift: lifts[k] }; });
     var cols = [
       { key: 'name', label: 'Campaign', sortValue: function (r) { return r.name; }, firstDir: 'asc', render: function (r) { return html`<span className="an-change">${r.name}</span>`; } },
       { key: 'treated', label: 'Revenue per person', align: 'right', sortValue: function (r) { return r.lift ? r.lift.treated : null; },
         render: function (r) { return r.lift && fin(r.lift.treated) ? money(r.lift.treated, { cents: true }) : DASH; } },
-      { key: 'control', label: 'Control group', align: 'right', sortValue: function (r) { return r.lift ? r.lift.control : null; },
+      { key: 'control', label: 'Held out', align: 'right', sortValue: function (r) { return r.lift ? r.lift.control : null; },
         render: function (r) { return r.lift && fin(r.lift.control) ? money(r.lift.control, { cents: true }) : DASH; } },
       { key: 'lift', label: 'Lift', align: 'right', sortValue: function (r) { return r.lift && r.lift.ready ? r.lift.liftPct : null; }, render: function (r) {
         var l = r.lift;
@@ -658,14 +659,93 @@
         return html`<span><strong className="num">${signedPct(l.liftPct / 100)}</strong><span className="an-sub-num">${signedPct(l.lo / 100) + ' to ' + (big ? 'more than +1,000%' : signedPct(l.hi / 100))}</span></span>`;
       } },
       { key: 'people', label: 'People', align: 'right', sortValue: function (r) { return r.lift ? r.lift.nControl : null },
-        render: function (r) { return r.lift ? html`<span className="num">${num(r.lift.nTreated)} vs ${num(r.lift.nControl)}</span>` : DASH; } },
+        render: function (r) { return r.lift ? html`<span className="num">${num(r.lift.nTreated)} messaged vs ${num(r.lift.nControl)} held out</span>` : DASH; } },
       { key: 'note', label: 'Read', render: function (r) { return html`<span className="an-muted">${r.lift ? r.lift.note : ''}</span>`; } }
     ];
-    return html`<${Card} id="analytics-lift" title="Lift vs control"
-        sub="Revenue per person for everyone a campaign reached, against the 10% control group that stays on the original plan.">
+    return html`<${Card} id="analytics-lift" title="Lift vs holdout"
+        sub=${'Revenue per person for people a campaign messaged, against the same audience\u2019s ' + HOLD + ' (' + 'never messaged), over the campaign window. Ranges are 95%.'}>
       ${rows.length ? html`<${Table} id="analytics-lift-table" caption="Lift vs control by campaign" columns=${cols} rows=${rows}
           rowKey=${function (r) { return r.id; }} sortKey="name" sortDir="asc" />`
         : html`<${Empty} title="No live or finished campaigns in this filter." />`}
+    <//>`;
+  }
+
+  /* ---------------- By mission ---------------- */
+  function goTo(route, patch) { try { if (MC.nav && typeof MC.nav.go === 'function') MC.nav.go(route, patch); } catch (e) { /* convenience only */ } }
+  function missionFmt(metric) {
+    if (metric === 'revenue') return function (n) { return moneyC(n); };
+    return function (n) { return num(n, { compact: Math.abs(n) >= 10000 }); };
+  }
+  var METRIC_NOUN = { revenue: 'revenue', reactivations: 'reactivations', orders: 'orders', signups: 'sign-ups', unsubs: 'unsubscribes' };
+  function MissionSection() {
+    var React = R(), H = hooks();
+    var mset = H.useSelect(function (w) { return w.missions; });
+    var camps = H.useSelect(selCampaigns);
+    var list = H.useSelect(React.useCallback(function (w) {
+      return MC.metrics && w.missions ? w.missions.order.map(function (id) { return MC.metrics.mission(w, id); }).filter(Boolean) : EMPTY;
+    }, []), sameItems) || EMPTY;
+    var lifts = H.useSelect(React.useCallback(function (w) {
+      return MC.metrics && w.missions ? w.missions.order.map(function (id) { return MC.metrics.lift(w, { missionId: id }); }) : EMPTY;
+    }, []), sameItems) || EMPTY;
+    var rows = list.map(function (m, k) {
+      var rec = mset && mset.byId[m.id];
+      return { id: m.id, title: rec ? (rec.goalText || rec.title) : m.id, status: rec ? rec.status : '', m: m, lift: lifts[k] || null };
+    });
+    var cols = [
+      { key: 'title', label: 'Mission', sortValue: function (r) { return r.title; }, firstDir: 'asc', render: function (r) {
+        return html`<span><button type="button" className="an-link" onClick=${function () { goTo('missions', r.id); }}>${r.title}</button><span className="an-sub-num">${(r.m.campaignIds || EMPTY).map(function (cid) { var c = camps && camps.byId[cid]; return c ? c.name : cid; }).join(', ') || 'No campaign yet'}</span></span>`; } },
+      { key: 'progress', label: 'Progress', align: 'right', sortValue: function (r) { return r.m.pct; }, render: function (r) {
+        var f = missionFmt(r.m.metric);
+        return html`<span><strong className="num">${f(r.m.value)}</strong> of <span className="num">${f(r.m.target)}</span><span className="an-sub-num">${r.m.text || 'Too early to call'}</span></span>`; } },
+      { key: 'revenue', label: 'Revenue', align: 'right', sortValue: function (r) { return r.m.revenue; }, render: function (r) { return moneyC(r.m.revenue); } },
+      { key: 'cost', label: 'Spend', align: 'right', sortValue: function (r) { return r.m.cost; }, render: function (r) { return moneyC(r.m.cost); } },
+      { key: 'roas', label: 'Return', align: 'right', sortValue: function (r) { return r.m.roas; }, render: function (r) { return ratio(r.m.roas); } },
+      { key: 'lift', label: 'Lift', align: 'right', sortValue: function (r) { return r.lift && r.lift.ready ? r.lift.liftPct : null; }, render: function (r) {
+        var l = r.lift;
+        if (!l || !l.ready) return html`<span className="an-muted">Not enough yet</span>`;
+        return html`<span><strong className="num">${signedPct(l.liftPct / 100)}</strong><span className="an-sub-num">${signedPct(l.lo / 100) + ' to ' + (l.hi > 1000 ? 'more than +1,000%' : signedPct(l.hi / 100)) + ', ' + HOLD}</span></span>`; } }
+    ];
+    var total = rows.reduce(function (a, r) { return a + (r.m.revenue || 0); }, 0);
+    return html`<${Card} id="analytics-missions" title="By mission"
+        sub="Every figure is the one your agents and the mission room use: revenue is credited last-touch to the mission’s campaigns, lift is against the audience held out from messages.">
+      ${rows.length ? html`<p className="an-headline">${rows.length === 1 ? 'One mission has' : rows.length + ' missions have'} brought in <strong className="num">${moneyC(total)}</strong> so far.</p>` : null}
+      ${rows.length ? html`<${Table} id="analytics-mission-table" caption="Results by mission" columns=${cols} rows=${rows}
+          rowKey=${function (r) { return r.id; }} sortKey="progress" sortDir="desc" />`
+        : html`<${Empty} title="No missions yet." body="Hand your team a goal and its results appear here as the campaigns run." />`}
+    <//>`;
+  }
+
+  /* ---------------- Content ---------------- */
+  function liftCell(c) {
+    if (!c || !c.enough || !c.lift) return html`<span className="an-muted" title=${(c && c.reason) || ''}>Not enough yet</span>`;
+    var l = c.lift;
+    return html`<span><strong className="num">${signedPct(l.value)}</strong><span className="an-sub-num">${signedPct(l.lo) + ' to ' + signedPct(l.hi)}</span></span>`;
+  }
+  function ContentSection() {
+    var React = R(), H = hooks();
+    var matrix = H.useSelect(React.useCallback(function (w) { return MC.metrics ? MC.metrics.content(w, { dim: 'angle' }) : null; }, []));
+    var heads = H.useSelect(React.useCallback(function (w) { return MC.metrics ? MC.metrics.content(w, { by: 'block', kind: 'headline', channel: 'email' }) : null; }, [])) || EMPTY;
+    var chs = (matrix && matrix.channels) || CH().OWNED;
+    var mrows = (matrix && matrix.rows) || EMPTY;
+    var cols = [{ key: 'label', label: 'Headline angle', render: function (r) { return r.label; } }].concat(chs.map(function (ch) {
+      return { key: ch, label: chLabel(ch) + (ch === 'sms' ? ' clicks' : ' opens'), align: 'right', sortValue: function (r) { var c = r.cells[ch]; return c && c.enough ? c.lift.value : null; },
+        render: function (r) { return liftCell(r.cells[ch]); } };
+    }));
+    var top = [];
+    for (var i = 0; i < heads.length; i++) if (heads[i].enough && heads[i].lift) top.push(heads[i]);
+    top.sort(function (a, b) { return (b.lift.value - a.lift.value) || (a.key < b.key ? -1 : 1); });
+    var hcols = [
+      { key: 'label', label: 'Headline', render: function (r) { return r.label; } },
+      { key: 'angle', label: 'Angle', render: function (r) { return (r.tags && r.tags.angle) ? String(r.tags.angle).replace(/-/g, ' ') : DASH; } },
+      { key: 'lift', label: 'Email opens', align: 'right', sortValue: function (r) { return r.lift.value; }, render: function (r) { return liftCell(r); } }
+    ];
+    return html`<${Card} id="analytics-content" title="Content"
+        sub="What was said, measured the same way as Content, Intelligence: each angle or headline is compared with the other content that ran in the same campaign, on the same channel and day, so the audience it reached cannot change the answer."
+        actions=${html`<${Btn} kind="ghost" onClick=${function () { goTo('content', { tab: 'intelligence' }); }}>Open Content, Intelligence<//>`}>
+      ${mrows.length ? html`<${Table} id="analytics-content-angles" caption="Headline angle lift by channel" columns=${cols} rows=${mrows}
+          rowKey=${function (r) { return r.key; }} sortKey="email" sortDir="desc" />` : html`<${Empty} title="No results by content yet." body="They appear as messages with tagged headlines are delivered." />`}
+      ${top.length ? html`<${Table} id="analytics-content-headlines" caption="Headlines on email, best first" columns=${hcols} rows=${top.slice(0, 5)}
+          rowKey=${function (r) { return r.key; }} sortKey="lift" sortDir="desc" />` : null}
     <//>`;
   }
 
@@ -698,6 +778,7 @@
     var ms = React.useState('roas'), measure = ms[0], setMeasure = ms[1];
     var args = React.useMemo(function () { return { range: f.range, campaignIds: f.campaignIds }; }, [f]);
     var rows = H.useSelect(React.useCallback(function (w) { return has(sel(), 'channelCompare') ? sel().channelCompare(w, args) : EMPTY; }, [args])) || EMPTY;
+    var split = H.useSelect(React.useCallback(function (w) { return has(sel(), 'revenueSplit') ? sel().revenueSplit(w, { range: f.range }) : null; }, [f.range]));
     var BC = chartOr('BarChart');
     var active = rows.filter(function (r) { return r.sends > 0 || r.impressions > 0 || r.cost > 0; });
     var best = null;
@@ -719,6 +800,7 @@
     var measures = [{ value: 'roas', label: 'Return on spend' }, { value: 'ctr', label: 'Click rate' }];
     return html`<${Card} id="analytics-channels" title="Channels & variants" sub=${'Ranked by return ' + rangeLabel(f.range) + '. Click rate bars show 95% ranges.'}
         actions=${html`<${Seg} id="analytics-channel-measure" label="Channel measure" value=${measure} options=${measures} onChange=${setMeasure} />`}>
+      ${split && split.total > 0 && !(f.campaignIds && f.campaignIds.length) ? html`<p className="an-note">Campaigns are credited with <strong className="num">${moneyC(split.credited)}</strong> of the <strong className="num">${moneyC(split.total)}</strong> the business took ${rangeLabel(f.range)} (an order counts for the last campaign that reached the customer in the 7 days before). The other <span className="num">${moneyC(split.uncredited)}</span> came from customers no campaign had touched.</p>` : null}
       ${best ? html`<p className="an-headline">${best.label || chLabel(best.ch)} returns <strong className="num">${ratio(best.roas)}</strong> on <span className="num">${moneyC(best.cost)}</span> of spend, the best of ${active.length} active channels.</p>` : null}
       ${active.length ? (BC ? html`<${BC} data=${data} orientation="h" format=${measure === 'roas' ? 'ratio' : 'pct'} highlightKey=${best ? best.ch : null}
           valueLabel=${measure === 'roas' ? 'Return on spend' : 'Click rate'} categoryLabel="Channel"
@@ -1229,17 +1311,21 @@
   /* ---------------- the view ---------------- */
   // §11.4: the view opens on the performance overview and insights; deeper analysis sits behind tabs.
   var SECTIONS = [
+    { id: 'missions', label: 'By mission' },
     { id: 'channels', label: 'Channels' },
-    { id: 'lift', label: 'Lift vs control' },
+    { id: 'content', label: 'Content' },
+    { id: 'lift', label: 'Lift vs holdout' },
     { id: 'impact', label: 'Agent impact' },
     { id: 'anomalies', label: 'Anomalies' },
     { id: 'attribution', label: 'Attribution' },
     { id: 'audiences', label: 'Audiences' },
     { id: 'whatif', label: 'What-if budget' }
   ];
-  var SECTION_OF = { 'analytics-channels': 'channels', 'analytics-funnel': 'channels', 'analytics-agent-impact': 'impact', 'analytics-lift': 'lift',
+  var SECTION_OF = { 'analytics-missions': 'missions', 'analytics-content': 'content', 'analytics-channels': 'channels', 'analytics-funnel': 'channels', 'analytics-agent-impact': 'impact', 'analytics-lift': 'lift',
     'analytics-anomalies': 'anomalies', 'analytics-attribution': 'attribution', 'analytics-audiences': 'audiences', 'analytics-whatif': 'whatif' };
   function sectionBody(id, f) {
+    if (id === 'missions') return html`<${MissionSection} f=${f} />`;
+    if (id === 'content') return html`<${ContentSection} f=${f} />`;
     if (id === 'lift') return html`<${LiftSection} f=${f} />`;
     if (id === 'impact') return html`<${AgentImpact} f=${f} />`;
     if (id === 'anomalies') return html`<${AnomaliesSection} f=${f} />`;
@@ -1253,7 +1339,7 @@
   }
   function MoreAnalysis(p) {
     var Tabs = MC.ui && typeof MC.ui.Tabs === 'function' ? MC.ui.Tabs : null;
-    var cur = SECTIONS.some(function (x) { return x.id === p.section; }) ? p.section : 'channels';
+    var cur = SECTIONS.some(function (x) { return x.id === p.section; }) ? p.section : 'missions';
     function pick(id) { if (MC.uiStore && MC.uiStore.setFocus) MC.uiStore.setFocus('analytics', { section: id }); }
     return html`<section className="an-more" aria-labelledby="analytics-more-title">
       <h2 id="analytics-more-title" className="an-more-title">Deeper analysis</h2>
@@ -1284,7 +1370,7 @@
       var ids = (raw.campaignIds || EMPTY).filter(function (id) { return campaigns && campaigns.byId[id]; });
       var metric = raw.metric && (METRICS.some(function (m) { return m.value === raw.metric; }) || EXTRA_METRICS[raw.metric]) ? raw.metric : 'revenue';
       var ch = raw.channel && (raw.channel === 'all' || CH().ALL.indexOf(raw.channel) >= 0) ? raw.channel : 'all';
-      return { range: r, campaignIds: ids, channel: ch, metric: metric, showAgents: raw.showAgents !== false, section: raw.section || 'channels' };
+      return { range: r, campaignIds: ids, channel: ch, metric: metric, showAgents: raw.showAgents !== false, section: raw.section || 'missions' };
     }, [raw, campaigns]);
     var idsKey = focus.campaignIds.join(',');
     var f = React.useMemo(function () {

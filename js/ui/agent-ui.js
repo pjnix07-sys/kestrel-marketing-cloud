@@ -643,7 +643,7 @@
   }
   function AgentPulse(p) {
     var roster = useSel(rosterOf, rosterEq) || [];
-    var need = useSel(function (w) { return w.proposals && w.proposals.open ? w.proposals.open.length : 0; }) || 0;
+    var need = useSel(function (w) { try { return MC.metrics && MC.metrics.asks ? MC.metrics.asks(w).count : 0; } catch (e) { return 0; } }) || 0;
     var tick = useSel(function (w) { return w.meta ? w.meta.tick : 0; }) || 0;
     var reduced = useReduced();
     var list = roster.length ? roster : AGENT_ORDER.map(function (id) { return { id: id, name: AGENT_NAMES[id], status: 'active', autonomy: 'suggest', lastRun: null }; });

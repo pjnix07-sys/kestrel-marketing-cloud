@@ -6,7 +6,7 @@
    - Fails if any request leaves localhost, except api.anthropic.com which is stubbed with page routes.
    - One line per check: PASS|FAIL|WARN <name> — <detail>; a summary line; exit 1 on any FAIL.
    - Screenshots only for failures, written to --out.
-   - --only takes a comma list of groups: boot, missions, asks, team, artifacts, connect, no-theatre, determinism (default: all).
+   - --only takes a comma list of groups: boot, missions, asks, team, artifacts, connect, no-theatre, consistency, determinism (default: all).
    - --port is the static server port; --out is where failure screenshots go.
    - --date pins the browser clock (YYYY-MM-DD at 10:00 local); default pins to the moment the suite started so
      every context sees the same date.
@@ -129,11 +129,8 @@ const SEED_LHW = 'm-lhw', SEED_BFE = 'm-bfe';
 const tick = async (page, n) => { await page.evaluate(k => MC.engine.step(k), n || 1); await page.waitForTimeout(250); };
 const mission = (page, id) => page.evaluate(id => { const m = MC.store.getState().missions.byId[id]; return m ? JSON.parse(JSON.stringify(m)) : null; }, id);
 const askCount = page => page.evaluate(() => { const l = document.getElementById('app-asks-btn').getAttribute('aria-label'); const m = /(\d+)/.exec(l); return m ? +m[1] : 0; });
-const expectedAsks = page => page.evaluate(() => {
-  const w = MC.store.getState(); let n = w.proposals.open.length;
-  w.missions.order.forEach(id => { const m = w.missions.byId[id]; if (m.status !== 'done' && m.status !== 'stopped') m.asks.forEach(a => { if (a.status === 'open') n++; }); });
-  return n;
-});
+/* the one Asks count is MC.metrics.asks(w).count (open mission asks + pending proposals that are not superseded/expired) */
+const expectedAsks = page => page.evaluate(() => MC.metrics.asks(MC.store.getState()).count);
 const steps = m => m.plan.map(s => s.id + ':' + s.status).join(' ');
 
 /* ============================== 1. Boot ============================== */
@@ -199,7 +196,7 @@ async function secMissions() {
     const lanes = await page.locator('.mr-lane').count(), blocks = await page.locator('.mr-blk').count();
     await check('missions: board has a lane per agent and a block per step', lanes >= 3 && blocks === m0.plan.length, `${lanes} lanes, ${blocks} blocks, ${m0.plan.length} steps`, page);
     const labels = await page.$$eval('.mr-blk', els => els.map(e => e.getAttribute('aria-label')));
-    await check('missions: each block names its agent, step and state', labels.every(l => /^[^:]+: .+, (done|working|queued|waiting on you|skipped)$/.test(l)), labels.slice(0, 2).join(' | '), page);
+    await check('missions: each block names its agent, step and state', labels.every(l => /^[^:]+: .+, (done|working|queued|waiting on you|skipped)(\. Weighed \d+ options.*)?$/.test(l)), labels.slice(0, 2).join(' | '), page);
     const batons = await page.$$eval('.mr-baton', els => els.map(e => e.getAttribute('title')));
     await check('missions: finished steps show hand-off batons', batons.length >= 1 && batons.every(t => /handed .+ to /.test(t)), batons.slice(0, 2).join(' | ') || 'none', page);
     const panels = await page.$$eval('.mr-art h3', els => els.map(e => e.textContent.trim()));
@@ -307,7 +304,7 @@ async function secMissions() {
       if (open.length) { await page.locator('.mr-ask-btn.go').first().click().catch(() => {}); answeredAsks++; await page.waitForTimeout(200); }
       if (m.plan.every(s => s.status === 'done' || s.status === 'skipped')) { fin = m; break; }
     }
-    await check('new goal: steps start queued and move through working to done across ticks', startedQueued && seen.has('working') && !!fin, `start ${hist[0]} ... end ${hist[hist.length - 1]} after ${hist.length - 1} ticks; statuses ${[...seen]}`, page);
+    await check('new goal: steps start queued and finish level by level across ticks (independent steps together)', startedQueued && seen.has('done') && !!fin && hist.length - 1 <= nm.plan.length + 2, `start ${hist[0]} ... end ${hist[hist.length - 1]} after ${hist.length - 1} ticks; statuses ${[...seen]}`, page);
     if (fin) {
       const blocks = await page.locator('.mr-blk.s-done').count();
       await check('new goal: the room shows every step done, with artifacts made', blocks === fin.plan.length && fin.artifacts.length >= 1, `${blocks}/${fin.plan.length} done blocks; artifacts ${JSON.stringify(fin.artifacts)}; asks answered ${answeredAsks}`, page);
@@ -325,8 +322,8 @@ async function secAsks() {
   try {
     const { page, w } = await openApp(ctx, 'missions');
     const n = await askCount(page), exp = await expectedAsks(page);
-    const sel = await page.evaluate(() => MC.select.missionAsks(MC.store.getState()).length);
-    const props = await page.evaluate(() => MC.store.getState().proposals.open.length);
+    const sel = await page.evaluate(() => MC.metrics.asks(MC.store.getState()).missionAsks.length);
+    const props = await page.evaluate(() => MC.metrics.asks(MC.store.getState()).proposals.length);
     await check('asks: top-bar count = open mission asks + pending proposals', n === exp && n === sel + props, `button ${n}, mission asks ${sel}, proposals ${props}`, page);
     const visible = await page.evaluate(() => getComputedStyle(document.querySelector('#app-asks-btn .app-count')).display !== 'none');
     await check('asks: the count is shown', visible && (await page.innerText('#app-asks-btn .app-count')).trim() === String(n), (await page.innerText('#app-asks-btn')).replace(/\s+/g, ' '), page);
@@ -335,7 +332,7 @@ async function secAsks() {
     await drawer.waitFor({ state: 'visible' });
     const cards = await drawer.locator('.app-ask').count();
     await check('asks: drawer lists every open mission ask with Why and impact', cards === sel && cards >= 1 && (await drawer.locator('.app-ask .app-ask-why').count()) === cards, `${cards} ask cards, ${sel} open`, page);
-    const pc = await drawer.locator('#approvals-panel article').count();
+    const pc = await drawer.locator('article:not(.app-ask)').count();
     await check('asks: drawer lists the pending proposals', pc === props || pc >= Math.min(props, 30), `${pc} proposal cards, ${props} pending`, page);
     await check('asks: drawer count matches the top bar', cards + props === n, `${cards} + ${props} = ${cards + props}, bar ${n}`, page);
     const card = drawer.locator('.app-ask').first();
@@ -417,22 +414,23 @@ async function secArtifacts() {
     const made = await page.evaluate(() => { const m = MC.store.getState().missions.byId['m-lhw']; return { c: (m.artifacts.find(a => a.kind === 'campaign') || {}).id, s: (m.artifacts.find(a => a.kind === 'segment') || {}).id, goal: m.goalText }; });
     await check('artifacts: the seeded mission has made a campaign and a segment', !!made.c && !!made.s, JSON.stringify(made), page);
     await page.evaluate(id => MC.nav.go('campaigns', { mode: 'detail', id }), made.c);
-    await page.waitForSelector('.mc-madeby', { timeout: 8000 }).catch(() => {});
-    let mb = await page.$$eval('.mc-madeby', els => els.map(e => ({ t: e.textContent.replace(/\s+/g, ' ').trim(), h: e.querySelector('a') && e.querySelector('a').getAttribute('href') })));
-    await check('artifacts: a mission-made campaign says "Made by" and links to #missions/<id>', mb.length === 1 && /^Made by /.test(mb[0].t) && mb[0].h === '#missions/' + SEED_LHW && mb[0].t.indexOf(made.goal) >= 0, JSON.stringify(mb), page);
+    await page.waitForSelector('.cm-xref', { timeout: 8000 }).catch(() => {});
+    const xm = await page.$$eval('.cm-xref a[data-xref^="mission:"]', els => els.map(e => ({ t: e.textContent.replace(/\s+/g, ' ').trim(), h: e.getAttribute('href'), all: e.closest('.cm-xref').textContent })));
+    await check('artifacts: a mission-made campaign names its mission (link to #missions/<id>) and the agent that made it', xm.length === 1 && xm[0].h === '#missions/' + SEED_LHW && made.goal.indexOf(xm[0].t.replace(/…$/, '')) === 0 && /made by/.test(xm[0].all), JSON.stringify(xm), page);
+    let mb;
     await page.evaluate(id => MC.nav.go('audiences', { tab: 'segments', segmentId: id }), made.s);
-    await page.waitForSelector('.mc-madeby', { timeout: 8000 }).catch(() => {});
-    mb = await page.$$eval('.mc-madeby', els => els.map(e => ({ t: e.textContent.replace(/\s+/g, ' ').trim(), h: e.querySelector('a') && e.querySelector('a').getAttribute('href') })));
-    await check('artifacts: a mission-made segment says "Made by" and links back', mb.length === 1 && mb[0].h === '#missions/' + SEED_LHW, JSON.stringify(mb), page);
+    await page.waitForSelector('.v-audiences a[data-xref^="mission:"]', { timeout: 8000 }).catch(() => {});
+    mb = await page.$$eval('.v-audiences a[data-xref^="mission:"]', els => els.map(e => ({ t: e.textContent.replace(/\s+/g, ' ').trim(), h: e.getAttribute('href') })));
+    await check('artifacts: a mission-made segment names its mission and links back', mb.length >= 1 && mb[0].h === '#missions/' + SEED_LHW, JSON.stringify(mb), page);
     if (mb.length) {
-      await page.click('.mc-madeby a');
+      await page.click('.v-audiences a[data-xref^="mission:"]');
       await page.waitForFunction(g => (document.getElementById('page-title') || { textContent: '' }).textContent.trim() === g, made.goal, { timeout: 8000 }).catch(() => {});
       await check('artifacts: the back-link opens the mission room', (await page.evaluate(() => location.hash)) === '#missions/' + SEED_LHW && (await page.innerText('h1#page-title')).trim() === made.goal, await page.evaluate(() => location.hash), page);
     }
     /* a hand-made object has no back-link */
     await page.evaluate(() => MC.nav.go('campaigns', { mode: 'detail', id: 'c-hgg' }));
     await page.waitForFunction(() => /Holiday/.test((document.getElementById('page-title') || { textContent: '' }).textContent), null, { timeout: 8000 }).catch(() => {});
-    const own = await page.evaluate(() => { const w = MC.store.getState(); return { has: w.missions.order.some(id => w.missions.byId[id].artifacts.some(a => a.kind === 'campaign' && a.id === 'c-hgg')), n: document.querySelectorAll('.mc-madeby').length, t: document.getElementById('page-title').textContent.trim() }; });
+    const own = await page.evaluate(() => { const w = MC.store.getState(); return { has: w.missions.order.some(id => w.missions.byId[id].artifacts.some(a => a.kind === 'campaign' && a.id === 'c-hgg')), n: document.querySelectorAll('.mc-madeby, a[data-xref^="mission:"]').length, t: document.getElementById('page-title').textContent.trim() }; });
     await check('artifacts: an object no mission made shows no "Made by"', own.has ? true : own.n === 0, `made by a mission: ${own.has}; back-links shown: ${own.n}; "${own.t.slice(0, 30)}"`, page);
     await page.close();
   } finally { await closeCtx(ctx); }
@@ -631,11 +629,226 @@ async function secDeterminism() {
   } finally { for (const p of pages) await p.close().catch(() => {}); for (const c of ctxs) await closeCtx(c); }
 }
 
+
+/* ============================== 7. Consistency: verdict, decisions, steering, search, cross-links ============================== */
+const routeNow = page => page.evaluate(() => MC.uiStore.getState().route);
+const parseMoney = t => { const m = /\$\s*([\d,.]+)\s*([kKmM]?)/.exec(t || ''); if (!m) return NaN; return parseFloat(m[1].replace(/,/g, '')) * ({ k: 1e3, K: 1e3, m: 1e6, M: 1e6 }[m[2]] || 1); };
+async function secConsistency() {
+  /* --- the room: forecast verdict, what the agent weighed --- */
+  let ctx = await newCtx();
+  try {
+    const { page, w } = await openApp(ctx, 'missions/' + SEED_LHW);
+    const v = (await page.innerText('.mr-verdict')).replace(/\s+/g, ' ').trim();
+    const mm = await page.evaluate(id => { const x = MC.metrics.mission(MC.store.getState(), id); return { forecast: x.forecast, lo: x.lo, hi: x.hi, target: x.target, band: x.band }; }, SEED_LHW);
+    await check('verdict: forecast sits beside the goal with a state, a forecast out of the target, a range and the deadline',
+      /Forecast (On pace for|Ahead of pace for|Behind pace:|Too early to call:)/.test(v) && /\d+ of \d+/.test(v) && (mm.band === 'early' || /\(\d[\d,.k$]* to \$?\d[\d,.k]*\)/.test(v)) && /by (Mon|Tue|Wed|Thu|Fri|Sat|Sun|[A-Z][a-z]{2})/.test(v) && v.indexOf(String(Math.round(mm.target))) > 0,
+      v + ' | ' + JSON.stringify(mm), page);
+    const dsteps = await page.evaluate(id => MC.store.getState().missions.byId[id].plan.filter(s => s.decision && s.decision.options && s.decision.options.length).map(s => ({ id: s.id, title: s.title, chose: s.decision.chose, n: s.decision.options.length, why: s.decision.why })), SEED_LHW);
+    if (!dsteps.length) await warn('decision: no step has recorded what the agent weighed yet', 'step.decision missing in the sample missions', page);
+    else {
+      const tgt = dsteps[0];
+      await page.locator('.mr-blk[data-step="' + tgt.id + '"]').focus();
+      await page.waitForTimeout(150);
+      const opts = await page.$$eval('.mr-why .mr-opt', els => els.map(e => ({ chosen: e.classList.contains('is-chosen'), t: e.innerText.replace(/\s+/g, ' ').trim() })));
+      const hd = (await page.innerText('.mr-why h2')).replace(/\s+/g, ' ');
+      await check('decision: focusing a step shows the options it weighed, with numbers, the choice and why', opts.length === tgt.n && opts.filter(o => o.chosen).length === 1 && opts.some(o => /\d/.test(o.t)) && hd.indexOf(tgt.title) >= 0 && (await page.innerText('.mr-why')).indexOf(tgt.why.slice(0, 20)) >= 0,
+        hd + ' | ' + opts.map(o => (o.chosen ? '*' : '') + o.t.slice(0, 40)).join(' / '), page);
+      const ttl = await page.getAttribute('.mr-blk[data-step="' + tgt.id + '"]', 'title');
+      await check('decision: the step carries a hover summary of what it weighed', /Weighed/.test(ttl || '') && (ttl || '').indexOf(tgt.chose) >= 0, ttl, page);
+    }
+    const errs = w.take();
+    await check('verdict: no console errors', !errs.length, errs.join(' / ') || 'none', page);
+    await page.close();
+  } finally { await closeCtx(ctx); }
+
+  /* --- steering: the diff, and SMS removed from every surface --- */
+  ctx = await newCtx();
+  try {
+    const { page, w } = await openApp(ctx, 'missions/' + SEED_LHW);
+    const m0 = await mission(page, SEED_LHW), n0 = m0.plan.length;
+    await page.fill('#mr-lead-input', 'skip SMS');
+    await page.click('.mr-send');
+    await page.waitForTimeout(350);
+    const m1 = await mission(page, SEED_LHW);
+    const withDiff = m1.log.filter(b => b.diff && b.diff.length);
+    if (!withDiff.length) await warn('steer diff: the re-plan beat carries no diff yet', 'beat.diff missing', page);
+    else {
+      const dt = (await page.locator('.mr-lead .mr-diff').first().innerText().catch(() => '')).replace(/\s+/g, ' ');
+      await check('steer diff: the Lead column lists "What changed" with from and to', /What changed/i.test(dt) && withDiff[withDiff.length - 1].diff.every(d => dt.indexOf(d.what) >= 0), dt, page);
+    }
+    for (let i = 0; i < 12; i++) { await tick(page, 1); const m = await mission(page, SEED_LHW); if (m.plan.slice(n0).every(s => s.status === 'done' || s.status === 'skipped')) break; }
+    await page.waitForTimeout(300);
+    const room = await page.evaluate(() => ({ journey: (document.querySelector('.mr-jr') || {}).innerText || '', vers: document.querySelectorAll('.mr-msg-vers .mr-ver-sms').length, budget: (document.querySelector('.mr-bl') || {}).innerText || '' }));
+    const world = await page.evaluate(id => { const w = MC.store.getState(), m = w.missions.byId[id]; const cids = MC.xref.campaignIds(w, m);
+      return cids.map(cid => { const c = w.campaigns.byId[cid]; return { id: cid, channels: c.channels, sendsSms: (c.journey.steps || []).filter(s => s.type === 'send' && s.channel === 'sms').length, liveSmsVariants: MC.catalog.variantsOf(w, cid).filter(v => v.channel === 'sms' && v.status !== 'retired').length }; }); }, SEED_LHW);
+    await check('steer "skip SMS": the mission room shows no SMS in the journey, the message versions or the budget', !/SMS/i.test(room.journey) && room.vers === 0 && !/SMS/i.test(room.budget), JSON.stringify(room).slice(0, 200), page);
+    await check('steer "skip SMS": the campaign has no SMS channel, journey send step or live SMS version', world.every(c => c.channels.indexOf('sms') < 0 && c.sendsSms === 0 && c.liveSmsVariants === 0), JSON.stringify(world), page);
+    await page.evaluate(id => MC.nav.go('campaigns', { mode: 'detail', id: MC.xref.campaignIds(MC.store.getState(), MC.store.getState().missions.byId[id])[0], tab: 'journey' }), SEED_LHW);
+    await page.waitForSelector('.cm-journey', { timeout: 8000 });
+    await page.waitForTimeout(400);
+    const camp = await page.evaluate(() => ({ flow: (document.querySelector('.cm-journey-flow') || {}).textContent || '', sends: (document.querySelector('.cm-sends-all') || {}).innerText || '', head: (document.querySelector('.cm-detail-head') || {}).innerText || '' }));
+    await check('steer "skip SMS": the campaign journey and "what each step sends" list no SMS', !/\bSMS\b/i.test(camp.flow) && !/\bSMS\b/i.test(camp.sends), (camp.flow + ' || ' + camp.sends).replace(/\s+/g, ' ').slice(0, 200), page);
+    await page.click('#app-nav-campaigns, #app-art-campaigns', { timeout: 500 }).catch(() => {});
+    await page.evaluate(() => MC.nav.go('campaigns', { mode: 'board', id: null }));
+    await page.waitForTimeout(500);
+    const board = (await page.innerText('.v-campaigns')).replace(/\s+/g, ' ');
+    const lhwName = await page.evaluate(id => { const w = MC.store.getState(); return w.campaigns.byId[MC.xref.campaignIds(w, w.missions.byId[id])[0]].name; }, SEED_LHW);
+    const at = board.indexOf(lhwName);
+    await check('steer "skip SMS": the campaigns board card for it lists no SMS channel', at >= 0 && !/\bSMS\b/.test(board.slice(at, at + 260)), board.slice(at, at + 200), page);
+    const errs = w.take();
+    await check('steer "skip SMS": no console errors', !errs.length, errs.join(' / ') || 'none', page);
+    await page.close();
+  } finally { await closeCtx(ctx); }
+
+  /* --- global search --- */
+  ctx = await newCtx();
+  try {
+    const { page, w } = await openApp(ctx, 'team');
+    const opts = async () => page.$$eval('#app-search-list [role=option]', els => els.map(e => ({ kind: e.dataset.kind, id: e.dataset.id, t: e.innerText.replace(/\s+/g, ' ').trim(), sel: e.getAttribute('aria-selected') })));
+    await page.keyboard.press('/');
+    await page.waitForSelector('#app-search', { state: 'visible' });
+    const a11y = await page.evaluate(() => { const i = document.getElementById('app-search-input'); return { role: i.getAttribute('role'), focused: document.activeElement === i, dlg: document.getElementById('app-search').getAttribute('role'), modal: document.getElementById('app-search').getAttribute('aria-modal'), lb: document.getElementById('app-search-list').getAttribute('role'), label: !!i.getAttribute('aria-label') }; });
+    await check('search: "/" opens a labelled dialog with focus in a combobox over a listbox', a11y.role === 'combobox' && a11y.focused && a11y.dlg === 'dialog' && a11y.modal === 'true' && a11y.lb === 'listbox' && a11y.label, JSON.stringify(a11y), page);
+    await page.keyboard.type('lapsed');
+    await page.waitForTimeout(250);
+    let o = await opts();
+    const kinds = new Set(o.map(x => x.kind));
+    await check('search: "lapsed" finds the mission, the campaign, the audience and messages', ['mission', 'campaign', 'segment', 'message'].every(k => kinds.has(k)), o.map(x => x.kind + ':' + x.t.slice(0, 30)).join(' | '), page);
+    const act0 = await page.getAttribute('#app-search-input', 'aria-activedescendant');
+    await page.keyboard.press('ArrowDown');
+    const act1 = await page.getAttribute('#app-search-input', 'aria-activedescendant');
+    const selNow = (await opts()).filter(x => x.sel === 'true').length;
+    await check('search: arrow keys move the active option (aria-activedescendant) and exactly one option is selected', !!act0 && !!act1 && act0 !== act1 && selNow === 1, `${act0} -> ${act1}, selected ${selNow}`, page);
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(200);
+    const closed = await page.evaluate(() => ({ gone: !document.getElementById('app-search'), back: document.activeElement && document.activeElement.id }));
+    await check('search: Escape closes it and returns focus to where it was', closed.gone && closed.back !== 'app-search-input', JSON.stringify(closed), page);
+
+    const go = async (q, kind) => {
+      await page.keyboard.press('Control+k');
+      await page.waitForSelector('#app-search-input', { state: 'visible' });
+      await page.fill('#app-search-input', q);
+      await page.waitForTimeout(250);
+      const r = await opts();
+      const i = r.findIndex(x => x.kind === kind);
+      if (i < 0) return { found: false, list: r };
+      for (let k = 0; k < i; k++) await page.keyboard.press('ArrowDown');
+      await page.keyboard.press('Enter');
+      await page.waitForTimeout(500);
+      return { found: true, hit: r[i] };
+    };
+    let r = await go('black friday', 'mission');
+    await check('search: Ctrl+K, a mission, Enter opens its room', r.found && (await routeNow(page)) === 'missions' && /#missions\/m-bfe/.test(await page.evaluate(() => location.hash)), r.found ? r.hit.t : JSON.stringify(r.list).slice(0, 120), page);
+    r = await go('lapsed hikers', 'segment');
+    await check('search: an audience opens the Audiences screen', r.found && (await routeNow(page)) === 'audiences', r.found ? r.hit.t : 'no audience option', page);
+    r = await go('lapsed hiker win-back', 'campaign');
+    const detail = await page.evaluate(() => MC.uiStore.getState().focus.campaigns || {});
+    await check('search: a campaign opens its detail', r.found && (await routeNow(page)) === 'campaigns' && detail.mode === 'detail' && detail.id === r.hit.id, r.found ? r.hit.t + ' ' + JSON.stringify(detail) : 'no campaign option', page);
+    const blockWord = await page.evaluate(() => { const w = MC.store.getState(), b = MC.content.blocks(w).find(x => x.kind === 'headline'); return MC.content.textOf(b).split(/\s+/).slice(0, 3).join(' '); });
+    r = await go(blockWord, 'block');
+    await check('search: a block opens the Library with that block open', r.found && (await routeNow(page)) === 'content' && (await page.locator('#ct-blk-' + r.hit.id).count()) === 1 && (await page.locator('#ct-blk-' + r.hit.id + ' .ct-where').count()) === 1, r.found ? r.hit.t : 'no block option for "' + blockWord + '"', page);
+    r = await go('fatigue', 'agent');
+    await check('search: an agent opens its Team row', r.found && (await routeNow(page)) === 'agents', r.found ? r.hit.t : 'no agent option', page);
+    await page.keyboard.press('Control+k');
+    await page.waitForSelector('#app-search-input');
+    await page.fill('#app-search-input', 'zzzzqx');
+    await page.waitForTimeout(200);
+    await check('search: no match says so', /No matches/.test(await page.innerText('#app-search .app-search-status')), await page.innerText('#app-search .app-search-status'), page);
+    await page.keyboard.press('Escape');
+    const errs = w.take();
+    await check('search: no console errors', !errs.length, errs.join(' / ') || 'none', page);
+    await page.close();
+  } finally { await closeCtx(ctx); }
+
+  /* --- cross-links, one Asks count, grouped Asks and Team --- */
+  ctx = await newCtx();
+  try {
+    const { page, w } = await openApp(ctx, 'missions/' + SEED_LHW);
+    const links = await page.$$eval('.mr-links a', els => els.map(e => e.dataset.xref));
+    await check('links: the mission room links its campaign, audience and messages', ['campaign:', 'segment:', 'message:'].every(k => links.some(l => l.indexOf(k) === 0)), links.join(' '), page);
+    await page.locator('.mr-links a[data-xref^="segment:"]').first().click();
+    await page.waitForTimeout(500);
+    await check('links: the audience link opens Audiences', (await routeNow(page)) === 'audiences', await routeNow(page), page);
+    await page.evaluate(id => MC.nav.go('missions', id), SEED_LHW);
+    await page.waitForSelector('.mr-links');
+    const mname = await page.locator('.mr-links a[data-xref^="message:"]').first().innerText();
+    await page.locator('.mr-links a[data-xref^="message:"]').first().click();
+    await page.waitForSelector('.ct-msgname', { timeout: 8000 });
+    const cn = (await page.innerText('.ct-msgname')).replace(/\s*Rename\s*$/, '').trim();
+    await check('links: the message link opens that message in Compose', (await routeNow(page)) === 'content' && cn.indexOf(mname.trim()) === 0, `${mname} -> ${cn}`, page);
+    const cx = (await page.locator('.ct-compose .xref').first().innerText()).replace(/\s+/g, ' ');
+    await check('links: Compose names the missions and campaigns that use the message', /Mission/.test(cx) && /Campaign/.test(cx), cx, page);
+    await page.locator('.ct-compose .xref a[data-xref^="mission:"]').first().click();
+    await page.waitForTimeout(500);
+    await check('links: the mission link in Compose opens the room', (await routeNow(page)) === 'missions' && /#missions\/m-/.test(await page.evaluate(() => location.hash)), await page.evaluate(() => location.hash), page);
+
+    await page.evaluate(id => MC.nav.go('campaigns', { mode: 'detail', id: MC.xref.campaignIds(MC.store.getState(), MC.store.getState().missions.byId[id])[0], tab: 'overview' }), SEED_LHW);
+    await page.waitForSelector('.cm-xref a', { timeout: 8000 });
+    const xr = (await page.innerText('.cm-xref')).replace(/\s+/g, ' ');
+    await check('links: a campaign names its mission, the agent that made / changed it, its audience and messages', /Mission/.test(xr) && /made by/.test(xr) && /Audience/.test(xr) && /Message/.test(xr), xr.slice(0, 220), page);
+    const rev = await page.evaluate(id => { const w = MC.store.getState(); return MC.metrics.campaign(w, MC.xref.campaignIds(w, w.missions.byId[id])[0]).revenue; }, SEED_LHW);
+    const figs = (await page.innerText('.cm-figs')).replace(/\s+/g, ' ');
+    const figRev = parseMoney((/Revenue\s+(\$[\d,.]+\s*[kKmM]?)/.exec(figs) || [])[1]);
+    await check('counts: campaign revenue on screen is MC.metrics.campaign revenue', isFinite(figRev) ? Math.abs(figRev - rev) / Math.max(1, rev) < 0.01 : /Revenue/.test(figs) === false, `${figs.slice(0, 120)} vs ${Math.round(rev)}`, page);
+    await page.locator('.cm-xref a[data-xref^="mission:"]').first().click();
+    await page.waitForTimeout(500);
+    const mrev = parseMoney(await page.innerText('.mr-ctr.is-rev b'));
+    await check('counts: the mission room revenue counter is the same number', isFinite(mrev) && Math.abs(mrev - rev) / Math.max(1, rev) < 0.01, `${mrev} vs ${Math.round(rev)}`, page);
+    await page.evaluate(() => MC.nav.go('campaigns', { mode: 'detail', id: 'c-lhw', tab: 'journey' }));
+    await page.waitForSelector('.cm-sends-all', { timeout: 8000 });
+    const sends = await page.$$eval('.cm-sends-all .cm-send', els => els.map(e => ({ link: !!e.querySelector('a[data-xref^="message:"]'), t: e.innerText.replace(/\s+/g, ' ') })));
+    await check('links: every journey send step shows the message and channel version it sends', sends.length >= 2 && sends.every(x => x.link && /version/.test(x.t) && /“/.test(x.t)), sends.slice(0, 2).map(x => x.t.slice(0, 80)).join(' | '), page);
+
+    await page.evaluate(() => MC.nav.go('content', { tab: 'library', messageId: null }));
+    await page.waitForSelector('.ct-count', { timeout: 8000 });
+    const cnt = await page.evaluate(() => { const m = MC.metrics.messages(MC.store.getState()); return { m, t: document.querySelector('.ct-count').innerText.replace(/\s+/g, ' ') }; });
+    await check('counts: the Library count is MC.metrics.messages (messages, blocks, channel versions apart)', cnt.t.indexOf(cnt.m.messages + ' messages') === 0 && cnt.t.indexOf(cnt.m.blocks + ' blocks') > 0 && cnt.t.indexOf(cnt.m.channelVersions + ' channel versions') > 0, cnt.t, page);
+    await page.locator('.ct-link[aria-expanded]').first().click();
+    await page.waitForSelector('.ct-where .xref');
+    await check('links: an open block in the Library shows missions and campaigns using it', /Mission/.test(await page.innerText('.ct-where .xref')), (await page.innerText('.ct-where .xref')).replace(/\s+/g, ' '), page);
+
+    /* Asks: one count, grouped by mission */
+    const n = await askCount(page), mc = await page.evaluate(() => MC.metrics.asks(MC.store.getState()));
+    await check('asks: one count - the bar, MC.metrics.asks and the Team and Approvals numbers agree', n === mc.count && mc.count === mc.missionAsks.length + mc.proposals.length, `bar ${n}, metrics ${mc.count} = ${mc.missionAsks.length} + ${mc.proposals.length}`, page);
+    await page.click('#app-asks-btn');
+    await page.locator('#approvals-drawer').waitFor({ state: 'visible' });
+    const groups = await page.$$eval('#approvals-drawer .app-asks-mission', els => els.map(e => ({ id: e.dataset.mission, h: e.querySelector('h3 a').innerText, asks: e.querySelectorAll('.app-ask').length, props: e.querySelectorAll('article:not(.app-ask)').length })));
+    const live = await page.evaluate(() => MC.missions.list(MC.store.getState()).filter(m => m.status !== 'done' && m.status !== 'stopped').map(m => m.id));
+    await check('asks: the drawer groups asks and proposals under the mission they belong to', groups.length >= 1 && groups.every(g => live.indexOf(g.id) >= 0 && g.h.length > 10 && g.asks + g.props >= 1), groups.map(g => `${g.id}: ${g.asks} asks, ${g.props} proposals`).join(' | '), page);
+    await page.keyboard.press('Escape');
+
+    await page.evaluate(() => MC.nav.go('agents', { tab: 'roster', agentId: null }));
+    await page.waitForSelector('.tm-bym', { timeout: 8000 });
+    const bym = await page.$$eval('.tm-bym-m', els => els.map(e => ({ id: e.dataset.mission, n: e.querySelectorAll('.tm-bym-agents li').length, link: !!e.querySelector('.tm-bym-t a[href^="#missions/"]') })));
+    await check('team: agents are grouped by mission, each mission linked with who is on it', bym.length === live.length && bym.every(b => b.n >= 3 && b.link), JSON.stringify(bym), page);
+    const errs = w.take();
+    await check('links: no console errors', !errs.length, errs.join(' / ') || 'none', page);
+    await page.close();
+  } finally { await closeCtx(ctx); }
+
+  /* --- phone width: verdict, decision and search stay usable --- */
+  ctx = await newCtx({ viewport: { width: 390, height: 844 } });
+  try {
+    const { page, w } = await openApp(ctx, 'missions/' + SEED_LHW);
+    const vis = await page.evaluate(() => { const e = document.querySelector('.mr-verdict'); const r = e && e.getBoundingClientRect(); return { shown: !!r && r.width > 0, fits: !!r && r.right <= window.innerWidth + 1, overflow: document.documentElement.scrollWidth <= window.innerWidth + 1 }; });
+    await check('phone 390: the forecast verdict is visible and nothing overflows sideways', vis.shown && vis.fits && vis.overflow, JSON.stringify(vis), page);
+    await page.click('#app-search-btn');
+    await page.waitForSelector('#app-search-input', { state: 'visible' });
+    await page.fill('#app-search-input', 'lapsed');
+    await page.waitForTimeout(250);
+    const box = await page.evaluate(() => { const r = document.getElementById('app-search').getBoundingClientRect(); return { l: r.left, r: r.right, w: window.innerWidth, n: document.querySelectorAll('#app-search-list [role=option]').length }; });
+    await check('phone 390: search fits the screen and lists results', box.l >= 0 && box.r <= box.w + 1 && box.n >= 3, JSON.stringify(box), page);
+    const errs = w.take();
+    await check('phone 390: no console errors', !errs.length, errs.join(' / ') || 'none', page);
+    await page.close();
+  } finally { await closeCtx(ctx); }
+}
+
 /* ============================== main ============================== */
 (async () => {
   const srv = await startServer().catch(e => { console.error('server failed: ' + e.message); process.exit(2); });
   browser = await chromium.launch();
-  const secs = [['boot', secBoot], ['missions', secMissions], ['asks', secAsks], ['team', secTeam], ['artifacts', secArtifacts], ['connect', secConnect], ['no-theatre', secNoTheatre], ['determinism', secDeterminism]];
+  const secs = [['boot', secBoot], ['missions', secMissions], ['asks', secAsks], ['team', secTeam], ['artifacts', secArtifacts], ['connect', secConnect], ['no-theatre', secNoTheatre], ['consistency', secConsistency], ['determinism', secDeterminism]];
   for (const [n, f] of secs) await section(n, f);
   await check('network: no request left localhost (except stubbed api.anthropic.com)', externals.length === 0, externals.length ? [...new Set(externals)].slice(0, 5).join(', ') : 'none');
   await browser.close();

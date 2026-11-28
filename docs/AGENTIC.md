@@ -50,9 +50,10 @@ Actions: `mission/create {goalText, objective?, plan?}`, `mission/step {id, step
 `mission/ask {id, ask}`, `mission/answer {id, askId, answer}`, `mission/steer {id, text, constraints?}`,
 `mission/setStatus {id, status}`. Results of planning (rules or Claude) are logged in payloads so replay is exact.
 
-**Execution:** missions are event-driven. A step runs as soon as its dependencies and inputs are ready (rules executors run
-immediately; a Claude-backed step takes exactly as long as the real call). There are no artificial delays or step durations.
-Answers and steering take effect immediately. The engine's day/hour clock still drives marketing results (sends, orders,
+**Execution:** missions are event-driven. A step is claimed on the engine tick after its dependencies and inputs are ready
+and finishes on the next (a Claude-backed step takes exactly as long as the real call); independent steps run in parallel.
+There are no artificial delays or step durations. Answers and steering change mission state at once; any step they unblock
+is claimed on the next tick. The engine's day/hour clock still drives marketing results (sends, orders,
 revenue) and the daily monitoring: Insight Analyst checks in each morning, updates progress, and Lead re-plans when pacing is
 behind. Asks have no auto-default or countdown; they wait for a human unless the agent's autonomy explicitly allows proceeding.
 

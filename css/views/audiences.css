@@ -282,3 +282,22 @@
 .v-audiences .aud-title { font-size: clamp(30px, 3.6vw, 44px); line-height: 1.05; font-weight: 700; letter-spacing: -0.025em; }
 .v-audiences ..aud-describe, .v-audiences .aud-group { background: transparent; border: 0; border-top: 1px solid var(--line); border-radius: 0; box-shadow: none; padding-left: 0; padding-right: 0; }
 .v-audiences .k-btn-primary { background: var(--moss, #1F5C46); border-color: var(--moss, #1F5C46); color: #fff; }
+
+/* what this audience responds to (MC.affinity) */
+.v-audiences .aud-h4 { font-size: 13px; font-weight: 600; margin: 12px 0 4px; color: var(--ink-2); }
+.v-audiences .aud-resp-lead { margin: 0 0 10px; }
+.v-audiences .aud-angles { list-style: none; margin: 0 0 8px; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.v-audiences .aud-angle { display: grid; grid-template-columns: 150px minmax(120px, 1fr) 52px; column-gap: 12px; row-gap: 2px; align-items: center; }
+.v-audiences .aud-angle-name { font-size: 14px; font-weight: 600; }
+.v-audiences .aud-angle-val { font-size: 14px; text-align: right; font-weight: 600; }
+.v-audiences .aud-angle-note { grid-column: 2 / 4; }
+.v-audiences .aud-angle-chart { position: relative; height: 14px; background: var(--surface-2, transparent); border-bottom: 1px solid var(--line); }
+.v-audiences .aud-angle-zero { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--ink-3); }
+.v-audiences .aud-angle-range { position: absolute; top: 5px; height: 4px; background: var(--ink-3); }
+.v-audiences .aud-angle-est { position: absolute; top: 1px; width: 3px; height: 12px; margin-left: -1px; background: var(--ink); }
+.v-audiences .aud-angle.is-good .aud-angle-range { background: var(--good); }
+.v-audiences .aud-angle.is-crit .aud-angle-range { background: var(--crit); }
+.v-audiences .aud-resp-blocks { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; }
+.v-audiences .aud-block-line, .v-audiences .aud-hist li { margin-bottom: 4px; }
+.v-audiences .aud-hist { list-style: none; margin: 0; padding: 0; }
+@media (max-width: 520px) { .v-audiences .aud-angle { grid-template-columns: 1fr 52px; } .v-audiences .aud-angle-chart { grid-column: 1 / 3; } .v-audiences .aud-angle-note { grid-column: 1 / 3; } }

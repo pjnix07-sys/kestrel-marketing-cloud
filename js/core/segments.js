@@ -84,11 +84,22 @@
       numAttr('bestHr', 'Best send hour', 'Predictions', 'best send hour', fmtHour, { min: 0, max: 23, step: 1, predicted: true })
     );
     list.forEach(function (a) { if (a.key === 'bestCh') a.predicted = true; });
+    // content responsiveness (MC.affinity): predicted from the response ledger, one yes/no condition per angle
+    var AF = MC.affinity;
+    ((AF && AF.ANGLES) || []).forEach(function (ang) {
+      var lab = 'Responds to ' + AF.phraseOf(ang) + ' content';
+      var a = { key: 'respondsTo:' + ang, label: lab, group: 'Content', type: 'bool', ops: BOOL_OPS.slice(), phrase: lab.toLowerCase(), angle: ang, predicted: true };
+      list.push(a);
+    });
     return list;
   }
   function attrList() {
-    if (!attrsCache) attrsCache = buildAttrs();
-    return attrsCache || [];
+    if (!attrsCache) {
+      var b = buildAttrs();
+      if (b && MC.affinity && MC.affinity.ANGLES) attrsCache = b;   // not cached before MC.affinity has loaded
+      else return b || [];
+    }
+    return attrsCache;
   }
   Object.defineProperty(S, 'ATTRS', { enumerable: true, configurable: true, get: function () { return attrList(); } });
   function attrMap() {
@@ -192,6 +203,10 @@
     var a = attrMap()[node.attr];
     if (!a) throw new Error('Unknown attribute ' + node.attr);
     var P = world.profiles, v = node.value;
+    if (a.type === 'bool' && a.angle) {
+      var rb = MC.affinity ? MC.affinity.respondsBits(world, a.angle) : new Uint8Array(P.n), wantR = v !== false;
+      return function (i) { return (rb[i] === 1) === wantR; };
+    }
     if (a.type === 'bool') {
       var bit = MC.CH.BIT[a.channel], con = P.consent, un = P.unsub, want = v !== false;
       return function (i) { return ((con[i] & bit) !== 0 && (un[i] & bit) === 0) === want; };
@@ -291,6 +306,10 @@
     var a = attrMap()[c && c.attr];
     if (!a) return short ? 'Unknown condition' : 'an unknown condition';
     var v = c.value;
+    if (a.type === 'bool' && a.angle) {
+      var yesR = v !== false, ph = MC.affinity ? MC.affinity.phraseOf(a.angle) : a.angle;
+      return short ? (yesR ? 'Responds to ' : 'Doesn’t respond to ') + ph + ' content' : (yesR ? 'responds to ' : 'doesn’t respond to ') + ph + ' content';
+    }
     if (a.type === 'bool') {
       var yes = v !== false;
       if (a.key === 'canAds') return short ? (yes ? 'Reachable by ads' : 'Not reachable by ads') : (yes ? 'reachable by ads' : 'not reachable by ads');
@@ -378,6 +397,8 @@
         case 'age': if (c.cmp === 'between' && Array.isArray(v)) extra.push(v[0] + '–' + v[1]); else if (down) adj.push('under-' + v); else if (up) adj.push(v + '+'); break;
         case 'bestCh': if (c.cmp === 'in' && Array.isArray(v) && v.length === 1 && v[0] !== 'none') adj.push((v[0] === 'sms' ? 'SMS' : v[0]) + '-first'); break;
         case 'canSms': if (v !== false) extra.push('SMS'); break;
+        case 'respondsTo:trail-season': case 'respondsTo:warmth': case 'respondsTo:gifting': case 'respondsTo:utility': case 'respondsTo:urgency':
+          if (v !== false) adj.push(MC.affinity.phraseOf(c.attr.split(':')[1]) + '-responsive'); break;
         case 'canPush': if (v !== false) extra.push('push'); break;
         default: break;
       }
@@ -486,6 +507,14 @@
     if (LEX) return LEX;
     LEX = [];
     LEX_SRC.forEach(function (e) { e[0].forEach(function (p) { LEX.push({ words: p.toLowerCase().split(' '), phrase: p, make: e[1] }); }); });
+    ((MC.affinity && MC.affinity.ANGLES) || []).forEach(function (ang) {
+      var ph = MC.affinity.phraseOf(ang), key = 'respondsTo:' + ang;
+      var forms = ['responds to ' + ph + ' content', 'respond to ' + ph + ' content', 'responds to ' + ph, 'respond to ' + ph, 'likes ' + ph + ' content', 'engages with ' + ph + ' content'];
+      if (ang === 'utility') forms = forms.concat(['responds to utility content', 'responds to utility']);
+      if (ang === 'warmth') forms = forms.concat(['responds to warmth and comfort content', 'responds to comfort content', 'responds to comfort']);
+      if (ang === 'trail-season') forms = forms.concat(['responds to trail season content', 'responds to trail season']);
+      forms.forEach(function (f) { LEX.push({ words: f.toLowerCase().split(' '), phrase: f, make: fixed(key, 'is', true) }); });
+    });
     Object.keys(STATE_NAMES).forEach(function (nm) { LEX.push({ words: nm.split(' '), phrase: nm, make: fixed('state', 'in', [STATE_NAMES[nm]]) }); });
     LEX.sort(function (a, b) { return (b.words.length - a.words.length) || (b.phrase.length - a.phrase.length) || (a.phrase < b.phrase ? -1 : (a.phrase > b.phrase ? 1 : 0)); });
     return LEX;

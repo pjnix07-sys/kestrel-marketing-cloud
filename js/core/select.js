@@ -66,13 +66,24 @@
     var ids = f.campaignIds && f.campaignIds.length ? f.campaignIds : null;
     var ch = f.channel && f.channel !== 'all' ? f.channel : null;
     if (!ids && !ch && f.metric !== 'roas' && !f.campaignsOnly) { add(out, e.tot); return out; }
-    var list = ids || sortedKeys(e.c);
+    var list = ids || sortedKeys(e.c), R = F().REV;
     for (var i = 0; i < list.length; i++) {
       var cd = e.c && e.c[list[i]];
       if (!cd) continue;
-      add(out, ch ? (cd.ch && cd.ch[ch]) : cd.tot);
+      var src = ch ? (cd.ch && cd.ch[ch]) : cd.tot, r0 = out[R];
+      add(out, src);
+      // Campaign and channel revenue is the canonical last-touch figure, inside the campaign's own window.
+      out[R] = r0 + attrDay(w, list[i], d, ch);
     }
     return out;
+  }
+
+  function attrDay(w, cid, d, ch) {
+    var c = camp(w, cid), e = entry(w, d), cd = e && e.c && e.c[cid], a = cd && cd.attrLast;
+    if (!c || !a || d < Math.floor(c.startTick / 24) || d > Math.floor((c.endTick - 1) / 24)) return 0;
+    if (ch) return a[ch] || 0;
+    var s = 0; sortedKeys(a).forEach(function (k) { s += a[k]; });
+    return s;
   }
 
   function resolveRange(w, f) {
@@ -80,7 +91,7 @@
     var to = f.toDay !== undefined && f.toDay !== null ? f.toDay : t;
     var from;
     if (f.fromDay !== undefined && f.fromDay !== null) from = f.fromDay;
-    else if (f.range === 'all') from = 0;
+    else if (f.range === 'all') from = DAY0();
     else if (typeof f.range === 'number') from = to - f.range + 1;
     else from = to - 29;
     return { from: Math.max(DAY0(), from), to: Math.min(to, t) };
@@ -355,11 +366,20 @@
         add(tot, cd.tot);
         sortedKeys(cd.ch).forEach(function (k) { if (!ch[k]) ch[k] = newFact(); add(ch[k], cd.ch[k]); });
       }
-      return { tot: tot, ch: ch };
+      // Revenue is one number everywhere (MC.metrics.campaign): orders by people enrolled, last-touch credited to the campaign,
+      // enrolment to campaign end. The campaign's own-click revenue stays available as `direct`.
+      var direct = tot[F().REV], at = MC.metrics && MC.metrics.attributed ? MC.metrics.attributed(w, cid) : null;
+      if (at) {
+        tot[F().REV] = at.total;
+        sortedKeys(ch).forEach(function (k) { ch[k][F().REV] = at.byChannel[k] || 0; });
+        sortedKeys(at.byChannel).forEach(function (k) { if (!ch[k]) { ch[k] = newFact(); ch[k][F().REV] = at.byChannel[k]; } });
+      }
+      return { tot: tot, ch: ch, direct: direct };
     });
   }
 
   function dayValue(w, d, cid, idx) {
+    if (idx === F().REV && MC.metrics && MC.metrics.attributed) { var at = MC.metrics.attributed(w, cid); return at && at.byDay[d] ? at.byDay[d] : 0; }
     var e = entry(w, d), cd = e && e.c && e.c[cid];
     return cd && cd.tot ? cd.tot[idx] : 0;
   }
@@ -475,7 +495,7 @@
       var expected = c.budget.total * elapsed;
       var g = SEL.campaignGoal(w, cid);
       return {
-        revenue: T.tot[f.REV], conv: T.tot[f.CONV], clicks: T.tot[f.CLICK], sends: T.tot[f.SENT], opens: T.tot[f.OPEN],
+        revenue: T.tot[f.REV], direct: T.direct, conv: T.tot[f.CONV], clicks: T.tot[f.CLICK], sends: T.tot[f.SENT], opens: T.tot[f.OPEN],
         cost: cost, react: T.tot[f.REACT], unsubs: T.tot[f.UNSUB], impressions: T.tot[f.IMPR],
         roas: cost > 0 ? T.tot[f.REV] / cost : null,
         spentByCh: spentByCh, budgetByCh: c.budget.byChannel, dailyBudgetByCh: dailyByCh,
@@ -527,62 +547,15 @@
   // difference is what the campaign added. Percent units (13.5 = 13.5%), 95% interval from the per-person variance
   // (log-ratio delta method). The per-campaign control group used to judge agent changes is not used here.
   SEL.campaignLift = function (w, cid) {
-    var c = camp(w, cid);
-    if (!c) return null;
-    return memo('campaignLift', [w, rv(w, 'enroll'), rv(w, 'metrics'), c, w.meta.tick], cid, function () {
-      var E = w.enroll && w.enroll[cid];
-      var out = { ready: false, metric: 'revenue per person', treated: null, control: null, liftPct: null, lo: null, hi: null, nTreated: 0, nControl: 0, note: '' };
-      if (!E || !E.step || !E.all) { out.note = c.status === 'draft' || c.status === 'scheduled' ? 'Starts when the campaign goes live.' : 'No results yet.'; return out; }
-      var n = [0, 0], s1 = [0, 0], s2 = [0, 0], buyers = [0, 0];
-      for (var i = 0; i < E.step.length; i++) {
-        if (E.step[i] === -1) continue;
-        var k = SEL.inUniversalHoldout(w, i) ? 1 : 0, r = E.all[i];
-        n[k]++; s1[k] += r; s2[k] += r * r; if (r > 0) buyers[k]++;
-      }
-      out.nTreated = n[0]; out.nControl = n[1];
-      if (n[1] < 30) { out.note = 'Only ' + n[1] + ' people in this audience are held out from all messages so far. Lift shows once there are 30.'; return out; }
-      if (n[0] < 30) { out.note = 'Not enough people have been messaged yet.'; return out; }
-      var mt = s1[0] / n[0], mc = s1[1] / n[1];
-      out.treated = mt; out.control = mc;
-      if (buyers[1] < 3 || buyers[0] < 3 || !(mc > 0)) { out.note = 'Only ' + buyers[1] + (buyers[1] === 1 ? ' held-out person has' : ' held-out people have') + ' bought so far. Lift needs at least 3.'; return out; }
-      var vt = Math.max(0, s2[0] / n[0] - mt * mt) / n[0], vc = Math.max(0, s2[1] / n[1] - mc * mc) / n[1];
-      var lr = Math.log(mt > 0 ? mt / mc : 1e-9), se = Math.sqrt(vt / (mt * mt || 1) + vc / (mc * mc));
-      out.liftPct = (mt / mc - 1) * 100;   // percent units (13.5 = 13.5%)
-      out.lo = (mt > 0 ? Math.exp(lr - Z95 * se) - 1 : -1) * 100;
-      out.hi = (mt > 0 ? Math.exp(lr + Z95 * se) - 1 : -1) * 100;
-      out.ready = true;
-      out.note = out.lo > 0 ? 'Clearly above the held-out group.' : (out.hi < 0 ? 'Clearly below the held-out group.' : 'Too close to call: the range includes no lift.');
-      return out;
-    });
+    if (!camp(w, cid)) return null;
+    return MC.metrics.lift(w, { campaignId: cid });
   };
 
-  // How many messages people got across all owned channels. days is capped at the 7 the profile store keeps.
+  // How many messages people got across all owned channels, against each channel's own cap, plus who is resting (MC.metrics.load).
+  // days is capped at the 7 the profile store keeps.
   SEL.messageLoad = function (w, o) {
     o = o || {};
-    var days = Math.max(1, Math.min(7, Math.round(o.days > 0 ? o.days : 7)));
-    return memo('messageLoad', [w, w.meta.tick, w.guardrails], String(days), function () {
-      var P = w.profiles, t = today(w), counts = {}, over = 0, cap = ((w.guardrails && w.guardrails.freqCap) || { email: 4 }).email || 4;
-      var slots = [];
-      for (var q = 0; q < days; q++) slots.push((((t - q) % 7) + 7) % 7);
-      for (var i = 0; i < P.n; i++) {
-        var tot = 0;
-        for (var ci = 0; ci < 3; ci++) for (var j = 0; j < slots.length; j++) tot += P.sent7[i * 21 + ci * 7 + slots[j]];
-        counts[tot] = (counts[tot] || 0) + 1;
-        if (tot > cap) over++;
-      }
-      var dist = Object.keys(counts).map(Number).sort(function (a, b) { return a - b; }).map(function (k) { return { sends: k, profiles: counts[k] }; });
-      var by = {}, ids = w.campaigns.order, f = F();
-      for (var d = Math.max(DAY0(), t - days + 1); d <= t; d++) {
-        var e = entry(w, d);
-        if (!e || !e.c) continue;
-        ids.forEach(function (cid) {
-          var cd = e.c[cid];
-          if (!cd || !cd.ch) return;
-          MC.CH.OWNED.forEach(function (ch) { if (cd.ch[ch]) by[cid] = (by[cid] || 0) + cd.ch[ch][f.SENT]; });
-        });
-      }
-      return { days: days, cap: cap, people: P.n, distribution: dist, overCap: over, byCampaign: by };
-    });
+    return MC.metrics.load(w, { days: o.days, campaignId: o.campaignId });
   };
 
   // overlapPct is in percent units (13.5 = 13.5%). Live or scheduled campaigns sharing both audience and a channel with `cid` on overlapping days.
@@ -711,6 +684,22 @@
     });
   };
 
+  // Business revenue for a range against what campaigns are credited with (the same last-touch number as every campaign and
+  // channel figure). The difference is customers with no campaign touch in the 7 days before ordering.
+  SEL.revenueSplit = function (w, f) {
+    f = f || {};
+    return memo('revenueSplit', [w, rv(w, 'metrics')], argKey(f), function () {
+      var r = resolveRange(w, f), k = F(), all = newFact(), cred = 0;
+      for (var d = r.from; d <= r.to; d++) {
+        var e = entry(w, d);
+        if (!e) continue;
+        add(all, e.tot);
+        sortedKeys(e.c).forEach(function (cid) { cred += attrDay(w, cid, d, null); });
+      }
+      return { total: all[k.REV], credited: cred, uncredited: Math.max(0, all[k.REV] - cred), from: r.from, to: r.to };
+    });
+  };
+
   SEL.attribution = function (w, f) {
     f = f || {};
     return memo('attribution', [w, rv(w, 'metrics')], argKey(f), function () {
@@ -722,8 +711,10 @@
         var e = entry(w, d);
         if (!e || !e.c) continue;
         (ids || sortedKeys(e.c)).forEach(function (cid) {
-          var cd = e.c[cid], a = cd && cd[key];
+          var cd = e.c[cid], a = cd && cd[key], cc = camp(w, cid);
           if (!a) return;
+          // last-touch credit stays inside the campaign's own window, as in MC.metrics.campaign
+          if (key === 'attrLast' && cc && (d < Math.floor(cc.startTick / 24) || d > Math.floor((cc.endTick - 1) / 24))) return;
           if (!byCampaign[cid]) { byCampaign[cid] = {}; MC.CH.ALL.forEach(function (ch) { byCampaign[cid][ch] = 0; }); }
           sortedKeys(a).forEach(function (ch) { byChannel[ch] = (byChannel[ch] || 0) + a[ch]; byCampaign[cid][ch] = (byCampaign[cid][ch] || 0) + a[ch]; });
         });
@@ -781,8 +772,7 @@
   /* ---------------- proposals, feed, agents ---------------- */
   SEL.openProposals = function (w) {
     return memo('openProposals', [w, w.proposals], '', function () {
-      return (w.proposals.open || EMPTY).map(function (id) { return w.proposals.byId[id]; })
-        .filter(function (p) { return p && p.status === 'pending'; });
+      return MC.metrics.asks(w).proposals;
     });
   };
 
@@ -860,14 +850,16 @@
         else if (p.realized) status = 'realized';
         else if (NOT_MEASURED[p.kind] || !dollars) status = 'not-measured';
         else { status = 'measuring'; hoursLeft = Math.max(0, p.appliedTick + (p.horizon || 0) - t); }
+        var conc = !!p.realized && (p.realized.method === 'window' || (p.realized.lo > 0 || p.realized.hi < 0));
         var row = {
+          conclusive: conc,
           proposalId: p.id, agentId: p.agentId, kind: p.kind, title: p.title, appliedTick: p.appliedTick,
           expected: imp.delta !== undefined ? imp.delta : null, unit: imp.unit || null,
           realized: p.realized ? p.realized.delta : null, realizedLo: p.realized ? p.realized.lo : null, realizedHi: p.realized ? p.realized.hi : null,
           method: p.realized ? p.realized.method : null, status: status, hoursLeft: hoursLeft
         };
         if (dollars && status !== 'undone' && isFinite(row.expected)) te += row.expected;
-        if (dollars && status === 'realized' && isFinite(row.realized)) tr += row.realized;
+        if (dollars && status === 'realized' && conc && isFinite(row.realized)) tr += row.realized;
         rows.push(row);
       });
       return { rows: rows, totals: { expected: te, realized: tr } };
@@ -1179,21 +1171,103 @@
     if (n0 < C_MIN_DELIV || k0 < C_MIN_HITS) return 'Not enough other content on ' + chWord(ch) + ' to compare with yet.';
     return null;
   }
-  function ccell(ch, g, rest, aov, metric) {
-    var m = metric || C_LIFT_METRIC[ch] || 'click', col = C_COL[m];
-    var n1 = g[1], k1 = g[col], n0 = rest ? rest[1] : 0, k0 = rest ? rest[col] : 0;
+  // Revenue per send with the conversion-rate interval scaled by order value; the interval always brackets the observed value.
+  function rps(g, cv, a) {
+    var v = g[0] > 0 ? g[5] / g[0] : 0, aa = g[4] > 0 ? g[5] / g[4] : (a || 0);
+    return { value: v, lo: Math.min(v, cv.lo * aa), hi: Math.max(v, cv.hi * aa) };
+  }
+  function ccell(ch, g, within, aov, metric) {
+    var m = metric || C_LIFT_METRIC[ch] || 'click';
     var cv = crate(g[4], g[0]), a = g[4] >= 5 ? g[5] / g[4] : aov;
     var cell = { channel: ch, metric: m, sent: g[0], delivered: g[1], opens: g[2], clicks: g[3], conversions: g[4], revenue: cr2(g[5]),
       rates: { open: crate(g[2], g[1]), click: crate(g[3], g[1]), conv: crate(g[4], g[1]) },
-      revPerSend: { value: g[0] > 0 ? g[5] / g[0] : 0, lo: cv.lo * (a || 0), hi: cv.hi * (a || 0) },
+      revPerSend: rps(g, cv, a),
       lift: null, enough: false, reason: null };
-    var why = creason(ch, n1, k1, n0, k0, m);
-    if (why) { cell.reason = why; return cell; }
-    var r = cratio(k1, n1, k0, n0);
-    if (!r) { cell.reason = 'No ' + C_NOUN[m] + ' to compare yet.'; return cell; }
-    cell.lift = { value: r.value, lo: r.lo, hi: r.hi, metric: m, baseline: crate(k0, n0) };
-    cell.enough = true;
+    if (!(g[1] > 0)) { cell.reason = 'Not sent on ' + chWord(ch) + ' yet.'; return cell; }
+    var x = cwithinCell(ch, within, m);
+    cell.lift = x.lift; cell.enough = x.enough; cell.reason = x.reason;
     return cell;
+  }
+
+  // ---- within-campaign contrast (the one content-lift method; docs/CONSISTENCY.md section 1) ----
+  // A group's lift is measured only against variants of the same campaign, on the same channel, on the same day: same audience,
+  // same moment, so the audience a block happened to reach cannot masquerade as the block's effect. Strata (campaign x channel x
+  // day) are pooled with the Mantel-Haenszel rate ratio and the Greenland-Robins variance of its log.
+  function cstrata(w, days) {
+    return memo('cstrata', [w, rv(w, 'metrics'), w.content, w.variants, w.meta.tick], String(days || 0), function () {
+      var t = today(w), out = [], D = w.metrics ? w.metrics.days : EMPTY, owned = MC.CH.OWNED;
+      w.campaigns.order.forEach(function (cid) {
+        for (var i = 0; i < D.length; i++) {
+          var d = DAY0() + i, cd = D[i].c && D[i].c[cid];
+          if (!cd || !cd.v || d > t || (days && d <= t - days)) continue;
+          var byCh = {};
+          sortedKeys(cd.v).forEach(function (vid) {
+            var v = w.variants.byId[vid], f = cd.v[vid];
+            if (!v || owned.indexOf(v.channel) < 0 || !v.blocks || !v.blocks.length || !(f[F().SENT] > 0)) return;
+            (byCh[v.channel] = byCh[v.channel] || []).push({ blocks: v.blocks.map(function (b) { return b.id; }), v: [f[0], f[1], f[2], f[3], f[4], f[5]] });
+          });
+          sortedKeys(byCh).forEach(function (ch) { out.push({ cid: cid, ch: ch, day: d, vars: byCh[ch] }); });
+        }
+      });
+      return out;
+    });
+  }
+  function cmh() { return { A: 0, B: 0, V: 0, n1: 0, k1: 0, n0: 0, k0: 0 }; }
+  function cmhAdd(a, n1, k1, n0, k0) {
+    var N = n1 + n0;
+    if (!(n1 > 0) || !(n0 > 0)) return;
+    a.A += k1 * n0 / N; a.B += k0 * n1 / N; a.V += (n1 * n0 * (k1 + k0) - k1 * k0 * N) / (N * N);
+    a.n1 += n1; a.k1 += k1; a.n0 += n0; a.k0 += k0;
+  }
+  function cmhLift(a) {
+    if (!(a.A > 0) || !(a.B > 0)) return null;
+    var lr = Math.log(a.A / a.B), se = Math.sqrt(Math.max(0, a.V) / (a.A * a.B));
+    return { value: Math.exp(lr) - 1, lo: Math.exp(lr - Z95 * se) - 1, hi: Math.exp(lr + Z95 * se) - 1 };
+  }
+  // Groups of blocks a variant belongs to for one way of slicing: [{key, kind}].
+  function cvariantKeys(w, by, ids, kindFilter) {
+    var K = MC.content, out = [], kind = cgroupKind(by, { kind: kindFilter || null });
+    ids.forEach(function (id) {
+      var b = K.block(w, id);
+      if (!b || (kind && b.kind !== kind)) return;
+      out.push({ key: cgroup(by, b), kind: b.kind });
+    });
+    return out;
+  }
+  // acc[key] = { '*': mh, email: mh, ... } for every group on `by`; the rest is the same-kind alternatives in the same stratum.
+  function cwithin(w, by, o) {
+    var days = o.days > 0 ? o.days : 0, kf = o.kind || null, acc = {};
+    cstrata(w, days).forEach(function (st) {
+      var m = o.metric || C_LIFT_METRIC[st.ch] || 'click', col = C_COL[m], tot = {}, grp = {}, ks = [];
+      st.vars.forEach(function (vr, j) {
+        var keys = cvariantKeys(w, by, vr.blocks, kf), seen = {}, kinds = {};
+        ks[j] = keys;
+        keys.forEach(function (x) {
+          if (!kinds[x.kind]) { kinds[x.kind] = 1; var t0 = tot[x.kind] || (tot[x.kind] = [0, 0]); t0[0] += vr.v[1]; t0[1] += vr.v[col]; }
+          if (seen[x.key]) return;
+          seen[x.key] = 1;
+          var g = grp[x.key] || (grp[x.key] = { kind: x.kind, n: 0, k: 0 });
+          g.n += vr.v[1]; g.k += vr.v[col];
+        });
+      });
+      Object.keys(grp).forEach(function (key) {
+        var g = grp[key], t0 = tot[g.kind], a = acc[key] || (acc[key] = {});
+        [st.ch, '*'].forEach(function (c) { cmhAdd(a[c] || (a[c] = cmh()), g.n, g.k, t0[0] - g.n, t0[1] - g.k); });
+      });
+    });
+    return acc;
+  }
+  function cwithinCell(ch, a, m) {
+    // returns { lift, enough, reason } from pooled strata `a` (may be undefined)
+    var out = { lift: null, enough: false, reason: null };
+    if (!a || !(a.n1 > 0)) { out.reason = 'Never ran beside a different alternative in the same campaign, so there is nothing fair to compare it with yet.'; return out; }
+    var why = creason(ch, a.n1, a.k1, a.n0, a.k0, m);
+    if (why) { out.reason = why; return out; }
+    var r = cmhLift(a);
+    if (!r) { out.reason = 'No ' + C_NOUN[m] + ' to compare yet.'; return out; }
+    out.lift = { value: r.value, lo: r.lo, hi: r.hi, metric: m, baseline: crate(a.k0, a.n0) };
+    out.enough = true;
+    return out;
   }
 
   SEL.contentPerformance = function (w, o) {
@@ -1218,16 +1292,16 @@
         });
       });
       var chList = MC.CH.ALL.filter(function (ch) { return chs[ch]; });
+      var WN = cwithin(w, by, { days: days, kind: o.kind || null, metric: o.metric });
       var rows = order.map(function (key) {
-        var g = groups[key], tot = kindTot[g.kind] || {}, byCh = {}, sum = cvec(), obs = 0, exp = 0, k0s = 0, n1s = 0;
+        var g = groups[key], tot = kindTot[g.kind] || {}, byCh = {}, sum = cvec(), obs = 0, exp = 0, k0s = 0, n1s = 0, wk = WN[key] || {};
         var trendDays = {};
         chList.forEach(function (ch) {
           if (!g.ch[ch]) return;
           var v = g.ch[ch].v, rest = csub(tot[ch] || cvec(), v), aov = tot[ch] && tot[ch][4] > 0 ? tot[ch][5] / tot[ch][4] : 0;
           var m = o.metric || C_LIFT_METRIC[ch] || 'click';
-          byCh[ch] = ccell(ch, v, rest, aov, o.metric);
+          byCh[ch] = ccell(ch, v, wk[ch], aov, o.metric);
           cadd(sum, v);
-          if (rest[1] > 0) { obs += v[C_COL[m]]; exp += v[1] * rest[C_COL[m]] / rest[1]; k0s += rest[C_COL[m]]; }
           n1s += v[1];
           Object.keys(g.ch[ch].daily).forEach(function (d) {
             var x = g.ch[ch].daily[d], td = trendDays[d] || (trendDays[d] = [0, 0]);
@@ -1245,19 +1319,18 @@
           var po = cvec(), cnt = 0;
           cells.forEach(function (ch) { if (ch !== 'sms') { po[1] += byCh[ch].delivered; po[2] += byCh[ch].opens; } });
           row.rates = { open: crate(po[2], po[1]), click: crate(sum[3], sum[1]), conv: crate(sum[4], sum[1]) };
-          var cv = crate(sum[4], sum[0]), aov = sum[4] >= 5 ? sum[5] / sum[4] : 0;
-          row.revPerSend = { value: sum[0] > 0 ? sum[5] / sum[0] : 0, lo: cv.lo * aov, hi: cv.hi * aov };
+          row.revPerSend = rps(sum, crate(sum[4], sum[0]), 0);
           row.metric = o.metric || 'engagement';
           row.lift = null; row.enough = false;
+          var allx = wk['*'], x = null;
           if (!(n1s > 0)) row.reason = 'Not sent yet.';
           else if (n1s < C_MIN_DELIV) row.reason = 'Only ' + cnum(n1s) + ' delivered so far; needs about ' + C_MIN_DELIV + ' to compare.';
-          else if (obs < C_MIN_HITS || k0s < C_MIN_HITS) row.reason = 'Too few ' + (o.metric ? C_NOUN[o.metric] : 'responses') + ' so far to compare.';
-          else {
-            // observed against what the rest of the library earns on the same channels
-            var lr = Math.log(obs / exp), se = Math.sqrt(1 / obs + 1 / k0s);
-            row.lift = { value: Math.exp(lr) - 1, lo: Math.exp(lr - Z95 * se) - 1, hi: Math.exp(lr + Z95 * se) - 1, metric: row.metric, baseline: null };
-            row.enough = isFinite(lr);
-          }
+          else if (!allx || !(allx.n1 > 0)) row.reason = 'Never ran beside a different alternative in the same campaign, so there is nothing fair to compare it with yet.';
+          else if (allx.n1 < C_MIN_DELIV || allx.n0 < C_MIN_DELIV || allx.k1 < C_MIN_HITS || allx.k0 < C_MIN_HITS) row.reason = 'Too few ' + (o.metric ? C_NOUN[o.metric] : 'responses') + ' so far to compare.';
+          else if ((x = cmhLift(allx))) {
+            row.lift = { value: x.value, lo: x.lo, hi: x.hi, metric: row.metric, baseline: null };
+            row.enough = true;
+          } else row.reason = 'No responses to compare yet.';
         }
         row.trend = Object.keys(trendDays).map(Number).sort(function (a, b) { return a - b; }).slice(-14).map(function (d) {
           return { day: d, delivered: trendDays[d][0], rate: trendDays[d][0] > 0 ? trendDays[d][1] / trendDays[d][0] : 0 };
@@ -1393,35 +1466,50 @@
     return out;
   };
 
-  // contentContrast(w, {by, a, b, channel, kind?}) -> how group a does against group b on one channel: { enough, reason, contrast:{value,lo,hi}, a, b, metric }
+  // contentContrast(w, {by, a, b, channel, kind?}) -> how group a does against group b on one channel, within campaigns that ran both
+  // side by side (same method as contentPerformance): { enough, reason, contrast:{value,lo,hi}, a, b, metric }
   SEL.contentContrast = function (w, o) {
     o = o || {};
-    return memo('contentContrast', [w, w.content, w.meta.tick], argKey(o), function () {
-      var ch = o.channel, rows = SEL.contentPerformance(w, { by: o.by || 'angle', channel: ch, kind: o.kind });
+    return memo('contentContrast', [w, w.content, w.variants, rv(w, 'metrics'), w.meta.tick], argKey(o), function () {
+      var ch = o.channel, by = o.by || 'angle', rows = SEL.contentPerformance(w, { by: by, channel: ch, kind: o.kind });
       var ra = rows.filter(function (r) { return r.key === o.a; })[0], rb = rows.filter(function (r) { return r.key === o.b; })[0];
-      var out = { by: o.by || 'angle', channel: ch, metric: C_LIFT_METRIC[ch] || 'click', a: ra || null, b: rb || null, enough: false, reason: null, contrast: null };
+      var out = { by: by, channel: ch, metric: C_LIFT_METRIC[ch] || 'click', a: ra || null, b: rb || null, enough: false, reason: null, contrast: null };
       var ca = ra && ra.byChannel[ch], cb = rb && rb.byChannel[ch];
       if (!ca || !cb) { out.reason = 'Not sent on ' + chWord(ch) + ' yet.'; return out; }
-      var m = out.metric;
-      if (ca.delivered < C_MIN_DELIV || cb.delivered < C_MIN_DELIV) { out.reason = 'Only ' + cnum(Math.min(ca.delivered, cb.delivered)) + ' delivered on ' + chWord(ch) + ' so far; needs about ' + C_MIN_DELIV + ' each.'; return out; }
-      var d = cratio(ca.rates[m].k, ca.delivered, cb.rates[m].k, cb.delivered);
-      if (!d || ca.rates[m].k < C_MIN_HITS || cb.rates[m].k < C_MIN_HITS) { out.reason = 'Too few ' + C_NOUN[m] + ' so far to compare.'; return out; }
+      var m = out.metric, col = C_COL[m], acc = cmh();
+      cstrata(w, 0).forEach(function (st) {
+        if (st.ch !== ch) return;
+        var A = [0, 0], B = [0, 0];
+        st.vars.forEach(function (vr) {
+          var keys = cvariantKeys(w, by, vr.blocks, o.kind || null), ina = false, inb = false;
+          keys.forEach(function (x) { if (x.key === o.a) ina = true; if (x.key === o.b) inb = true; });
+          if (ina && !inb) { A[0] += vr.v[1]; A[1] += vr.v[col]; } else if (inb && !ina) { B[0] += vr.v[1]; B[1] += vr.v[col]; }
+        });
+        cmhAdd(acc, A[0], A[1], B[0], B[1]);
+      });
+      if (!(acc.n1 > 0)) { out.reason = 'These two never ran side by side in the same campaign on ' + chWord(ch) + '.'; return out; }
+      var why = creason(ch, acc.n1, acc.k1, acc.n0, acc.k0, m);
+      if (why) { out.reason = why; return out; }
+      var d = cmhLift(acc);
+      if (!d) { out.reason = 'No ' + C_NOUN[m] + ' to compare yet.'; return out; }
       out.enough = true; out.contrast = d;
       return out;
     });
   };
 
-  // Direct contrast of the best and worst headline angle on a channel, with its interval.
+  // Direct contrast of the best and worst headline angle on a channel (best and worst by within-campaign lift), with its interval.
   function cangleContrast(w, ch) {
     var rows = SEL.contentPerformance(w, { by: 'angle', channel: ch }), ok = [], thin = [];
     rows.forEach(function (r) { var c = r.byChannel[ch]; if (c && c.enough) ok.push({ r: r, c: c }); else thin.push({ r: r, c: c }); });
     var out = { channel: ch, metric: C_LIFT_METRIC[ch], ok: ok.length, thin: thin.length };
     if (ok.length < 2) { out.enough = false; out.reason = ok.length ? 'Only one headline angle has enough ' + chWord(ch) + ' data so far.' : (rows.length ? rows[0].byChannel[ch] && rows[0].byChannel[ch].reason : 'Nothing has been sent on ' + chWord(ch) + ' yet.') || 'Not enough data yet.'; return out; }
-    var m = out.metric, col = C_COL[m];
-    ok.sort(function (a, b) { return (b.c.rates[m].rate - a.c.rates[m].rate) || (a.r.key < b.r.key ? -1 : 1); });
+    var m = out.metric;
+    ok.sort(function (a, b) { return (b.c.lift.value - a.c.lift.value) || (a.r.key < b.r.key ? -1 : 1); });
     var best = ok[0], worst = ok[ok.length - 1];
-    var d = cratio(best.c.rates[m].k, best.c.delivered, worst.c.rates[m].k, worst.c.delivered);
+    var cc = SEL.contentContrast(w, { by: 'angle', channel: ch, a: best.r.key, b: worst.r.key });
+    var d = cc.enough ? cc.contrast : null;
     out.enough = !!d; out.best = best; out.worst = worst; out.contrast = d;
+    if (!d) out.reason = cc.reason;
     out.clear = !!d && d.lo > 0;
     return out;
   }
@@ -1497,8 +1585,9 @@
   function mAgentName(id) { return MC.lead && MC.lead.agentName ? MC.lead.agentName(id) : agentName(id); }
   function mList(w) { var s = w.missions; return s ? s.order.map(function (id) { return s.byId[id]; }).filter(Boolean) : EMPTY; }
   function stepText(st) { return st.title; }
+  function fcv(pr) { return pr.forecast && typeof pr.forecast === 'object' ? pr.forecast.value : pr.forecast; }
   function missionRow(w, m) {
-    var o = m.objective, L = MC.lead, pr = m.progress || { value: 0, target: o.target, forecast: 0, lo: 0, hi: 0 };
+    var o = m.objective, L = MC.lead, pr = (MC.metrics && MC.metrics.mission(w, m.id)) || m.progress || { value: 0, target: o.target, forecast: 0, lo: 0, hi: 0 };
     var open = (m.asks || []).filter(function (a) { return a.status === 'open'; });
     var blocking = open.filter(function (a) { return a.blocking !== false; });
     var done = 0; m.plan.forEach(function (st) { if (st.status === 'done' || st.status === 'skipped') done++; });
@@ -1521,7 +1610,7 @@
     return {
       id: m.id, title: m.title, goalText: m.goalText, status: m.status, phase: m.phase, brain: m.brain, createdTick: m.createdTick,
       objective: { metric: o.metric, target: o.target, by: o.by, deadlineText: o.deadlineText, direction: o.direction || 'atLeast', constraints: cons, text: L ? L.objectiveText(o) : '' },
-      progress: { value: pr.value, target: pr.target, forecast: pr.forecast, lo: pr.lo, hi: pr.hi, pct: pr.target > 0 ? pr.value / pr.target : 0, forecastPct: pr.target > 0 ? pr.forecast / pr.target : 0, band: band },
+      progress: { value: pr.value, target: pr.target, forecast: fcv(pr), lo: pr.lo, hi: pr.hi, by: o.by, pct: pr.target > 0 ? pr.value / pr.target : 0, forecastPct: pr.target > 0 ? fcv(pr) / pr.target : 0, band: pr.band && pr.band !== 'early' ? pr.band : band, verdict: pr.verdict || '', text: pr.text || '' },
       steps: { done: done, total: m.plan.length }, agents: agents, now: now,
       nextAsk: blocking[0] || open[0] || null, openAsks: open.length, blockingAsks: blocking.length, artifacts: (m.artifacts || []).length, replans: m.replans || 0,
       lastBeat: lastBeat ? { tick: lastBeat.tick, agentId: lastBeat.agentId, kind: lastBeat.kind, text: lastBeat.text } : null
@@ -1547,25 +1636,20 @@
       var plan = m.plan.map(function (st) {
         var ask = st.status === 'blocked' ? (m.asks || []).filter(function (a) { return a.stepId === st.id && a.status === 'open'; })[0] : null;
         return { id: st.id, kind: st.kind, agentId: st.agentId, agentName: mAgentName(st.agentId), title: st.title, needs: st.needs.slice(), status: st.status, note: st.note || '',
-          startedTick: st.startedTick, doneTick: st.doneTick, artifact: st.artifact || null, askId: ask ? ask.id : null };
+          startedTick: st.startedTick, doneTick: st.doneTick, artifact: st.artifact || null, askId: ask ? ask.id : null, decision: st.decision || null };
       });
       var art = (m.artifacts || []).map(function (a) { return artifactRow(w, a); });
       var open = (m.asks || []).filter(function (a) { return a.status === 'open'; });
       var answered = (m.asks || []).filter(function (a) { return a.status === 'answered'; });
-      var beats = m.log.map(function (b) { return { tick: b.tick, agentId: b.agentId, agentName: mAgentName(b.agentId), kind: b.kind, text: b.text, ref: b.ref || null }; });
+      var beats = m.log.map(function (b) { return { tick: b.tick, agentId: b.agentId, agentName: mAgentName(b.agentId), kind: b.kind, text: b.text, ref: b.ref || null, stepId: b.stepId || null, diff: b.diff || null, sides: b.sides || null, resolution: b.resolution || null }; });
       return assign({}, row, { plan: plan, asks: { open: open, answered: answered }, beats: beats, artifacts: art, steers: (m.steers || []).slice(), data: m.data || {} });
     });
   };
   SEL.missionAsks = function (w) {
     return memo('missionAsks', [w, w.missions], '', function () {
-      var out = [];
-      mList(w).forEach(function (m) {
-        (m.asks || []).forEach(function (a) {
-          if (a.status === 'open') out.push({ missionId: m.id, missionTitle: m.title, ask: a, agentName: mAgentName(a.agentId), blocking: a.blocking !== false, tick: a.createdTick });
-        });
+      return MC.metrics.asks(w).missionAsks.map(function (x) {
+        return { missionId: x.missionId, missionTitle: x.missionTitle, ask: x.ask, agentName: mAgentName(x.ask.agentId), blocking: x.blocking, tick: x.tick };
       });
-      out.sort(function (x, y) { return ((y.blocking ? 1 : 0) - (x.blocking ? 1 : 0)) || (x.tick - y.tick) || (x.missionId < y.missionId ? -1 : 1); });
-      return out;
     });
   };
   SEL.missionAgents = function (w) {
