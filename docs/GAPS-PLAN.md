@@ -21,16 +21,17 @@ triggers or programs library, campaigns have no offers/landing pages/UTMs or pla
 created from scratch and has no brand book or review workflow, analytics has no experiments, reports or
 incremental view.
 
-## Decisions for you before building
-1. **Real vs sample connections.** A static GitHub Pages app cannot really connect Shopify, an ESP or ad accounts.
-   Recommended: build every setup surface for real (Connections, People, Compliance, Sending, Brand kit) running on
-   the sample workspace, with sources shown as connected sample sources and a working **empty-workspace path** that
-   accepts a customer CSV and a website URL in the browser. Claude stays the only live external connection.
-2. **Where new areas live (rail stays minimal).** Recommended: Settings becomes a full page (gear → `#settings`)
-   with sections; Goals gets a **Plan** tab (quarter, budget across goals, calendar); Campaigns gets **Always-on**
-   (programs) and **Offers**; Content gets **Brand** and **Assets**; Results gets **Experiments** and **Reports**.
-   No new rail icons.
-3. **Order.** Recommended: Phase 0 and 1 first (trust and control, about a week of work), then 2 to 6.
+## Decisions (answered Nov 28)
+1. **Connections: a real backend.** Leave static-only hosting for the connected parts. The sample workspace stays the
+   deterministic in-browser world (demo, tests, replay). A **real workspace** mode talks to a small backend service:
+   credential storage for connectors, OAuth callbacks, webhook/event intake, a database for real workspace data, and
+   scheduled jobs (reports, syncs). Claude stays bring-your-own-key in the browser. Needs from the user before Phase 2:
+   a host account (Render is the default; its connector must be authorised in claude.ai settings) and sandbox
+   accounts/keys for the first integrations, entered through the secure credential form, never in chat.
+2. **Navigation: a few new rail icons.** **Plan** (quarter, budget across goals, calendar) and **Settings** (full page)
+   get their own icons; everything else lands as tabs (Campaigns: Always-on, Offers; Content: Brand, Assets; Results:
+   Experiments, Reports).
+3. **Scope: all phases, in order,** shipped and live-checked after each phase.
 
 ## Phase 0: trust fixes (bugs every reviewer hit) — blocker
 | # | Fix | Where |
