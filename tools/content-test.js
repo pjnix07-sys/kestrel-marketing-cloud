@@ -374,12 +374,20 @@ async function agents() {
 
   // Optimizer: approve the test -> a message and one variant per channel, all in review, none taking traffic yet
   const tc = oTest.target.id, allocBefore = JSON.stringify(w.campaigns.byId[tc].alloc), nMsg = K.messages(w).length, nVar = Object.keys(w.variants.byId).length;
+  // If the test was proposed before Fatigue Guard's retirement and builds on the block just retired, approving it must be
+  // refused with a clear reason (never a crash, never a message with a retired block). Otherwise it applies normally.
+  const testBlocks = JSON.stringify(oTest.actions.map(a => a.payload || {}));
+  const conflicts = testBlocks.indexOf('"' + bid + '"') >= 0;
   r = approve(MC, oTest.id); w = MC.store.getState();
-  const chs = oTest.actions[1].payload.channels, newMsg = w.proposals.byId[oTest.id].created.find(id => K.message(w, id));
-  check('approving the block test works', r.ok, r.error);
-  check('it adds one message in review', K.messages(w).length === nMsg + 1 && K.message(w, newMsg).review === 'in_review' && K.message(w, newMsg).author === 'agent:optimizer');
-  const nvs = Object.values(w.variants.byId).filter(v => v.messageId === newMsg);
-  check('and one variant per channel, in review, waiting for approval before any traffic', nvs.length === chs.length && Object.keys(w.variants.byId).length === nVar + chs.length && nvs.every(v => v.review === 'in_review' && v.pendingShare > 0 && chs.indexOf(v.channel) >= 0) && JSON.stringify(w.campaigns.byId[tc].alloc) === allocBefore, nvs.length + ' ' + chs.length);
+  if (conflicts) {
+    check('a test built on a block that was just retired is refused clearly', !r.ok && /retired/i.test(r.error || ''), r.error);
+  } else {
+    const chs = oTest.actions[1].payload.channels, newMsg = (w.proposals.byId[oTest.id].created || []).find(id => K.message(w, id));
+    check('approving the block test works', r.ok, r.error);
+    check('it adds one message in review', K.messages(w).length === nMsg + 1 && K.message(w, newMsg).review === 'in_review' && K.message(w, newMsg).author === 'agent:optimizer');
+    const nvs = Object.values(w.variants.byId).filter(v => v.messageId === newMsg);
+    check('and one variant per channel, in review, waiting for approval before any traffic', nvs.length === chs.length && Object.keys(w.variants.byId).length === nVar + chs.length && nvs.every(v => v.review === 'in_review' && v.pendingShare > 0 && chs.indexOf(v.channel) >= 0) && JSON.stringify(w.campaigns.byId[tc].alloc) === allocBefore, nvs.length + ' ' + chs.length);
+  }
 
   // Copy: approve -> blocks and message enter review, tagged; nothing is live
   const cp = cMsg || cLib, nBlocks = K.blocks(w).length;

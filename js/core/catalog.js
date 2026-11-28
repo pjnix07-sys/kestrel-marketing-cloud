@@ -2063,6 +2063,15 @@
     if (isStale(world, p)) return null;
     var bf = blockingFail(world, p);
     if (bf) return 'Blocked by guardrail: ' + bf.label;
+    // A suggestion that builds on a content block retired since it was proposed can't apply; say which block.
+    if (p.kind !== 'retire-block' && world.content && world.content.blocks) {
+      var payloads = JSON.stringify((p.actions || []).map(function (a) { return a.payload || {}; })), byId = world.content.blocks.byId || {};
+      var gone = Object.keys(byId).filter(function (bid) { return byId[bid] && byId[bid].retired && payloads.indexOf('"' + bid + '"') >= 0; })[0];
+      if (gone) {
+        var v = byId[gone].value, txt = typeof v === 'string' ? v : (v && (v.text || v.label || v.name)) || gone;
+        return 'This suggestion uses “' + String(txt).slice(0, 60) + '”, which was retired after it was made.';
+      }
+    }
     if (!(MC.runtime && typeof MC.runtime.apply === 'function')) return 'The agent runtime isn’t available.';
     return null;
   }

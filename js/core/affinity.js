@@ -19,7 +19,7 @@
   var RANKED_KINDS = ['headline', 'body', 'offer', 'cta', 'image'];
   A.angleIndex = function (angle) { return A.ANGLES.indexOf(angle === 'practical' ? 'utility' : angle); };
   A.labelOf = function (angle) { return A.ANGLE_LABEL[angle] || angle; };
-  A.phraseOf = function (angle) { return angle === 'urgency' ? 'urgency' : (angle === 'utility' ? 'practical' : A.labelOf(angle).toLowerCase()); };
+  A.phraseOf = function (angle) { return { 'trail-season': 'trail-season', warmth: 'warmth', gifting: 'gifting', utility: 'practical', urgency: 'urgency' }[angle] || angle; };
 
   /* ---------------- hidden taste (sim truth) ---------------- */
   // Called once when the world is generated (after history, so tiers and last orders are final). Deterministic: own rng fork.

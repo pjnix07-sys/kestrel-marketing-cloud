@@ -231,9 +231,16 @@
       // headlines already running in this campaign are not new tests
       var inUse = {};
       MC.catalog.variantsOf(world, cid).forEach(function (v) { if (v.status !== 'retired') { var h = headlineIdOf(world, v); if (h) inUse[h] = true; } });
+      // Blocks Fatigue Guard has proposed to retire are off-limits: a test must not build on a block that may leave.
+      var retiring = {};
+      Object.keys((world.proposals && world.proposals.byId) || {}).forEach(function (pid) {
+        var pr = world.proposals.byId[pid];
+        if (pr && pr.status === 'pending' && pr.kind === 'retire-block' && pr.target && pr.target.id) retiring[pr.target.id] = true;
+      });
+      function usable(id) { var bk = id && K.block(world, id); return !id || (bk && !bk.retired && !bk.archived && !retiring[id]); }
       var cands = [];
       K.blocks(world).forEach(function (b) {
-        if (b.kind !== 'headline' || b.review !== 'approved' || b.retired || b.archived || inUse[b.id]) return;
+        if (b.kind !== 'headline' || b.review !== 'approved' || b.retired || b.archived || retiring[b.id] || inUse[b.id]) return;
         if (b.tags && b.tags.product && !(msg.slots.product && K.block(world, msg.slots.product) && K.block(world, msg.slots.product).value.productId === b.tags.product)) return;
         var per = [], tot = 0;
         chs.forEach(function (ch) {
@@ -252,6 +259,8 @@
         var cb = cands[i].b, slots = assign({}, msg.slots, { headline: cb.id }), co = {};
         Object.keys(msg.channelOverrides || {}).sort().forEach(function (ch) { var o = assign({}, msg.channelOverrides[ch]); delete o.headline; if (Object.keys(o).length) co[ch] = o; });
         var draft = { name: clip(c.name + ': ' + ((K.ANGLE_LABEL[cb.tags.angle] || 'new') + ' headline test'), 78), slots: slots, channelOverrides: co, tags: assign({}, msg.tags, { angle: cb.tags.angle || 'neutral' }) };
+        var slotIds = []; Object.keys(slots).forEach(function (k) { var v = slots[k]; if (Array.isArray(v)) slotIds = slotIds.concat(v); else if (v) slotIds.push(v); });
+        if (!slotIds.every(usable)) continue;
         if (S.draftChecks(world, draft, chs, cid).ok) { pick = cands[i]; name = draft; }
       }
       if (!pick) { row.result = 'No tested headline reads well in every channel'; rows.push(row); return; }
