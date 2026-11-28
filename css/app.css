@@ -656,3 +656,11 @@ svg g[tabindex]:focus-visible > :first-child { stroke: var(--focus); stroke-widt
 .app-asks-msub a { color: var(--ink); text-decoration: underline; text-decoration-color: var(--line-strong); text-underline-offset: 3px; }
 .app-asks-n { font-size: 12px; font-weight: 500; color: var(--ink-3); white-space: nowrap; }
 .app-asks-mission .app-ask-list, .app-asks-mission .app-prop-list { margin-top: 8px; }
+
+/* Progressive disclosure (MC.ui.Details): advanced detail behind one quiet line. */
+.mc-details { margin: var(--space-3) 0; }
+.mc-details-sum { cursor: pointer; list-style: none; display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; color: var(--ink-2, var(--ink)); padding: 4px 0; }
+.mc-details-sum::-webkit-details-marker { display: none; }
+.mc-details-sum::before { content: ''; width: 6px; height: 6px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: rotate(-45deg); transition: transform 120ms ease; }
+.mc-details[open] > .mc-details-sum::before { transform: rotate(45deg); }
+.mc-details-body { padding-top: var(--space-2); }

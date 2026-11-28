@@ -87,7 +87,7 @@
   }
   function defaults() {
     return {
-      theme: 'system', route: 'home', drawer: null, sampleDismissed: false, firstRun: null, verifying: null,
+      theme: 'system', detail: 'simple', route: 'home', drawer: null, sampleDismissed: false, firstRun: null, verifying: null,
       focus: {
         campaigns: { mode: 'board', id: null, tab: 'overview' },
         content: { variantId: null, channel: 'email' },
@@ -107,7 +107,7 @@
       return o && typeof o === 'object' ? o : null;
     } catch (e) { return null; }
   }
-  function persisted(s) { return { theme: s.theme, route: s.route, sampleDismissed: s.sampleDismissed, firstRun: s.firstRun, notify: s.notify }; }
+  function persisted(s) { return { theme: s.theme, detail: s.detail, route: s.route, sampleDismissed: s.sampleDismissed, firstRun: s.firstRun, notify: s.notify }; }
   var lastPersist = '';
   function writePersisted(s) {
     try {
@@ -142,6 +142,7 @@
     var p = readPersisted();
     if (p) {
       if (THEMES.indexOf(p.theme) >= 0) s.theme = p.theme;
+      if (p.detail === 'simple' || p.detail === 'detailed') s.detail = p.detail;
       if (typeof p.sampleDismissed === 'boolean') s.sampleDismissed = p.sampleDismissed;
       s.firstRun = readFirstRun(p.firstRun);
       if (p.notify && typeof p.notify === 'object') {

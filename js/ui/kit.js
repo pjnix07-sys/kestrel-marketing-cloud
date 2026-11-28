@@ -1088,5 +1088,22 @@
     if (!parts.length) return null;
     return html`<p className=${cx('xref', p.className)} aria-label="Where this fits">${parts.map(function (x, i) { return html`<span key=${i} className="xref-w">${i ? html`<span className="xref-sep" aria-hidden="true"> ${DOT} </span>` : null}${x}</span>`; })}</p>`;
   };
+
+  /* <Details summary="More detail" id? open?>…</Details>: progressive disclosure for advanced content.
+     Closed by default in Simple mode, open by default in Detailed mode (Settings → Detail level). The person can
+     still open or close any one; that choice holds until the detail level changes. Native <details>, so it is
+     keyboard and screen-reader friendly with no script. */
+  function selDetail(s) { return s.detail; }
+  U.Details = function Details(p) {
+    var html = H(), React = R();
+    var level = MC.hooks.useUi(selDetail);
+    var want = p.open != null ? !!p.open : level === 'detailed';
+    var ref = React.useRef(null);
+    React.useEffect(function () { if (ref.current) ref.current.open = want; }, [want]);
+    return html`<details ref=${ref} id=${p.id} className=${cx('mc-details', p.className)}>
+      <summary className="mc-details-sum"><span>${p.summary || 'More detail'}</span></summary>
+      <div className="mc-details-body">${p.children}</div>
+    </details>`;
+  };
   function trunc(s, n) { s = String(s || ''); return s.length > n ? s.slice(0, n - 1).replace(/\s+\S*$/, '') + '…' : s; }
 })();
