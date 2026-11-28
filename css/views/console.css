@@ -200,7 +200,7 @@
 .v-team .tm-row > * { min-width: 0; }
 @media (min-width: 900px) {
   .v-team .tm-row { grid-template-columns: minmax(190px, 1.1fr) minmax(0, 2fr) minmax(0, 2fr) minmax(170px, 1.1fr); }
-  .v-team .tm-foot, .v-team .tm-settings { grid-column: 1 / -1; }
+  .v-team .tm-settings-wrap { grid-column: 1 / -1; }
 }
 .v-team .tm-name { display: flex; align-items: center; gap: 9px; }
 .v-team .tm-h { margin: 0; font-size: 18px; font-weight: 700; letter-spacing: -0.01em; }
@@ -262,3 +262,6 @@
 .tm-bym-agents a:hover { text-decoration: underline; }
 .tm-bym-w { color: var(--ink-3, #53645A); padding-left: 22px; overflow-wrap: anywhere; }
 .tm-bym-agents li.is-wait .tm-bym-w { color: var(--ink); font-weight: 600; }
+.v-team .tm-settings-wrap { grid-column: 1 / -1; }
+.v-team .tm-settings-wrap .mc-details-sum { font-size: 13px; color: var(--ink-2); cursor: pointer; }
+.v-team .tm-led { animation: none !important; }

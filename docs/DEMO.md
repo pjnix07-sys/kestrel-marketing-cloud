@@ -1,48 +1,37 @@
-# Demo: five minutes with the agents
+# Demo: five minutes with Marketing Cloud
 
-Live at https://pjnix07-sys.github.io/kestrel-marketing-cloud/, or run it locally (see the README). There is nothing to set up and no scripted playback: the page is live software on a sample world that keeps moving, one world hour every 1.2 seconds, so what you point at is what the agents are doing at that moment. Nothing here needs a key. The sample tenant is Fernway Outfitters, a fictional outdoor retailer.
+Live at https://pjnix07-sys.github.io/kestrel-marketing-cloud/, or run it locally (see the README). Nothing to set up and
+nothing scripted: it is the product running on a sample workspace (Fernway Outfitters, a fictional outdoor retailer)
+whose data is as of today and moves in real time. No key is needed.
 
-Before you start, open the page once and let it load (it builds 6,000 sample profiles and catches the world up to today). Use a wide window so the Lead column is open.
+Open the page once beforehand and let it load (it builds 6,000 sample profiles and brings the data up to today).
 
 ## The five minutes
 
-**0:00 Land on the missions board.**
-The page opens on the live missions. Say: "This isn't a dashboard of campaigns. It's a team of agents with a job. Read the headline." Point at the goal sentence of the first mission, "Win back 400 lapsed hikers before Dec 15 without discounting more than 15%." Then point at the lanes: each agent has a mark, a status dot and a line of what it is doing now.
+**0:00 Home.** Say: "This is the whole business in one screen: what my goals have brought in, whether each is on pace,
+and what needs me." Point at the hero line, the goal rows with their pace charts, and "Needs your decision".
 
-**0:45 Follow the work.**
-Click into the win-back mission. Show the steps laid out by dependency, not by time, and the orange hand-off wires between agents carrying their payload (an audience count, a budget split). Say: "Scout found the audience and handed it to the Planner. Fatigue Guard is removing people we've already messaged too much. Every one of these is a real action in the world: a real segment, a real campaign." Open an artifact panel to prove it.
+**0:45 A decision.** Read the win-back decision aloud: the question, why, and the likely impact. Say: "The agents did
+the work and stopped at the one choice that's mine. No countdown; everything else keeps running." Answer it.
 
-**1:30 Answer the ask.**
-The dark card is the only thing on the page that interrupts. Read the question, the why and the impact range aloud, then answer. Say: "It asks me once, with the reason, and it waits. No countdown." Watch the blocked step pick up as soon as you answer. Steps that did not depend on the answer kept going the whole time.
+**1:30 The goal.** Open it from Goals in the rail. Show the plan (each step, its agent, what it produced, and "Why
+this choice" for the options it weighed) and Activity (plain facts with times). Type `skip SMS` in Steer: the plan
+and every remaining message drop SMS, and Activity records what changed.
 
-**2:15 Steer in plain language.**
-Open "Talk to Lead". Type `Keep the discount under 10%` and send. Say: "I'm not editing a campaign. I'm telling the lead what I care about." Show Lead's one or two line reply and the plan changing on the board. Then try `skip SMS` and point at the channels dropping out.
+**2:30 A new goal.** Press + in the rail and type `Grow Trail runners by 300 sign-ups by Dec 20 with no SMS`. Say:
+"An outcome, a date and a limit." The agents plan it and start within seconds; if something is unclear they ask.
 
-**3:00 Give it a new goal.**
-Click New goal and type `Grow Trail runners by 300 sign-ups by Dec 20 with no SMS`. Say: "I gave it an outcome, a date and a limit." Show Lead reading the sentence and drafting a plan, then the agents starting. If Lead can't tell something (the audience, the offer), it asks a clarifying question instead of guessing. Answer it.
+**3:30 Content.** Content in the rail, then Compose. Say: "Written once, as blocks; every channel version renders from
+the same source." Edit a shared headline and show "used in N places". Then Audiences: an audience's "What this audience
+responds to" uses the same content data.
 
-**3:45 Open Content.**
-Artifacts menu, then Content. In Compose, open a message. Say: "Written once, as blocks. Every channel version renders from the same source." Point at the email, SMS, push, social and web versions side by side, then flip the Data toggle to show the JSON a channel receives. Edit a shared headline and show the warning "used in N places", with the choice to change it everywhere or only in this message.
+**4:15 Results.** Results in the rail. One sentence and one number on top, then goals, revenue with its forecast band,
+channels and content angles. Hover any mark for detail; "View as table" on any chart.
 
-**4:30 Intelligence.**
-Switch to Intelligence. Show the angle by channel grid: where trail-season headlines beat urgency, where they don't, with intervals and honest "not enough data" cells. Show the tired blocks and the agents' recommendations. Say: "Performance is measured per piece across channels, and the agents act on it. Copy Drafter writes from what's winning. Fatigue Guard proposes retiring what's worn out."
-
-**5:00 Close.**
-Back on the board: "While we talked, the world kept moving and the agents kept working. Every number is from the engine."
-
-## What makes it agentic (talk track for execs)
-
-- You hand over outcomes. The first thing you write is a sentence with a goal, a date and a limit. Campaigns, audiences and copy are what the agents make, and they stay inspectable and editable.
-- You can see the work. Each agent has a name, a task and a status. Steps appear as they start, hand-offs are drawn, and the narration reads in each agent's voice. A cold viewer can say what the team is doing and why.
-- You are asked only when it matters. An ask comes with the reason, the range of impact and what happens if you decline. Everything else proceeds.
-- You steer in plain language, and the plan visibly re-forms. There is no form to fill in.
-- It stays on. Insight Analyst checks every morning, updates progress against the target and Lead re-plans when pacing falls behind, and says so.
-- It is accountable. Every step goes through the same action catalog, guardrails (consent, frequency caps, quiet hours, budget caps and more) and undo as a human change. The audit chain is deterministic and replayable.
-- Content compounds. One message renders to every channel, performance is tracked per block, and what the agents learn feeds the next message.
-- It works without Claude. The default brain is a deterministic rules planner. Connect your own Anthropic API key and the Lead plans free text and the specialists write with Claude Haiku 5.5. Only aggregated numbers are sent, and any failure falls back to rules.
+**4:45 Simple and Detailed.** Settings (gear) → Detail level → Detailed: intervals, methods, rule builders and run
+traces open everywhere. Say: "Simple for everyone; the depth is one switch away."
 
 ## If something goes wrong
-
-- A mission shows an ask you already answered elsewhere: open the Asks count in the top bar to see everything waiting.
-- The board feels quiet: the world ticks every 1.2 seconds, and a step takes one tick to start and one to finish, so work is visible but brief. Answer the ask or send a new goal to see more.
-- Want to replay the guided first run: overflow menu, then "Take the tour".
+- Nothing seems to move: expected. Data moves in real time; agent steps take about a second, then wait for results.
+- Want the guided start again: Help (question mark in the rail) → Getting started.
+- Reset everything: Settings → Reset sample data.

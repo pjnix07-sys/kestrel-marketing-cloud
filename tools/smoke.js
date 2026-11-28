@@ -34,7 +34,7 @@ const ticks = +process.argv[2] || 200;
     await MC.engine.boot({ seed: 'fernway', speed: 'pause', catchUp: false });
     console.log('booted in', Date.now() - t0, 'ms; agents registered:', MC.runtime.defs().map(d => d.id).join(','));
     let w = MC.store.get ? MC.store.get() : MC.store.getState();
-    for (let i = 0; i < ticks; i++) { w = MC.engine.advance(w); }
+    for (let i = 0; i < ticks; i++) { w = MC.engine.advance(w); for (let k = 0; k < 20 && MC.missions.hasWork(w); k++) MC.engine.pulse(); } // missions run on the work pulse
     const props = Object.values(w.proposals && w.proposals.byId || w.proposals || {});
     const byAgent = {};
     for (const p of props) { const k = p.agentId + ':' + p.status; byAgent[k] = (byAgent[k] || 0) + 1; }

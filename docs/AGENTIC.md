@@ -50,12 +50,17 @@ Actions: `mission/create {goalText, objective?, plan?}`, `mission/step {id, step
 `mission/ask {id, ask}`, `mission/answer {id, askId, answer}`, `mission/steer {id, text, constraints?}`,
 `mission/setStatus {id, status}`. Results of planning (rules or Claude) are logged in payloads so replay is exact.
 
-**Execution:** missions are event-driven. A step is claimed on the engine tick after its dependencies and inputs are ready
-and finishes on the next (a Claude-backed step takes exactly as long as the real call); independent steps run in parallel.
-There are no artificial delays or step durations. Answers and steering change mission state at once; any step they unblock
-is claimed on the next tick. The engine's day/hour clock still drives marketing results (sends, orders,
-revenue) and the daily monitoring: Insight Analyst checks in each morning, updates progress, and Lead re-plans when pacing is
-behind. Asks have no auto-default or countdown; they wait for a human unless the agent's autonomy explicitly allows proceeding.
+**Execution:** missions are event-driven and run on their own work pulse, separate from the world clock. The world clock
+tracks real time (one tick is one real hour; the world is caught up to the real date and hour on boot, and a tab that slept
+catches up the missed hours in one batch). While any mission has a step that is claimable or working (or an answered ask or
+steer whose effect is pending), the engine runs one mission-work step about every second without moving the world clock; when
+nothing is pending the pulse stops and no timer runs. Each pulse is the logged catalog action `mission/work`, so replay and
+digests stay exact. A step is claimed on the pulse after its dependencies are ready and finishes on the next (a Claude-backed
+step takes exactly as long as the real call); independent steps run in parallel. There are no artificial delays or step
+durations. Answers and steering change mission state at once; any step they unblock is claimed on the next pulse. The world
+clock still drives marketing results (sends, orders, revenue) and the daily monitoring: Insight Analyst checks in each morning,
+updates progress, and Lead re-plans when pacing is behind. Asks have no auto-default or countdown; they wait for a human unless
+the agent's autonomy explicitly allows proceeding.
 
 **Deterministic planner (no key):** goal-shape templates: win-back / reactivation, launch a product, hit a revenue
 number for an event, grow a segment, protect a list (fatigue). A small phrase parser extracts metric, target,

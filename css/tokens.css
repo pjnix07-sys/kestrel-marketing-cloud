@@ -56,15 +56,35 @@
   --crit-soft: #F3DAD3;
   --focus: #112019;
 
-  /* categorical chart palette (each >= 3:1 on --panel) */
-  --chart-1: #17667F;
-  --chart-2: #1F5C46;
-  --chart-3: #8A5A00;
-  --chart-4: #6B5A9E;
-  --chart-5: #7A5B2E;
-  --chart-6: #A0465F;
+  /* Chart tokens. Categorical slots are used in order, never cycled; direction of --seq-* is low to high magnitude
+     (light to dark on light surfaces, dark to light on dark surfaces). Status colours (--good/--warn/--crit) stay separate.
+     validate_palette.js (dataviz skill) results:
+       light, surface #F4F6F0 (--panel)   categorical x6: PASS lightness band, chroma floor, CVD adjacent (worst dE 9.3),
+                                          normal-vision floor (worst dE 17.8), contrast >= 3:1 on all 6
+       dark, surface #17211B (--panel) and #0F1612 (--paper), categorical x6: PASS all five (worst CVD dE 10.1, normal 21.1, contrast >= 3:1)
+       --seq-1..5 --ordinal: light PASS (monotone L, dL >= 0.06, light end 2.14:1, hue spread 7deg); dark PASS (light end 2.72:1, hue spread 2deg)
+       --div-neg/--div-pos (orange/blue) PASS as a pair (CVD tritan 31, normal dE 26); --div-mid is a neutral gray, equal arms. */
+  --chart-1: #1F6FBF;
+  --chart-2: #D4571B;
+  --chart-3: #00836A;
+  --chart-4: #A87500;
+  --chart-5: #C4457D;
+  --chart-6: #3D8A1A;
+  --seq-1: #7DAEE2;
+  --seq-2: #5A93D6;
+  --seq-3: #3A78C6;
+  --seq-4: #1F5AA0;
+  --seq-5: #0E3D7E;
+  --seq-on-1: #112019;
+  --seq-on-2: #112019;
+  --seq-on-3: #FFFFFF;
+  --seq-on-4: #FFFFFF;
+  --seq-on-5: #FFFFFF;
+  --div-neg: #D4571B;
+  --div-mid: #D9DDD5;
+  --div-pos: #1F6FBF;
   --chart-grid: #D3DBD1;
-  --chart-band: rgba(23, 102, 127, 0.14);
+  --chart-band: rgba(31, 111, 191, 0.14);
 
   /* elevation: drawers and popovers only (hairline + soft shadow, no blur layers) */
   --shadow-pop: 0 6px 20px rgba(17, 32, 25, 0.14);
@@ -111,7 +131,7 @@
   /* layout */
   --app-gutter: clamp(16px, 2.5vw, 32px);
   --app-max: 1600px;
-  --app-topbar-h: 52px;
+  --app-topbar-h: 0px;
   --app-hit: 40px;
 
   /* motion */
@@ -121,7 +141,7 @@
 }
 
 @media (max-width: 639.98px) {
-  :root { --app-topbar-h: 52px; }
+  :root { --app-topbar-h: 0px; }
 }
 
 @media (prefers-color-scheme: dark) {
@@ -154,14 +174,27 @@
     --crit: #F08A80;
     --crit-soft: #3D1B18;
     --focus: #E6ECE7;
-    --chart-1: #4FA9C4;
-    --chart-2: #5DB58F;
-    --chart-3: #E0A94A;
-    --chart-4: #A99BDB;
-    --chart-5: #C79A52;
-    --chart-6: #E58FA6;
+    --chart-1: #338CED;
+    --chart-2: #E76624;
+    --chart-3: #00A888;
+    --chart-4: #D28E05;
+    --chart-5: #E24D8B;
+    --chart-6: #0AAC23;
+    --seq-1: #2A63A8;
+    --seq-2: #3F7FC8;
+    --seq-3: #6199DC;
+    --seq-4: #8DB8EC;
+    --seq-5: #BCD6F6;
+    --seq-on-1: #E6ECE7;
+    --seq-on-2: #0F1612;
+    --seq-on-3: #0F1612;
+    --seq-on-4: #0F1612;
+    --seq-on-5: #0F1612;
+    --div-neg: #E76624;
+    --div-mid: #34423A;
+    --div-pos: #338CED;
     --chart-grid: #26332A;
-    --chart-band: rgba(79, 169, 196, 0.16);
+    --chart-band: rgba(51, 140, 237, 0.16);
     --shadow-pop: 0 6px 20px rgba(0, 0, 0, 0.5);
     --scrim: rgba(0, 0, 0, 0.55);
   }
@@ -196,14 +229,27 @@
   --crit: #F08A80;
   --crit-soft: #3D1B18;
   --focus: #E6ECE7;
-  --chart-1: #4FA9C4;
-  --chart-2: #5DB58F;
-  --chart-3: #E0A94A;
-  --chart-4: #A99BDB;
-  --chart-5: #C79A52;
-  --chart-6: #E58FA6;
+  --chart-1: #338CED;
+  --chart-2: #E76624;
+  --chart-3: #00A888;
+  --chart-4: #D28E05;
+  --chart-5: #E24D8B;
+  --chart-6: #0AAC23;
+  --seq-1: #2A63A8;
+  --seq-2: #3F7FC8;
+  --seq-3: #6199DC;
+  --seq-4: #8DB8EC;
+  --seq-5: #BCD6F6;
+  --seq-on-1: #E6ECE7;
+  --seq-on-2: #0F1612;
+  --seq-on-3: #0F1612;
+  --seq-on-4: #0F1612;
+  --seq-on-5: #0F1612;
+  --div-neg: #E76624;
+  --div-mid: #34423A;
+  --div-pos: #338CED;
   --chart-grid: #26332A;
-  --chart-band: rgba(79, 169, 196, 0.16);
+  --chart-band: rgba(51, 140, 237, 0.16);
   --shadow-pop: 0 6px 20px rgba(0, 0, 0, 0.5);
   --scrim: rgba(0, 0, 0, 0.55);
 }

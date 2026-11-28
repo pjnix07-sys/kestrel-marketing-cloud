@@ -36,13 +36,14 @@ for the goal sentence and big numbers, tabular figures only in columns.
 - Big live numbers (reached, sent, revenue) count up from engine values; never invented.
 - Motion: only to show that something just changed (≤300 ms highlight); respects reduced motion. No choreography.
 - Still banned: glassmorphism, curved left-edge stripes, gradients as decoration, sparkle/AI icons, emoji, KPI-tile
-  walls, sidebar-of-objects navigation.
+  walls, labelled sidebar-of-objects navigation (the icon rail in docs/PRODUCT.md is the navigation).
 
 ## Navigation
-Top bar only: product mark · mission switcher (the live missions as goal-sentence tabs, plus "New goal") ·
-Asks (count) · Team · Artifacts (menu: Campaigns, Audiences, Content, Results) · Connect Claude · overflow.
+Superseded by docs/PRODUCT.md §2 (Nov 28): a minimal left icon rail (mark, New goal, Home, Goals, Approvals,
+Campaigns, Audiences, Content, Results, Agents; Search, Help, Claude, Settings at the foot), names on hover and focus,
+and a bottom bar on phones. No top bar.
 
-## Taken from Concept B (concepts/studio/)
+## Taken from Concept B (concepts/studio/) — the Lead conversation and cursors were retired in the product round (docs/PRODUCT.md §1)
 - **Lead conversation for steering:** a collapsible column where you talk to the Lead. You give a goal, steer ("keep
   it under 10%", "skip SMS") and answer asks in place. Lead replies in one or two sentences and the plan visibly
   re-forms. This is the steering surface, not a chatbot: the work stays on the board.

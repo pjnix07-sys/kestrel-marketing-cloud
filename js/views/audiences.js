@@ -880,6 +880,7 @@
     var Spark = chart('Sparkline');
     var IC = ui('InlineConfirm');
     function cname(id) { var c = campaigns && campaigns.byId[id]; return c ? c.name : id; }
+    var detailed = MC.hooks.useUi(function (s) { return s.detail === 'detailed'; });
     var columns = [
       { key: 'name', label: 'Name', render: function (r) { return r.name; } },
       { key: 'count', label: 'Size', align: 'right', sort: true, format: function (v) { return fmtNum(v); } },
@@ -890,6 +891,7 @@
       { key: 'usedIn', label: 'Used in', render: function (r) { return r.usedIn && r.usedIn.length ? r.usedIn.map(cname).join(', ') : DASH; } },
       { key: 'author', label: 'Author', render: function (r) { return h`<${Chip} agentId=${r.author && r.author.indexOf('agent:') === 0 ? r.author.slice(6) : 'user'} />`; } }
     ];
+    if (!detailed) columns = columns.filter(function (c) { return ['name', 'count', 'change7', 'usedIn'].indexOf(c.key) >= 0; });
     var s = selectedId && segments ? segments.byId[selectedId] : null;
     var row = s ? rows.filter(function (r) { return r.id === s.id; })[0] : null;
     function select(r) { setFocus({ segmentId: r.id }); setConfirm(false); setMsg(null); }
@@ -910,9 +912,10 @@
             p.onTab('builder');
           }}>New segment<//>
         </div>
+        <p className="aud-muted aud-small">A segment is a group of customers who share traits. Size is how many people match today.${detailed ? '' : ' Switch to Detailed in Settings for propensity (predicted chance to buy), lifetime value and return.'}</p>
         <div className="k-scroll-x aud-scroll">
           ${rows.length ? h`<${Table} columns=${columns} rows=${rows} rowKey=${function (r) { return r.id; }} selectedKey=${selectedId}
-            onRowClick=${select} empty="No segments yet." />` : h`<p className="aud-empty">No segments yet. Describe an audience in the Builder to create your first one.</p>`}
+            onRowClick=${select} empty="No segments yet." />` : h`<p className="aud-empty">No segments yet. Describe the customers you want in the Builder to create your first one. <${Btn} kind="secondary" size="sm" onClick=${function () { p.onTab('builder'); }}>Open the Builder<//></p>`}
         </div>
         ${msg && !s ? h`<${Msg} msg=${msg} />` : null}
       </section>
@@ -998,8 +1001,10 @@
       ${d.exposures ? h`<p className="aud-resp-lead">${bestRow
         ? h`These ${fmtNum(d.members)} people respond most to <strong>${bestRow.label.toLowerCase()}</strong> content: ${liftText(bestRow)} (${rangeText(bestRow)}) against their other angles.`
         : 'No angle stands clear of this audience’s average yet.'} <span className="aud-muted aud-small">${fmtNum(d.exposures)} messages delivered so far.</span></p>
-        <ul className="aud-angles">${rows.map(function (r) { return h`<${AngleRow} key=${r.angle} row=${r} min=${min} max=${max} />`; })}</ul>
-        <p className="aud-muted aud-small">${d.basis}</p>
+        <${MC.ui.Details} id="aud-resp-details" summary="How strongly, by angle (an angle is the theme of a message; bars show a 95% interval)">
+          <ul className="aud-angles">${rows.map(function (r) { return h`<${AngleRow} key=${r.angle} row=${r} min=${min} max=${max} />`; })}</ul>
+          <p className="aud-muted aud-small">${d.basis}</p>
+        <//>
         <div className="aud-resp-blocks">
           <div><h4 className="aud-h4">Best blocks for them</h4>
             ${d.topBlocks.length ? h`<ul className="aud-plain">${d.topBlocks.map(function (b) { return h`<${BlockLine} key=${b.blockId} b=${b} />`; })}</ul>` : h`<p className="aud-muted aud-small">No block stands out yet.</p>`}</div>
@@ -1324,6 +1329,11 @@
       return n;
     });
     var tab = TAB_IDS.indexOf(focus.tab) >= 0 ? focus.tab : 'segments';
+    var segRows = useSel(function (w) { return sel('segmentRows', w) || EMPTY; }) || EMPTY;
+    var biggest = segRows.slice().sort(function (a, b) { return (b.count || 0) - (a.count || 0); })[0];
+    var sentence = !ready ? 'Loading customers' + ELL
+      : !segRows.length ? 'No audiences yet. Create a segment to group customers you want to reach.'
+      : plural(segRows.length, 'audience', 'audiences') + ' (groups of customers)' + (biggest ? '; the largest is ' + biggest.name + ' with ' + fmtNum(biggest.count) + ' people.' : '.');
     var sfSt = React.useState(viewMemo.segFilter), segFilter = sfSt[0], setSegFilterSt = sfSt[1];
     var ovSt = React.useState(viewMemo.overlap), overlap = ovSt[0], setOverlapSt = ovSt[1];
     var Tabs = ui('Tabs');
@@ -1358,8 +1368,8 @@
     return h`<section className="v-audiences">
       <header className="aud-header">
         <div>
-          <h1 id="page-title" tabIndex="-1" className="aud-title">Audiences <span className="mc-art-tag">made and maintained by your agents</span></h1>
-          <p className="aud-sub">Segment Fernway Outfitters customers with rules, plain-language descriptions and predicted traits.</p>
+          <h1 id="page-title" tabIndex="-1" className="aud-title">Audiences</h1>
+          <p className="aud-sub" id="aud-sentence">${sentence}</p>
         </div>
         ${pending ? h`<button type="button" className="aud-scout-flag" onClick=${function () { jumpTab('segments'); }}>
           ${plural(pending, 'segment suggestion', 'segment suggestions')} from Segment Scout</button>` : null}

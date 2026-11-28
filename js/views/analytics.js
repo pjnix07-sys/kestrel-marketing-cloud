@@ -370,19 +370,9 @@
     function set(patch) { if (MC.uiStore && MC.uiStore.setFocus) MC.uiStore.setFocus('analytics', patch); }
     var metricOpts = METRICS.slice();
     if (!METRICS.some(function (m) { return m.value === fo.metric; }) && EXTRA_METRICS[fo.metric]) metricOpts.push({ value: fo.metric, label: EXTRA_METRICS[fo.metric] });
-    var React = R();
+    var Details = kit('Details');
     var active = (ids.length ? 1 : 0) + (fo.channel && fo.channel !== 'all' ? 1 : 0) + (fo.metric && fo.metric !== 'revenue' ? 1 : 0) + (fo.showAgents === false ? 1 : 0);
-    var os = React.useState(null), setOpen = os[1];
-    var shown = os[0] === null ? active > 0 : os[0];
-    return html`<div className="an-filters" role="group" aria-label="Analytics filters">
-      <div className="an-filter">
-        <span className="an-filter-label" id="analytics-range-label">Range</span>
-        <${Seg} id="analytics-range" label="Date range" value=${String(fo.range)} options=${RANGES}
-          onChange=${function (v) { set({ range: rangeValue(v) }); }} />
-      </div>
-      <button type="button" id="analytics-filters-toggle" className="an-filters-toggle" aria-expanded=${shown ? 'true' : 'false'} aria-controls="analytics-filters-more"
-          onClick=${function () { setOpen(!shown); }}>${'Filters' + (active ? ' (' + active + ' on)' : '')}</button>
-      <div id="analytics-filters-more" className="an-filters-more" hidden=${!shown}>
+    var more = html`<div id="analytics-filters-more" className="an-filters-more">
       <div className="an-filter an-filter-camps">
         <label className="an-filter-label" htmlFor="analytics-campaigns">Campaign</label>
         <select id="analytics-campaigns" className="an-select" value=${ids.length === 1 ? ids[0] : (ids.length ? '__many' : '')}
@@ -410,7 +400,14 @@
           onChange=${function (e) { set({ showAgents: e.target.checked }); }} />
         <label htmlFor="analytics-show-agents">Show agent changes</label>
       </div>
+    </div>`;
+    return html`<div className="an-filters" role="group" aria-label="Results filters">
+      <div className="an-filter">
+        <span className="an-filter-label" id="analytics-range-label">Range</span>
+        <${Seg} id="analytics-range" label="Date range" value=${String(fo.range)} options=${RANGES}
+          onChange=${function (v) { set({ range: rangeValue(v) }); }} />
       </div>
+      ${Details ? html`<${Details} id="analytics-filters-details" summary=${'More filters' + (active ? ' (' + active + ' on)' : '')} open=${active > 0 ? true : null}>${more}<//>` : more}
     </div>`;
   }
 
@@ -550,15 +547,14 @@
     var nextVal = isRatio(metric) && points.length ? nxt.mean / points.length : nxt.mean;
     var PC = kit('ProposalCard');
     var splitOpts = [{ value: 'total', label: 'Total + forecast' }, { value: 'campaign', label: 'By campaign' }, { value: 'channel', label: 'By channel' }];
-    return html`<${Card} id="analytics-performance" title="Performance"
+    return html`<${Card} id="analytics-performance" title=${metricLabel(metric) + ' over time'}
         sub=${metricLabel(metric) + ' for ' + campaignNames(campaigns, f.campaignIds) + (f.channel && f.channel !== 'all' ? ' on ' + chLabel(f.channel) : '') + ', ' + rangeLabel(f.range) + '.'}
-        actions=${html`<${Seg} id="analytics-split" label="Split performance" value=${split} options=${splitOpts} onChange=${setSplit} />`}>
-      <dl className="an-stats">
-        <div className="an-stat"><dt>${isRatio(metric) ? 'Average, complete days' : 'Complete days in range'}</dt><dd className="num">${last == null ? DASH : vf(last)}</dd></div>
-        <div className="an-stat"><dt>Next 14 days (forecast)</dt>
-          <dd className="num">${points.length ? vf(nextVal) : DASH}${points.length && !isRatio(metric) ? html`<span className="an-stat-sub">${vf(nxt.lo) + EN + vf(nxt.hi)} (80%)</span>` : null}</dd></div>
-        <div className="an-stat"><dt>Today so far</dt><dd className="num">${partial ? vf(partial.value) : DASH}<span className="an-stat-sub">partial day, updates hourly</span></dd></div>
-      </dl>
+        actions=${html`<${Seg} id="analytics-split" label="Split by" value=${split} options=${splitOpts} onChange=${setSplit} />`}>
+      <p className="an-headline an-read">
+        ${isRatio(metric) ? 'Average on complete days' : 'Complete days in range'} <strong className="num">${last == null ? DASH : vf(last)}</strong>.
+        ${points.length ? html` Forecast for the next 14 days <strong className="num">${vf(nextVal)}</strong>${!isRatio(metric) ? html` (<span className="num">${vf(nxt.lo) + EN + vf(nxt.hi)}</span>, 80% range)` : null}.` : null}
+        ${partial ? html` Today so far <span className="num">${vf(partial.value)}</span> (partial day).` : null}
+      </p>
       ${split === 'total' && fc && !fc.ready && actual.length ? html`<p className="an-note">Forecast appears after 7 days of data.</p>` : null}
       ${chart}
       ${openP ? html`<div className="an-callout" role="region" aria-label="Agent change details">
@@ -677,7 +673,8 @@
     return function (n) { return num(n, { compact: Math.abs(n) >= 10000 }); };
   }
   var METRIC_NOUN = { revenue: 'revenue', reactivations: 'reactivations', orders: 'orders', signups: 'sign-ups', unsubs: 'unsubscribes' };
-  function MissionSection() {
+  var MISSION_SERIES = { revenue: 'revenue', reactivations: 'react', orders: 'conversions', signups: 'conversions', unsubs: 'unsubs' };
+  function useGoalRows() {
     var React = R(), H = hooks();
     var mset = H.useSelect(function (w) { return w.missions; });
     var camps = H.useSelect(selCampaigns);
@@ -687,12 +684,43 @@
     var lifts = H.useSelect(React.useCallback(function (w) {
       return MC.metrics && w.missions ? w.missions.order.map(function (id) { return MC.metrics.lift(w, { missionId: id }); }) : EMPTY;
     }, []), sameItems) || EMPTY;
+    var sers = H.useSelect(React.useCallback(function (w) {
+      return list.map(function (m) { return has(sel(), 'series') && m.campaignIds && m.campaignIds.length ? sel().series(w, { metric: MISSION_SERIES[m.metric] || 'revenue', campaignIds: m.campaignIds, range: 'all' }) : EMPTY; });
+    }, [list]), sameItems) || EMPTY;
     var rows = list.map(function (m, k) {
       var rec = mset && mset.byId[m.id];
-      return { id: m.id, title: rec ? (rec.goalText || rec.title) : m.id, status: rec ? rec.status : '', m: m, lift: lifts[k] || null };
+      var start = rec && fin(rec.createdTick) ? Math.floor(rec.createdTick / 24) : null, cum = 0, pts = [];
+      (sers[k] || EMPTY).forEach(function (q) {
+        if (start != null && q.day < start) return;
+        if (q.partial) return;
+        cum += fin(q.value) ? q.value : 0;
+        pts.push({ x: q.day, y: cum });
+      });
+      if (!pts.length && start != null) pts = [{ x: start, y: 0 }, { x: start + 1, y: m.value || 0 }];
+      return { id: m.id, title: rec ? (rec.goalText || rec.title) : m.id, status: rec ? rec.status : '', m: m, lift: lifts[k] || null, start: start, points: pts };
     });
+    return { rows: rows, camps: camps };
+  }
+  var VERDICT_TONE = { 'on pace': 'good', ahead: 'good', behind: 'warn', 'too early': 'neutral', met: 'good', missed: 'warn' };
+  function GoalRow(p) {
+    var r = p.r, m = r.m, f = missionFmt(m.metric), GP = chartOr('GoalProgress');
+    var by = fin(m.by) ? m.by : null;
+    return html`<li className="an-goal">
+      <div className="an-goal-head">
+        <button type="button" className="an-link an-goal-title" onClick=${function () { goTo('missions', r.id); }}>${r.title}</button>
+        <${Pill} tone=${VERDICT_TONE[m.verdict] || 'neutral'}>${m.verdict === 'too early' ? 'Too early to call' : m.verdict.charAt(0).toUpperCase() + m.verdict.slice(1)}<//>
+      </div>
+      <p className="an-goal-hero"><strong className="num an-hero-num">${f(m.value)}</strong><span className="an-goal-of"> of <span className="num">${f(m.target)}</span>${by != null ? ' by ' + dayShort(by) : ''}</span></p>
+      <p className="an-note an-goal-text">${m.text || 'The forecast appears after a week of results.'}</p>
+      ${GP ? html`<${GP} compact=${true} points=${r.points} target=${m.target} startDay=${r.start != null ? r.start : (r.points[0] ? r.points[0].x : 0)} byDay=${by}
+          forecast=${fin(m.forecast && m.forecast.value) && m.band !== 'early' ? { y: m.forecast.value, lo: m.forecast.lo, hi: m.forecast.hi } : null}
+          format=${m.metric === 'revenue' ? 'moneyCompact' : 'compact'} label=${r.title} />` : null}
+    </li>`;
+  }
+  function GoalsSection() {
+    var g = useGoalRows(), rows = g.rows, camps = g.camps;
     var cols = [
-      { key: 'title', label: 'Mission', sortValue: function (r) { return r.title; }, firstDir: 'asc', render: function (r) {
+      { key: 'title', label: 'Goal', sortValue: function (r) { return r.title; }, firstDir: 'asc', render: function (r) {
         return html`<span><button type="button" className="an-link" onClick=${function () { goTo('missions', r.id); }}>${r.title}</button><span className="an-sub-num">${(r.m.campaignIds || EMPTY).map(function (cid) { var c = camps && camps.byId[cid]; return c ? c.name : cid; }).join(', ') || 'No campaign yet'}</span></span>`; } },
       { key: 'progress', label: 'Progress', align: 'right', sortValue: function (r) { return r.m.pct; }, render: function (r) {
         var f = missionFmt(r.m.metric);
@@ -705,13 +733,14 @@
         if (!l || !l.ready) return html`<span className="an-muted">Not enough yet</span>`;
         return html`<span><strong className="num">${signedPct(l.liftPct / 100)}</strong><span className="an-sub-num">${signedPct(l.lo / 100) + ' to ' + (l.hi > 1000 ? 'more than +1,000%' : signedPct(l.hi / 100)) + ', ' + HOLD}</span></span>`; } }
     ];
-    var total = rows.reduce(function (a, r) { return a + (r.m.revenue || 0); }, 0);
-    return html`<${Card} id="analytics-missions" title="By mission"
-        sub="Every figure is the one your agents and the mission room use: revenue is credited last-touch to the mission’s campaigns, lift is against the audience held out from messages.">
-      ${rows.length ? html`<p className="an-headline">${rows.length === 1 ? 'One mission has' : rows.length + ' missions have'} brought in <strong className="num">${moneyC(total)}</strong> so far.</p>` : null}
-      ${rows.length ? html`<${Table} id="analytics-mission-table" caption="Results by mission" columns=${cols} rows=${rows}
-          rowKey=${function (r) { return r.id; }} sortKey="progress" sortDir="desc" />`
-        : html`<${Empty} title="No missions yet." body="Hand your team a goal and its results appear here as the campaigns run." />`}
+    var Details = kit('Details');
+    var table = rows.length ? html`<${Table} id="analytics-mission-table" caption="Results by goal" columns=${cols} rows=${rows}
+        rowKey=${function (r) { return r.id; }} sortKey="progress" sortDir="desc" />` : null;
+    var method = html`<p className="an-note">Every figure is the one your agents and the goal page use. Revenue is credited last-touch to the goal’s campaigns. ${(MC.metrics && MC.metrics.DEFINITIONS && MC.metrics.DEFINITIONS.lift) || ''}</p>`;
+    return html`<${Card} id="analytics-missions" title="Goals" sub="How each goal is tracking against its target and date.">
+      ${rows.length ? html`<ul className="an-goals">${rows.map(function (r) { return html`<${GoalRow} key=${r.id} r=${r} />`; })}</ul>`
+        : html`<${Empty} title="No goals yet." body="Set a goal and its results appear here as its campaigns run." />`}
+      ${rows.length ? (Details ? html`<${Details} id="analytics-goals-details" summary="Goal results table and how lift is measured">${table}${method}<//>` : html`<div>${table}${method}</div>`) : null}
     <//>`;
   }
 
@@ -739,13 +768,105 @@
       { key: 'angle', label: 'Angle', render: function (r) { return (r.tags && r.tags.angle) ? String(r.tags.angle).replace(/-/g, ' ') : DASH; } },
       { key: 'lift', label: 'Email opens', align: 'right', sortValue: function (r) { return r.lift.value; }, render: function (r) { return liftCell(r); } }
     ];
-    return html`<${Card} id="analytics-content" title="Content"
+    return html`<${Card} id="analytics-content-detail" title="Content"
         sub="What was said, measured the same way as Content, Intelligence: each angle or headline is compared with the other content that ran in the same campaign, on the same channel and day, so the audience it reached cannot change the answer."
         actions=${html`<${Btn} kind="ghost" onClick=${function () { goTo('content', { tab: 'intelligence' }); }}>Open Content, Intelligence<//>`}>
       ${mrows.length ? html`<${Table} id="analytics-content-angles" caption="Headline angle lift by channel" columns=${cols} rows=${mrows}
           rowKey=${function (r) { return r.key; }} sortKey="email" sortDir="desc" />` : html`<${Empty} title="No results by content yet." body="They appear as messages with tagged headlines are delivered." />`}
       ${top.length ? html`<${Table} id="analytics-content-headlines" caption="Headlines on email, best first" columns=${hcols} rows=${top.slice(0, 5)}
           rowKey=${function (r) { return r.key; }} sortKey="lift" sortDir="desc" />` : null}
+    <//>`;
+  }
+
+  /* ---------------- Results page, top level: answer, channels, content angles ---------------- */
+  function AnswerHead(p) {
+    var React = R(), H = hooks(), f = p.f;
+    var g = useGoalRows(), rows = g.rows;
+    var series = H.useSelect(React.useCallback(function (w) { return has(sel(), 'series') ? sel().series(w, { metric: 'revenue', range: f.range, campaignIds: f.campaignIds, channel: f.channel }) : EMPTY; }, [f.range, f.campaignIds, f.channel])) || EMPTY;
+    var rev = 0;
+    series.forEach(function (q) { if (!q.partial && fin(q.value)) rev += q.value; });
+    var n = rows.length, total = 0, c = { behind: 0, early: 0, ok: 0, met: 0, missed: 0 };
+    rows.forEach(function (r) {
+      total += r.m.revenue || 0;
+      var v = r.m.verdict;
+      if (v === 'behind') c.behind++; else if (v === 'too early') c.early++; else if (v === 'met') c.met++; else if (v === 'missed') c.missed++; else c.ok++;
+    });
+    var sentence, hero, cap;
+    if (n) {
+      hero = moneyC(total); cap = 'brought in by your goals so far';
+      var parts = [];
+      function part(k, one, many) { if (c[k]) parts.push(c[k] === n ? null : c[k] + ' ' + (c[k] === 1 ? one : many)); }
+      var all = { behind: 'behind pace', ok: 'on track', early: 'too early to call', met: 'met', missed: 'ended short of target' };
+      var whole = Object.keys(c).filter(function (k) { return c[k] === n; })[0];
+      if (whole) sentence = (n === 1 ? 'Your goal ' + (whole === 'met' ? 'was ' : whole === 'missed' ? '' : 'is ') : (n === 2 ? 'Both of your goals ' : 'All ' + n + ' of your goals ') + (whole === 'met' ? 'were ' : whole === 'missed' ? '' : 'are ')) + all[whole] + '.';
+      else {
+        part('behind', 'is behind pace', 'are behind pace'); part('ok', 'is on track', 'are on track'); part('early', 'is too early to call', 'are too early to call');
+        part('met', 'met its target', 'met their targets'); part('missed', 'ended short of target', 'ended short of target');
+        sentence = 'Of your ' + n + ' goals, ' + parts.slice(0, -1).join(', ') + ' and ' + parts[parts.length - 1] + '.';
+      }
+    } else {
+      hero = moneyC(rev); cap = 'revenue ' + rangeLabel(f.range);
+      sentence = rev > 0 ? 'Your campaigns brought in revenue ' + rangeLabel(f.range) + '.' : 'No goals or sends yet. Set a goal and its results appear here.';
+    }
+    return html`<section className="an-answer" aria-labelledby="analytics-answer">
+      <p id="analytics-answer" className="an-answer-line">${sentence}</p>
+      <p className="an-answer-hero"><strong className="num an-hero-num">${hero}</strong><span className="an-answer-cap">${cap}</span></p>
+    </section>`;
+  }
+
+  function ChannelsSummary(p) {
+    var React = R(), H = hooks(), f = p.f;
+    var ms = React.useState('roas'), measure = ms[0], setMeasure = ms[1];
+    var args = React.useMemo(function () { return { range: f.range, campaignIds: f.campaignIds }; }, [f]);
+    var rows = H.useSelect(React.useCallback(function (w) { return has(sel(), 'channelCompare') ? sel().channelCompare(w, args) : EMPTY; }, [args])) || EMPTY;
+    var split = H.useSelect(React.useCallback(function (w) { return has(sel(), 'revenueSplit') ? sel().revenueSplit(w, { range: f.range }) : null; }, [f.range]));
+    var BC = chartOr('BarChart'), Details = kit('Details');
+    var active = rows.filter(function (r) { return r.sends > 0 || r.impressions > 0 || r.cost > 0; });
+    var data = active.map(function (r) {
+      return measure === 'roas' ? { key: r.ch, label: r.label || chLabel(r.ch), value: fin(r.roas) ? r.roas : 0, color: 'chart-1' }
+        : { key: r.ch, label: r.label || chLabel(r.ch), value: r.ctr, ci: r.ci, color: 'chart-1' };
+    }).sort(function (a, b) { return (b.value - a.value) || (a.key < b.key ? -1 : 1); });
+    var best = null;
+    active.forEach(function (r) { if (fin(r.roas) && (!best || r.roas > best.roas)) best = r; });
+    var measures = [{ value: 'roas', label: 'Return on spend' }, { value: 'ctr', label: 'Click rate' }];
+    var note = html`<div className="an-note">
+      ${split && split.total > 0 && !(f.campaignIds && f.campaignIds.length) ? html`<p>Campaigns are credited with <span className="num">${moneyC(split.credited)}</span> of the <span className="num">${moneyC(split.total)}</span> the business took ${rangeLabel(f.range)}. The other <span className="num">${moneyC(split.uncredited)}</span> came from customers no campaign had touched.</p>` : null}
+      <p>${(MC.metrics && MC.metrics.DEFINITIONS && MC.metrics.DEFINITIONS.revenue) || 'An order counts for the last campaign that reached the customer in the 7 days before.'} Click rate bars show 95% ranges. Open Advanced analysis for the full channel table, variants and attribution models.</p>
+    </div>`;
+    return html`<${Card} id="analytics-channels" title="Channels" sub=${'Ranked ' + rangeLabel(f.range) + ', best first.'}
+        actions=${html`<${Seg} id="analytics-channel-measure" label="Channel measure" value=${measure} options=${measures} onChange=${setMeasure} />`}>
+      ${best ? html`<p className="an-headline">${best.label || chLabel(best.ch)} returns <strong className="num">${ratio(best.roas)}</strong> on <span className="num">${moneyC(best.cost)}</span> of spend, the best of ${active.length} active channels.</p>` : null}
+      ${active.length ? (BC ? html`<${BC} data=${data} orientation="h" format=${measure === 'roas' ? 'ratio' : 'pct'} highlightKey=${best && measure === 'roas' ? best.ch : null}
+          valueLabel=${measure === 'roas' ? 'Return on spend' : 'Click rate'} categoryLabel="Channel"
+          ariaLabel=${(measure === 'roas' ? 'Return on spend' : 'Click rate') + ' by channel'} />` : html`<${NoChart} />`)
+        : html`<${Empty} title="No sends in this range yet." />`}
+      ${Details ? html`<${Details} id="analytics-channels-details" summary="How revenue is credited">${note}<//>` : note}
+    <//>`;
+  }
+
+  function signedFrac(n) { return signedPct(n, 0); }
+  function AngleSummary() {
+    var React = R(), H = hooks();
+    var matrix = H.useSelect(React.useCallback(function (w) { return MC.metrics ? MC.metrics.content(w, { dim: 'angle' }) : null; }, []));
+    var cs = React.useState(null), picked = cs[0], setPicked = cs[1];
+    var Details = kit('Details'), DI = chartOr('DotInterval');
+    var chs = (matrix && matrix.channels) || CH().OWNED, mrows = (matrix && matrix.rows) || EMPTY;
+    var withData = chs.filter(function (ch) { return mrows.some(function (r) { var c = r.cells[ch]; return c && c.enough && c.lift; }); });
+    var ch = picked && withData.indexOf(picked) >= 0 ? picked : (withData[0] || chs[0]);
+    var data = mrows.map(function (r) {
+      var c = r.cells[ch];
+      return c && c.enough && c.lift ? { key: r.key, label: r.label, value: c.lift.value, lo: c.lift.lo, hi: c.lift.hi } : null;
+    }).filter(Boolean).sort(function (a, b) { return b.value - a.value; });
+    var opts = withData.map(function (c) { return { value: c, label: chLabel(c) }; });
+    var how = html`<div className="an-note"><p>Each dot is how much better or worse an angle did than the other content that ran in the same campaign, on the same channel and day, so the audience cannot change the answer. The line is the 95% range. A gray dot means the range still includes zero, so the result is not clear yet.</p>
+      <p><button type="button" className="an-link" onClick=${function () { goTo('content', { tab: 'intelligence' }); }}>Open Content, Intelligence</button></p></div>`;
+    return html`<${Card} id="analytics-content" title="Content angles"
+        sub=${'Which headline angles beat the rest on ' + chLabel(ch).toLowerCase() + (ch === 'sms' ? ' clicks' : ' opens') + '.'}
+        actions=${opts.length > 1 ? html`<${Seg} id="analytics-angle-channel" label="Angle channel" value=${ch} options=${opts} onChange=${setPicked} />` : null}>
+      ${data.length ? (DI ? html`<${DI} rows=${data} format=${signedFrac} valueLabel="Lift vs other content" categoryLabel="Headline angle" zero=${0}
+          ariaLabel=${'Headline angle lift on ' + chLabel(ch) + ' with 95% ranges'} />` : html`<${NoChart} />`)
+        : html`<${Empty} title="No results by content yet." body="They appear as messages with tagged headlines are delivered." />`}
+      ${Details ? html`<${Details} id="analytics-angles-details" summary="How to read the ranges">${how}<//>` : how}
     <//>`;
   }
 
@@ -798,7 +919,7 @@
       { key: 'roas', label: 'Return', align: 'right', sortValue: function (r) { return r.roas; }, render: function (r) { return ratio(r.roas); } }
     ];
     var measures = [{ value: 'roas', label: 'Return on spend' }, { value: 'ctr', label: 'Click rate' }];
-    return html`<${Card} id="analytics-channels" title="Channels & variants" sub=${'Ranked by return ' + rangeLabel(f.range) + '. Click rate bars show 95% ranges.'}
+    return html`<${Card} id="analytics-channel-detail" title="Channels & variants" sub=${'Ranked by return ' + rangeLabel(f.range) + '. Click rate bars show 95% ranges.'}
         actions=${html`<${Seg} id="analytics-channel-measure" label="Channel measure" value=${measure} options=${measures} onChange=${setMeasure} />`}>
       ${split && split.total > 0 && !(f.campaignIds && f.campaignIds.length) ? html`<p className="an-note">Campaigns are credited with <strong className="num">${moneyC(split.credited)}</strong> of the <strong className="num">${moneyC(split.total)}</strong> the business took ${rangeLabel(f.range)} (an order counts for the last campaign that reached the customer in the 7 days before). The other <span className="num">${moneyC(split.uncredited)}</span> came from customers no campaign had touched.</p>` : null}
       ${best ? html`<p className="an-headline">${best.label || chLabel(best.ch)} returns <strong className="num">${ratio(best.roas)}</strong> on <span className="num">${moneyC(best.cost)}</span> of spend, the best of ${active.length} active channels.</p>` : null}
@@ -1311,7 +1432,6 @@
   /* ---------------- the view ---------------- */
   // §11.4: the view opens on the performance overview and insights; deeper analysis sits behind tabs.
   var SECTIONS = [
-    { id: 'missions', label: 'By mission' },
     { id: 'channels', label: 'Channels' },
     { id: 'content', label: 'Content' },
     { id: 'lift', label: 'Lift vs holdout' },
@@ -1321,10 +1441,9 @@
     { id: 'audiences', label: 'Audiences' },
     { id: 'whatif', label: 'What-if budget' }
   ];
-  var SECTION_OF = { 'analytics-missions': 'missions', 'analytics-content': 'content', 'analytics-channels': 'channels', 'analytics-funnel': 'channels', 'analytics-agent-impact': 'impact', 'analytics-lift': 'lift',
+  var SECTION_OF = { 'analytics-content-detail': 'content', 'analytics-channel-detail': 'channels', 'analytics-funnel': 'channels', 'analytics-agent-impact': 'impact', 'analytics-lift': 'lift',
     'analytics-anomalies': 'anomalies', 'analytics-attribution': 'attribution', 'analytics-audiences': 'audiences', 'analytics-whatif': 'whatif' };
   function sectionBody(id, f) {
-    if (id === 'missions') return html`<${MissionSection} f=${f} />`;
     if (id === 'content') return html`<${ContentSection} f=${f} />`;
     if (id === 'lift') return html`<${LiftSection} f=${f} />`;
     if (id === 'impact') return html`<${AgentImpact} f=${f} />`;
@@ -1339,17 +1458,18 @@
   }
   function MoreAnalysis(p) {
     var Tabs = MC.ui && typeof MC.ui.Tabs === 'function' ? MC.ui.Tabs : null;
-    var cur = SECTIONS.some(function (x) { return x.id === p.section; }) ? p.section : 'missions';
+    var cur = SECTIONS.some(function (x) { return x.id === p.section; }) ? p.section : 'channels';
     function pick(id) { if (MC.uiStore && MC.uiStore.setFocus) MC.uiStore.setFocus('analytics', { section: id }); }
-    return html`<section className="an-more" aria-labelledby="analytics-more-title">
-      <h2 id="analytics-more-title" className="an-more-title">Deeper analysis</h2>
-      ${Tabs ? html`<${Tabs} id="analytics-sections" label="Deeper analysis" tabs=${SECTIONS} value=${cur} onChange=${pick} panelId="analytics-section-panel" />`
-        : html`<div className="an-more-tabs" role="group" aria-label="Deeper analysis">${SECTIONS.map(function (x) {
+    var Details = kit('Details');
+    var inner = html`<section className="an-more" aria-label="Advanced analysis">
+      ${Tabs ? html`<${Tabs} id="analytics-sections" label="Advanced analysis" tabs=${SECTIONS} value=${cur} onChange=${pick} panelId="analytics-section-panel" />`
+        : html`<div className="an-more-tabs" role="group" aria-label="Advanced analysis">${SECTIONS.map(function (x) {
             return html`<button key=${x.id} type="button" className=${'an-link' + (x.id === cur ? ' is-on' : '')} aria-pressed=${x.id === cur ? 'true' : 'false'}
               onClick=${function () { pick(x.id); }}>${x.label}</button>`;
           })}</div>`}
       <div id="analytics-section-panel" role="tabpanel" aria-labelledby=${'analytics-sections-' + cur} className="an-more-panel">${sectionBody(cur, p.f)}</div>
     </section>`;
+    return Details ? html`<${Details} id="analytics-advanced" className="an-advanced" summary="Advanced analysis: channel tables, variants, holdout lift, agent impact, attribution, audiences, what-if budget" open=${p.forceOpen ? true : null}>${inner}<//>` : inner;
   }
   var DEFAULT_FOCUS = { range: 30, campaignIds: [], channel: 'all', metric: 'revenue', showAgents: true };
   function selFocus(s) { return s && s.focus ? s.focus.analytics : undefined; }
@@ -1370,7 +1490,7 @@
       var ids = (raw.campaignIds || EMPTY).filter(function (id) { return campaigns && campaigns.byId[id]; });
       var metric = raw.metric && (METRICS.some(function (m) { return m.value === raw.metric; }) || EXTRA_METRICS[raw.metric]) ? raw.metric : 'revenue';
       var ch = raw.channel && (raw.channel === 'all' || CH().ALL.indexOf(raw.channel) >= 0) ? raw.channel : 'all';
-      return { range: r, campaignIds: ids, channel: ch, metric: metric, showAgents: raw.showAgents !== false, section: raw.section || 'missions' };
+      return { range: r, campaignIds: ids, channel: ch, metric: metric, showAgents: raw.showAgents !== false, section: raw.section || 'channels', sectionPicked: !!raw.section };
     }, [raw, campaigns]);
     var idsKey = focus.campaignIds.join(',');
     var f = React.useMemo(function () {
@@ -1383,20 +1503,24 @@
         .map(function (c) { return { id: c.id, name: c.name, status: c.status }; });
     }, [campaigns]);
     if (!ready) {
-      return html`<section className="v-analytics"><h1 id="page-title" tabIndex="-1" className="an-h1">Analytics</h1>
+      return html`<section className="v-analytics"><h1 id="page-title" tabIndex="-1" className="an-h1">Results</h1>
         <p className="an-muted">Loading Fernway Outfitters${ELL}</p></section>`;
     }
     return html`<section className="v-analytics">
       <header className="an-pagehead">
-        <h1 id="page-title" tabIndex="-1" className="an-h1">Analytics <span className="mc-art-tag">read by your agents, for your missions</span></h1>
+        <h1 id="page-title" tabIndex="-1" className="an-h1">Results</h1>
         <${AsOf} />
       </header>
+      <${AnswerHead} f=${f} />
       <${FilterBar} focus=${focus} campaigns=${list} />
       <div className="an-grid">
+        <div className="an-cell an-span-12"><${GoalsSection} /></div>
         <div className="an-cell an-span-12"><${Performance} f=${f} showAgents=${focus.showAgents} /></div>
+        <div className="an-cell an-span-6"><${ChannelsSummary} f=${f} /></div>
+        <div className="an-cell an-span-6"><${AngleSummary} /></div>
         <div className="an-cell an-span-12"><${Narratives} f=${f} /></div>
       </div>
-      <${MoreAnalysis} section=${focus.section} f=${f} />
+      <${MoreAnalysis} section=${focus.section} forceOpen=${focus.sectionPicked} f=${f} />
     </section>`;
   }
 

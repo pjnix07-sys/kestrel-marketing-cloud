@@ -248,21 +248,25 @@
         <label className="ct-filter ct-filter-q"><span>Search</span>
           <input id="ct-search" className="ct-input" type="search" placeholder="Words, tags, message names" value=${memo.q} onChange=${function (e) { set({ q: e.target.value }); }} /></label>
         ${sel1('ct-f-show', 'Show', showOpts, memo.show, function (v) { set({ show: v }); })}
+      </div>
+      <${MC.ui.Details} id="ct-more-filters" open=${memo.kind || memo.angle || memo.tone || memo.review || memo.channel ? true : null} summary="More filters (angle is the theme of the copy, tone is its voice)">
+        <div className="ct-filters">
         ${sel1('ct-f-kind', 'Kind', kindOpts, memo.kind, function (v) { set({ kind: v }); })}
         ${sel1('ct-f-angle', 'Angle', angleOpts, memo.angle, function (v) { set({ angle: v }); })}
         ${sel1('ct-f-tone', 'Tone', toneOpts, memo.tone, function (v) { set({ tone: v }); })}
         ${sel1('ct-f-review', 'Review', revOpts, memo.review, function (v) { set({ review: v }); })}
         ${sel1('ct-f-channel', 'Channel', chOpts, memo.channel, function (v) { set({ channel: v }); })}
-      </div>
+        </div>
+      <//>
       <p className="ct-count" role="status" data-messages=${tot ? tot.messages : undefined}>${plural(tot && !filtered ? tot.messages : rowsM.length, 'message')} ${DOT} ${plural(tot && !filtered ? tot.blocks : rowsB.length, 'block')}${tot && !filtered ? ' ' + DOT + ' ' + plural(tot.channelVersions, 'channel version') : (tot ? ' ' + DOT + ' filtered from ' + tot.messages + ' messages and ' + tot.blocks + ' blocks' : '')}${selReady('contentPerformance') ? '' : ' ' + DOT + ' results appear here as soon as there is data'}</p>
-      ${rowsM.length ? h`<section aria-label="Messages"><h2 className="ct-h">Messages</h2>
+      ${rowsM.length ? h`<section aria-label="Messages"><h2 className="ct-h">Messages</h2><p className="ct-meta">A message is one piece of marketing copy; its blocks (headline, body, button, image) are reused across messages.</p>
         <ul className="ct-list">${rowsM.map(function (m) { return h`<${MessageRow} key=${m.id} w=${w} m=${m} chans=${Object.keys(msgCh[m.id] || {})} onOpen=${p.onOpenMessage} />`; })}</ul></section>` : null}
       ${rowsB.length ? h`<section aria-label="Blocks"><h2 className="ct-h">Blocks</h2>
         <ul className="ct-list">${rowsB.map(function (b) {
           return h`<${BlockRow} key=${b.id} w=${w} b=${b} used=${reuse[b.id] || 0} perf=${perf[b.id]} perfOn=${perfOn} open=${open === b.id}
             onToggle=${function () { setOpen(open === b.id ? null : b.id); }} onOpenMessage=${p.onOpenMessage} />`;
         })}</ul></section>` : null}
-      ${!rowsB.length && !rowsM.length ? h`<p className="ct-empty">Nothing matches. Clear a filter to see more.</p>` : null}
+      ${!rowsB.length && !rowsM.length ? h`<p className="ct-empty">${filtered ? 'Nothing matches. Clear the search or a filter to see more.' : 'No content yet. Ask the Content Writer for a message from Goals, or write one in Compose.'}</p>` : null}
     </div>`;
   }
 
@@ -556,8 +560,9 @@
           ${anyDirty ? h`<p className="ct-meta">Previews on the right already include your unsaved edits.</p>` : null}
         </section>
         <section className="ct-versions" aria-label="Channel versions">
-          <h3 className="ct-h">Every channel version, rendered from it</h3>
-          <div className="ct-chans">${CHANNELS.map(function (ch) { return h`<${ChannelCard} key=${ch} ch=${ch} r=${renders[ch]} w=${dw} />`; })}</div>
+          <${MC.ui.Details} id="ct-versions-details" summary="Preview by channel (each channel gets its own version, rendered from this message)">
+            <div className="ct-chans">${CHANNELS.map(function (ch) { return h`<${ChannelCard} key=${ch} ch=${ch} r=${renders[ch]} w=${dw} />`; })}</div>
+          <//>
         </section>
       </div>
 
@@ -583,10 +588,11 @@
       </section>
 
       <section className="ct-history" aria-label="Version history">
-        <h3 className="ct-h">Version history</h3>
+        <${MC.ui.Details} id="ct-history-details" summary="Version history">
         <ol>${hist.map(function (e) {
           return h`<li key=${e.key}><span className="ct-ver num">v${e.ver}</span><span>${e.text}${e.when ? h` <span className="ct-muted">${DOT} ${e.when}</span>` : null}${e.diff ? h`<br /><${Diff} a=${e.diff.a} b=${e.diff.b} />` : null}</span></li>`;
         })}</ol>
+        <//>
       </section>
     </div>`;
   }
@@ -722,6 +728,10 @@
     var firstMsg = useSel(function (w) { return w.content && w.content.messages.order[0] || null; });
     var msgId = msgId0 || firstMsg;
     var msgs = useSel(function (w) { return w.content ? w.content.messages : null; });
+    var review = useSel(function (w) { return w.content && w.content.messages ? w.content.messages.order.filter(function (id) { var m = w.content.messages.byId[id]; return m && m.review === 'in_review'; }).length : 0; });
+    var nMsgs = msgs ? msgs.order.length : 0;
+    var sentence = !ready ? 'Loading content' + ELL : !nMsgs ? 'No messages yet. Write one in Compose, or ask for one from Goals.'
+      : plural(nMsgs, 'message', 'messages') + ' you can reuse across channels' + (review ? '; ' + review + ' waiting for review.' : '; none waiting for review.');
     function onKey(e, i) {
       var j = e.key === 'ArrowRight' ? (i + 1) % 3 : e.key === 'ArrowLeft' ? (i + 2) % 3 : -1;
       if (j < 0) return;
@@ -730,14 +740,15 @@
     }
     return h`<section className="v-content">
       <header className="ct-header">
-        <h1 id="page-title" tabIndex="-1" className="ct-title">Content <span className="mc-art-tag">written, reused and learned from by your agents</span></h1>
+        <div><h1 id="page-title" tabIndex="-1" className="ct-title">Content</h1>
+        <p className="ct-sub" id="ct-sentence">${sentence}</p></div>
         <div className="ct-tabs" role="tablist" aria-label="Content sections">${TABS.map(function (t, i) {
           return h`<button key=${t[0]} id=${'ct-tab-' + t[0]} type="button" role="tab" aria-selected=${tab === t[0] ? 'true' : 'false'} aria-controls="ct-panel" tabIndex=${tab === t[0] ? 0 : -1}
             className=${cx('ct-tab', tab === t[0] && 'is-on')} onKeyDown=${function (e) { onKey(e, i); }} onClick=${function () { setTab(t[0]); }}>${t[1]}</button>`;
         })}</div>
       </header>
       <div id="ct-panel" role="tabpanel" aria-labelledby=${'ct-tab-' + tab}>
-        ${!ready ? h`<p className="ct-empty">Loading Fernway content${ELL}</p>`
+        ${!ready ? h`<p className="ct-empty">Loading content${ELL}</p>`
           : tab === 'library' ? h`<${Library} onOpenMessage=${openMessage} openBlock=${focus.blockId || null} openKey=${fkey + '|' + kick} />`
           : tab === 'compose' ? h`<div>
               <label className="ct-filter ct-pick"><span>Message</span>

@@ -12,6 +12,8 @@
 .v-content .ct-header { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 10px 20px; border-bottom: 1px solid var(--line); padding-bottom: 0; }
 .v-content .ct-title { margin: 0 0 8px; font-family: var(--font-display); font-weight: 700; font-size: 28px; line-height: 1.15; letter-spacing: -0.01em; }
 .v-content .ct-title:focus { outline: none; }
+.v-content .ct-sub { margin: 0 0 10px; color: var(--ink-2); font-size: 14px; }
+.v-content #ct-more-filters { margin-top: 8px; }
 .v-content .ct-title:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 .v-content .ct-tabs { display: flex; gap: 2px; }
 .v-content .ct-tab { font: inherit; font-size: 14px; font-weight: 600; min-height: 44px; padding: 8px 14px; background: none; border: 0; border-bottom: 2px solid transparent; color: var(--ink-3); cursor: pointer; margin-bottom: -1px; }

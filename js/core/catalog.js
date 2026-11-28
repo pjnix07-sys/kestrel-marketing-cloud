@@ -2371,4 +2371,7 @@
   missionAction('answer', 'Answer a mission question', ['user'], function () { return 'You answered a mission question'; });
   missionAction('steer', 'Steer a mission', ['user'], function (world, p) { return 'You steered a mission: ' + String(p.text || '').slice(0, 80); });
   missionAction('setStatus', 'Change mission status', ['user', 'mission'], function (world, p) { return 'You changed a mission to ' + p.status; });
+  // The work pulse (docs/AGENTIC.md "Execution"): one step of mission work, logged so replay reproduces it exactly. Payload is empty;
+  // the tick is the log stamp. It does not move the world clock.
+  missionAction('work', 'Run mission work', ['user'], function () { return 'Missions did a round of work'; });
 })();

@@ -1,24 +1,28 @@
 # Marketing Cloud
 
-You give a team of marketing agents an outcome, and you watch them plan it, do it, hand work to each other, and come back to you only for real decisions. Campaigns, audiences and copy are things the agents make along the way, not the places you start. The unit of work is a mission: one sentence with a goal, a deadline and limits. Everything an agent does goes through the same logged actions, guardrails and undo as anything you would do by hand, so the work on the board is real state in the sample world, not an animation.
+A marketing cloud you run by setting goals. You write the outcome you want in one sentence ("Win back 400 lapsed hikers before Dec 15 without discounting more than 15%"); agents plan it, build the audience, campaign and copy, run it, and ask you only for the decisions that are yours to make. Campaigns, audiences, content and results are all there to inspect and edit, but you rarely have to start from them. Everything an agent does goes through the same logged actions, guardrails and undo as a change you make by hand.
 
-The sample tenant is Fernway Outfitters, an invented outdoor retailer with 6,000 generated customer profiles and a season that runs Nov 7 to Dec 31, 2026.
+It is simple by default and deep on demand: each page leads with one plain sentence and one main action, and Settings → Detail level switches advanced figures and controls (intervals, methods, rule builders, run traces) from one click away to always open.
+
+The sample workspace is Fernway Outfitters, an invented outdoor retailer with 6,000 generated customer profiles. Its data is as of today and moves in real time.
 
 **Live:** https://pjnix07-sys.github.io/kestrel-marketing-cloud/
 
 ## Try this first
 
-1. Open a mission from the switcher in the top bar. "Win back 400 lapsed hikers before Dec 15 without discounting more than 15%" is already mid-execution. The board shows each agent's lane, what it is doing now, the hand-offs between agents, and the artifacts they have produced.
-2. Answer the ask. One mission has a question waiting: it shows the why, the impact range and what happens if you say no. Answer it and the blocked steps continue immediately.
-3. Steer in the Lead column. Open "Talk to Lead" and type "skip SMS" or "keep the discount under 10%". Lead replies in a sentence or two and the plan re-forms on the board.
-4. Start a New goal. Try `Grow Trail runners by 300 sign-ups by Dec 20 with no SMS`. Lead parses it, plans it, and the agents start.
-5. Open Artifacts, then Content. In Compose, edit one message and see its email, SMS, push, social and web versions render side by side from the same blocks. In Intelligence, read which headline angles win in which channel, which blocks are tired, and the agents' recommendations.
+1. **Home** (top of the left rail) answers "how am I doing and what needs me": revenue from your goals, each goal's progress against its target, and the decisions waiting.
+2. **Answer a decision.** The win-back goal has one: it says why, what it changes and the likely impact. Answer it and the work it was holding continues at once.
+3. **Open the goal** (Goals in the rail). The plan shows each step, which agent did it and what it produced; Activity lists what happened. Type "skip SMS" in Steer and the plan changes.
+4. **Set a new goal** with the + at the top of the rail. Try `Grow Trail runners by 300 sign-ups by Dec 20 with no SMS`. Agents plan it and start within seconds.
+5. **Content** in the rail: in Compose, edit one message and see its email, SMS, push, social and web versions render from the same blocks. **Results** shows goals, revenue, channels and content angles as charts with hover detail and table views.
+
+Hover any rail icon for its name; press `/` to search everything.
 
 ## How the agents work
 
 Out of the box the agents run on rules. A deterministic planner turns a goal sentence into a plan from templates (win back, launch, event revenue, grow a segment, protect the list), and the eight specialists do the work with the same scoring code as the rest of the app. Nothing needs a key.
 
-Connect Claude (top bar) and the Lead plans free-text goals with Claude Haiku 5.5, and the specialists reason and write with it. You connect with your own Anthropic API key. It stays in this browser (localStorage if "Remember on this device" is on, otherwise sessionStorage) and is sent only to `api.anthropic.com`. If a call fails, times out or returns something that does not validate, that step falls back to the rules result.
+Connect Claude (plug icon in the rail) and the Planner plans free-text goals with Claude Haiku 5.5, and the specialists reason and write with it. You connect with your own Anthropic API key. It stays in this browser (localStorage if "Remember on this device" is on, otherwise sessionStorage) and is sent only to `api.anthropic.com`. If a call fails, times out or returns something that does not validate, that step falls back to the rules result.
 
 Data policy: only aggregated campaign and audience numbers are sent. Individual customer records never leave the browser. Claude's output is recorded in the logged action payload, so replaying a session needs no API call.
 
@@ -55,7 +59,7 @@ js/agents/          lead (orchestrator) and the eight specialists
 js/ai/              Claude client, context builder, fleet bridge, inline tasks
 js/ui/              component kit, charts, flow, agent UI
 js/views/           mission (home), content, campaigns, audiences, analytics, console (Team), connect, tour
-js/app.js           top bar, Asks drawer, router, boot
+js/app.js           side rail, bottom bar (phones), Approvals, settings, router, boot
 tools/              tests and the local server script
 docs/               AGENTIC, CONTENT, AI-FLEET, DESIGN-DIRECTION, ARCHITECTURE, DEMO, FORENSICS
 concepts/           design prototypes the direction was chosen from

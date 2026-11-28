@@ -1,11 +1,9 @@
-/* Marketing Cloud - the Mission room (#missions, #missions/<id>): MC.views.missions.
-   The product's home. A live board, not a playback: everything here is rendered from the current store state
-   (world.missions, the campaigns/segments/variants the missions made, engine metrics) and re-renders as the engine
-   ticks and agents act. Nothing is scripted or timed: lanes are agents, blocks are the mission's real steps laid out
-   by dependency, wires are the steps' real `needs`, the baton chip is the real output a finished step is handing on,
-   cursors show only while a step is genuinely working, and the ask waits for a person. A just-changed element gets a
-   brief highlight (<= 320 ms) so the eye catches it. Routes: #missions and #missions/<id> (id read from the hash or
-   props.id; the room keeps the hash in step with history.replaceState, which never fires hashchange). */
+/* Marketing Cloud - the Goal page (#missions/<id>) and the Goals list (#missions): MC.views.missions.
+   A status view of real work, rendered from the store (world.missions, the campaigns/segments/messages the goal made,
+   MC.metrics). Header: the goal, the forecast verdict, one plain sentence of what is happening, one primary action.
+   Plan: the goal's real steps by dependency, grouped by agent. Right column: Steer (say what to change) and Activity
+   (plain past-tense facts). Reasoning options and step detail sit in MC.ui.Details (closed in Simple detail level).
+   The id comes from the hash or the shell's missionFocus; with no id the page lists every goal. */
 (function () {
   'use strict';
   var MC = window.MC = window.MC || {};
@@ -157,7 +155,7 @@
   }
   function Decision(p) {
     var d = p.d;
-    if (!d || !(d.options || EMPTY).length) return d && d.why ? html`<p className="mr-why-t">${d.why}</p>` : null;
+    if (!d || !(d.options || EMPTY).length) return null;
     return html`<div className=${cx('mr-dec', p.compact && 'is-compact')}>
       <ul className="mr-opts" aria-label="Options considered">${d.options.map(function (o, i) {
         var on = isChosen(d, o);
@@ -166,15 +164,27 @@
           ${o.value !== undefined && o.value !== null && o.value !== '' ? html`<span className="mr-opt-v num">${optValue(o.value)}</span>` : null}
           ${o.note ? html`<span className="mr-opt-n">${o.note}</span>` : null}</li>`;
       })}</ul>
-      ${d.why ? html`<p className="mr-why-t"><b>Why:</b> ${d.why}</p>` : null}
     </div>`;
   }
+  var STATUS_WORD = { done: 'Done', working: 'Working', blocked: 'Needs your decision', skipped: 'Skipped', queued: 'Queued' };
+  // Why this choice: the chosen option and the reason in a sentence; the options weighed and the full step detail behind Details.
   function StepWhy(p) {
-    var s = p.step;
+    var s = p.step, D = MC.ui && MC.ui.Details, d = s && s.decision, w = p.world, m = p.m, needs;
     if (!s) return null;
-    return html`<section className="mr-why" aria-label=${'What ' + agentName(s.agentId) + ' weighed'} data-tour="why">
-      <h2 className="mr-h"><${Mark} id=${s.agentId} size=${13} /> What ${agentName(s.agentId)} weighed <span className="mr-why-step">${DOT} ${s.title}</span></h2>
-      <${Decision} d=${s.decision} />
+    needs = (s.needs || EMPTY).map(function (n) { var x = (m.plan || EMPTY).filter(function (y) { return y.id === n; })[0]; return x ? x.title : n; });
+    return html`<section className="mr-why" aria-label="Why this choice">
+      <h2 className="mr-h">Why this choice <span className="mr-why-step">${DOT} ${s.title}</span></h2>
+      <p className="mr-why-by"><${Mark} id=${s.agentId} size=${13} /> ${agentName(s.agentId)}</p>
+      ${d && d.chose ? html`<p className="mr-why-t"><b>${d.chose}</b>${d.why ? ': ' + d.why : ''}</p>` : (d && d.why ? html`<p className="mr-why-t">${d.why}</p>` : null)}
+      ${D && d && (d.options || EMPTY).length ? html`<${D} summary="Options considered"><${Decision} d=${d} /><//>` : null}
+      ${D ? html`<${D} summary="Step detail"><dl className="mr-sd">
+        <div><dt>Step</dt><dd>${s.title}</dd></div>
+        <div><dt>Agent</dt><dd>${agentName(s.agentId)}</dd></div>
+        <div><dt>Status</dt><dd>${STATUS_WORD[s.status] || s.status}</dd></div>
+        ${needs.length ? html`<div><dt>Needs</dt><dd>${needs.join(', ')}</dd></div>` : null}
+        ${s.note ? html`<div><dt>Result</dt><dd>${s.note}</dd></div>` : null}
+        ${s.artifact ? html`<div><dt>Output</dt><dd>${payloadOf(w, m, s).full}</dd></div>` : null}
+      </dl><//>` : null}
     </section>`;
   }
 
@@ -211,18 +221,18 @@
     var out = [], size = seg ? seg.count : (m.data && m.data.audience && fin(m.data.audience.size) ? m.data.audience.size : null);
     var noun = NOUN[m.objective.metric] || 'campaign', asks = openAsks(m), work = workingSteps(m);
     function B(v) { return { b: v }; }
-    if (m.status === 'stopped') return ['Stopped. Everything the team made stays where it is.'];
+    if (m.status === 'stopped') return ['Stopped. Everything made so far is kept.'];
     if (m.status === 'done') return ['Finished. ', B(money(tot.rev)), ' came back against ', B(money(tot.cost)), ' spent.'];
     if (camp) {
       if (size !== null) out.push(B(num(size)), ' people are in the ' + noun + '. ');
       if (tot.sent > 0) {
         out.push(B(num(tot.sent)), ' messages are out; ', B(money(tot.rev)), ' back against ', B(money(tot.cost)), ' spent.');
-      } else out.push(camp.status === 'draft' ? 'The campaign is drafted and waiting for sign-off.' : 'Nothing has sent yet.');
+      } else out.push(camp.status === 'draft' ? 'The campaign is drafted and needs your sign-off.' : 'Nothing has sent yet.');
     } else if (size !== null) {
       out.push(B(num(size)), ' people found so far. ');
       if (work[0]) out.push(agentName(work[0].agentId) + ' is ' + lcFirst(work[0].title) + '.');
     } else if (work[0]) out.push(agentName(work[0].agentId) + ' is ' + lcFirst(work[0].title) + '.');
-    else out.push('The plan is forming.');
+    else out.push('The plan is being made.');
     if (asks.length) out.push(' One decision needs you.');
     return out;
   }
@@ -242,7 +252,7 @@
     add(sids.length === 1 ? 'Audience' : 'Audiences', 'segment', sids, function (id) { return w.segments.byId[id].name; });
     add(mids.length === 1 ? 'Message' : 'Messages', 'message', mids, function (x) { return trunc(x.name, 44); });
     if (!parts.length) return null;
-    return html`<p className="mr-links" aria-label="What this mission made">${parts}</p>`;
+    return html`<p className="mr-links" aria-label="What this goal made">${parts}</p>`;
   }
 
   /* ======================= small hooks ======================= */
@@ -250,64 +260,10 @@
     // re-render on every store change; read the world directly inside render
     return MC.hooks.useSelect(function () { return MC.store.version(); });
   }
-  // Brief highlight for keys whose signature changed since the last render (<= 320 ms).
-  function useFlash(scope, sig) {
-    var React = R(), ref = React.useRef(null), st = React.useState(EMPTY_OBJ), flash = st[0], setFlash = st[1];
-    var key = JSON.stringify(sig);
-    React.useEffect(function () {
-      var prev = ref.current;
-      ref.current = { scope: scope, sig: sig };
-      if (!prev || prev.scope !== scope) { setFlash(EMPTY_OBJ); return undefined; }
-      var ch = {}, any = false;
-      Object.keys(sig).forEach(function (k) { if (prev.sig[k] !== sig[k]) { ch[k] = 1; any = true; } });
-      if (!any) return undefined;
-      setFlash(ch);
-      var t = window.setTimeout(function () { setFlash(EMPTY_OBJ); }, 320);
-      return function () { window.clearTimeout(t); };
-    }, [scope, key]);
-    return flash;
-  }
-  var EMPTY_OBJ = {};
-  function Live(p) {
-    // a number that gets a brief highlight when its value changes
-    var React = R(), prev = React.useRef(p.value), st = React.useState(false);
-    React.useEffect(function () {
-      if (prev.current === p.value) return undefined;
-      prev.current = p.value;
-      st[1](true);
-      var t = window.setTimeout(function () { st[1](false); }, 320);
-      return function () { window.clearTimeout(t); };
-    }, [p.value]);
-    return html`<b className=${cx('mr-live', st[0] && 'is-bump', p.className)}>${p.text}</b>`;
-  }
+  function Live(p) { return html`<b className=${cx('mr-live', p.className)}>${p.text}</b>`; }
   function hashId() {
     var m = /^#?\/?missions\/([^/?]+)/.exec(window.location.hash || '');
     return m ? decodeURIComponent(m[1]) : null;
-  }
-
-  /* ======================= pieces ======================= */
-  function Switcher(p) {
-    var w = p.world, tick = w.meta.tick;
-    return html`<nav className="mr-switch" aria-label="Missions">
-      <ul className="mr-switch-list">
-        ${p.missions.map(function (m) {
-          var pr = progressOf(w, m), frac = pr.target > 0 ? clamp(pr.value / pr.target, 0, 1) : 0;
-          var work = workingSteps(m), asks = openAsks(m), cur = m.id === p.currentId;
-          var seen = {}, agents = work.filter(function (s) { if (seen[s.agentId]) return false; seen[s.agentId] = 1; return true; }).slice(0, 4);
-          return html`<li key=${m.id}><button type="button" className=${cx('mr-tab', cur && 'is-current', asks.length && 'has-ask')} aria-current=${cur ? 'true' : undefined}
-              onClick=${function () { p.onPick(m.id); }}>
-            <span className="mr-tab-goal">${m.goalText}</span>
-            <span className="mr-tab-bar" aria-hidden="true"><i style=${{ width: (frac * 100).toFixed(1) + '%' }}></i></span>
-            <span className="mr-tab-meta">
-              <span className="mr-tab-who">${agents.length ? agents.map(function (s) { return html`<${Mark} key=${s.agentId} id=${s.agentId} size=${13} />`; }) : null}
-                <span>${m.status === 'done' ? 'Done' : m.status === 'paused' ? 'Paused' : m.status === 'stopped' ? 'Stopped' : agents.length ? agentName(agents[0].agentId) + (agents.length > 1 ? ' +' + (agents.length - 1) : '') : asks.length ? 'Waiting on you' : m.phase === 'monitoring' ? 'Monitoring' : 'Planning'}</span></span>
-              ${asks.length ? html`<span className="mr-tab-ask">${asks.length > 1 ? asks.length + ' asks' : '1 ask'} for you</span>` : html`<span className="mr-tab-pct">${Math.round(frac * 100)}%</span>`}
-            </span>
-          </button></li>`;
-        })}
-      </ul>
-      <button type="button" className="mr-newgoal" onClick=${p.onNew}>New goal</button>
-    </nav>`;
   }
 
   function Meta(p) {
@@ -322,12 +278,11 @@
   }
 
   function Block(p) {
-    var s = p.step, pos = p.pos, st = s.status, frac = 0;
-    if (st === 'working') frac = clamp((p.tick - (s.startedTick || p.tick)) / ((MC.missions.DUR && MC.missions.DUR[s.kind]) || 6), 0.05, 1);
-    var label = st === 'done' ? 'done' : st === 'working' ? 'working' : st === 'blocked' ? 'waiting on you' : st === 'skipped' ? 'skipped' : 'queued';
+    var s = p.step, pos = p.pos, st = s.status;
+    var label = st === 'done' ? 'done' : st === 'working' ? 'working' : st === 'blocked' ? 'needs your decision' : st === 'skipped' ? 'skipped' : 'queued';
     var dec = s.decision && (s.decision.options || s.decision.why) ? s.decision : null;
     function pickMe(e) { if (p.onSelect) p.onSelect(s.id); }
-    return html`<div className=${cx('mr-blk', 's-' + st, p.flash && 'is-flash', dec && 'has-why', p.selected && 'is-picked')} role="listitem" title=${dec ? decisionLine(dec) : (s.note || s.title)}
+    return html`<div className=${cx('mr-blk', 's-' + st, dec && 'has-why', p.selected && 'is-picked')} role="listitem" title=${dec ? decisionLine(dec) : (s.note || s.title)}
         aria-label=${agentName(s.agentId) + ': ' + s.title + ', ' + label + (dec ? '. Weighed ' + (dec.options || EMPTY).length + ' options' + (dec.chose ? ', chose ' + dec.chose : '') : '')}
         tabIndex="0" aria-current=${p.selected ? 'true' : undefined} data-step=${s.id} onClick=${pickMe} onFocus=${pickMe}
         onKeyDown=${function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pickMe(e); } }}
@@ -335,7 +290,6 @@
       <span className="mr-blk-t">${s.title}</span>
       ${dec && dec.chose ? html`<span className="mr-blk-c">${trunc(dec.chose, 28)}</span>` : null}
       <span className="mr-sr">${label}</span>
-      ${st === 'working' ? html`<i className="mr-blk-fill" style=${{ width: (frac * 100).toFixed(0) + '%' }}></i>` : null}
     </div>`;
   }
 
@@ -346,9 +300,9 @@
     var allDone = mine.every(function (s) { return s.status === 'done' || s.status === 'skipped'; });
     var last = mine.filter(function (s) { return s.status === 'done'; }).pop();
     if (cur) return { state: 'work', word: 'Working', title: cur.title };
-    if (bl) return { state: 'wait', word: 'Waiting on you', title: bl.title };
+    if (bl) return { state: 'wait', word: 'Needs your decision', title: bl.title };
     if (allDone) return { state: 'ok', word: 'Done', title: m.phase === 'monitoring' && aid === 'analyst' ? 'Tracking results daily' : last ? last.title : 'Nothing left to do' };
-    return { state: 'idle', word: 'Up next', title: q ? q.title : 'Idle' };
+    return { state: 'idle', word: 'Queued', title: q ? q.title : 'Idle' };
   }
   function AgentRows(p) {
     var m = p.m;
@@ -358,7 +312,7 @@
       return html`<li key=${aid} className=${cx('mr-row', 'is-' + ln.state)}>
         <span className="mr-row-h"><span className="mr-led" aria-hidden="true"></span><span className="mr-nm"><${Mark} id=${aid} size=${14} />${agentName(aid)}</span>
           <span className="mr-row-w">${ln.word}</span></span>
-        <span className="mr-row-t">${ln.title}${(function () { var ds = mine.filter(function (x) { return x.decision && x.decision.options; }).pop(); return ds && p.onSelect ? html` <button type="button" className="mr-row-why" onClick=${function () { p.onSelect(ds.id); }}>What it weighed</button>` : null; })()}</span>
+        <span className="mr-row-t">${ln.title}${(function () { var ds = mine.filter(function (x) { return x.decision && x.decision.options; }).pop(); return ds && p.onSelect ? html` <button type="button" className="mr-row-why" onClick=${function () { p.onSelect(ds.id); }}>Why this choice</button>` : null; })()}</span>
         <span className="mr-row-n">${done} of ${mine.length} ${mine.length === 1 ? 'step' : 'steps'} done</span>
       </li>`;
     })}</ul>`;
@@ -372,7 +326,7 @@
     var gap = clamp(colW * 0.12, 18, 30), blockW = colW - gap, stageW = colW * lay.ncols;
     var H = lay.rows.length * ROW_H, tick = w.meta.tick;
     function pos(s) { var c = lay.cells[s.id]; return { x: c.col * colW, y: c.row * ROW_H + CAP_H, w: blockW }; }
-    var wires = [], chips = [], seenChip = {};
+    var wires = [];
     (m.plan || EMPTY).forEach(function (s) {
       (s.needs || EMPTY).forEach(function (nid) {
         var src = lay.byId[nid];
@@ -385,11 +339,9 @@
         var active = src.status === 'done' && s.status !== 'done' && s.status !== 'skipped';
         var passed = src.status === 'done' && !active;
         wires.push({ k: nid + '>' + s.id, d: d, active: active, passed: passed });
-        if (src.status === 'done' && !seenChip[nid]) { seenChip[nid] = 1; chips.push({ k: nid, x: a.x + a.w, y: lay.cells[nid].row * ROW_H + 2, active: active, p: payloadOf(w, m, src), from: src.agentId, to: s.agentId }); }
-        else if (active && seenChip[nid]) chips.forEach(function (c) { if (c.k === nid) c.active = true; });
       });
     });
-    return html`<div className="mr-scroll" data-tour="lanes" ref=${ref} role="region" aria-label="Agent team board" tabIndex="0">
+    return html`<div className="mr-scroll" data-tour="lanes" ref=${ref} role="region" aria-label="Plan by agent" tabIndex="0">
       ${narrow ? html`<${AgentRows} m=${m} lay=${lay} onSelect=${p.onSelect} />` : html`<div className="mr-lanes" style=${{ width: stageW + 'px', minWidth: '100%' }}>
         ${lay.rows.map(function (aid, ri) {
           var ln = stepLine(m, aid);
@@ -401,11 +353,7 @@
           ${wires.map(function (x) { return html`<path key=${x.k} d=${x.d} className=${cx(x.active && 'is-active', x.passed && 'is-passed')} />`; })}
         </svg>
         <div className="mr-stage" role="list" aria-label="Steps" style=${{ left: 0, width: stageW + 'px', height: H + 'px' }}>
-          ${(m.plan || EMPTY).map(function (s) { return lay.cells[s.id] ? html`<${Block} key=${s.id} step=${s} pos=${pos(s)} tick=${tick} flash=${p.flash[s.id]} selected=${p.selId === s.id} onSelect=${p.onSelect} />` : null; })}
-          ${chips.map(function (c) {
-            return html`<span key=${'c' + c.k} className=${cx('mr-baton', c.active && 'is-active')} style=${{ left: (c.x + 3) + 'px', top: c.y + 'px', maxWidth: Math.max(colW + gap, 150) + 'px' }}
-              title=${agentName(c.from) + ' handed ' + c.p.full + ' to ' + agentName(c.to)}>${c.p.short}</span>`;
-          })}
+          ${(m.plan || EMPTY).map(function (s) { return lay.cells[s.id] ? html`<${Block} key=${s.id} step=${s} pos=${pos(s)} tick=${tick} selected=${p.selId === s.id} onSelect=${p.onSelect} />` : null; })}
         </div>
       </div>`}
     </div>`;
@@ -418,12 +366,12 @@
     var more = p.count > 1 ? ' (' + (p.count - 1) + ' more after this)' : '';
     return html`<section className="mr-ask" data-tour="ask" aria-labelledby="mr-ask-q">
       <div className="mr-ask-main">
-        <p className="mr-ask-who"><${Mark} id=${ask.agentId} size=${13} /> ${agentName(ask.agentId)} needs a decision${more}${ask.blocking !== false && held ? ' · ' + held + (held === 1 ? ' step is' : ' steps are') + ' waiting' : ''}</p>
+        <p className="mr-ask-who"><${Mark} id=${ask.agentId} size=${13} /> ${agentName(ask.agentId)} asks for a decision${more}${ask.blocking !== false && held ? ' · ' + held + (held === 1 ? ' step is' : ' steps are') + ' on hold' : ''}</p>
         <h2 id="mr-ask-q">${ask.question}</h2>
-        <details className="mr-ask-why"><summary>Why ${agentName(ask.agentId)} is asking</summary><p>${ask.why}</p></details>
+        <details className="mr-ask-why"><summary>Why this is asked</summary><p>${ask.why}</p></details>
       </div>
       <div className="mr-ask-side">
-        ${hasImpact ? html`<p className="mr-ask-imp"><span className="k">If you agree</span><b>${num(im.lo)} to ${num(im.hi)}</b> <small>${metric || 'expected change'}</small></p>` : null}
+        ${hasImpact ? html`<p className="mr-ask-imp"><span className="k">If approved</span><b>${num(im.lo)} to ${num(im.hi)}</b> <small>${metric || 'expected change'}</small></p>` : null}
         <div className="mr-ask-act">
           ${ask.options.map(function (o) {
             return html`<button key=${o} type="button" className=${cx('mr-ask-btn', o === ask.default && 'go')} disabled=${p.busy} onClick=${function () { p.onAnswer(ask, o); }}>${o}</button>`;
@@ -436,11 +384,9 @@
 
   /* ---- artifact panels ---- */
   function Panel(p) {
-    var C = MC.ui && MC.ui.AgentCursor;
-    return html`<article className=${cx('mr-art', !p.ready && 'is-wait', p.flash && 'is-flash')} aria-label=${p.title}>
+        return html`<article className=${cx('mr-art', !p.ready && 'is-wait')} aria-label=${p.title}>
       <header><h3>${p.title}</h3><span className="by"><${Mark} id=${p.agent} size=${12} />${agentName(p.agent)}</span></header>
-      ${p.ready ? html`<div className="mr-art-body">${p.children}</div>` : html`<p className="mr-art-ph">${p.working ? agentName(p.agent) + ' is on it.' : 'Waiting on ' + agentName(p.agent)}</p>`}
-      ${p.working && C ? html`<${C} id=${p.agent} className="mr-cursor" style=${{ right: 18, bottom: 16 }} />` : null}
+      ${p.ready ? html`<div className="mr-art-body">${p.children}</div>` : html`<p className="mr-art-ph">${p.working ? agentName(p.agent) + ' is working on it.' : 'Not made yet'}</p>`}
     </article>`;
   }
   function SegmentPanel(p) {
@@ -544,34 +490,10 @@
     if (camp) { try { st = MC.select.campaignStats(w, camp.id); } catch (e) { st = null; } }
     var brand = w.meta && w.meta.tenant ? w.meta.tenant : 'Fernway Outfitters';
     return html`<div className="mr-arts">
-      <${Panel} title="Segment" agent="scout" ready=${!!seg} working=${busy(['audience', 'widen'])} flash=${p.flash.seg}>${seg ? html`<${SegmentPanel} seg=${seg} m=${m} />` : null}<//>
-      <${Panel} title=${msgId ? "Message" : "Email"} agent="copy" ready=${vs.length > 0} working=${busy(['copy', 'rewrite'])} flash=${p.flash.mail}>${vs.length ? (msgId && MC.content && MC.content.message ? html`<${MessagePanel} world=${w} messageId=${msgId} channels=${camp ? camp.channels : null} />` : html`<${EmailPanel} variants=${vs} brand=${brand} />`) : null}<//>
-      <${Panel} title="Journey" agent="planner" ready=${!!camp} working=${busy(['campaign', 'extend', 'offer', 'channel'])} flash=${p.flash.jour}>${camp ? html`<${JourneyPanel} camp=${camp} world=${w} />` : null}<//>
-      <${Panel} title="Budget" agent="pacer" ready=${!!camp && camp.budget.total > 0} working=${busy(['pacer', 'budget'])} flash=${p.flash.bud}>${camp ? html`<${BudgetPanel} camp=${camp} stats=${st} />` : null}<//>
-    </div>`;
-  }
-
-  function Narration(p) {
-    var m = p.m, all = m.log || EMPTY, tick = p.tick, last = all[all.length - 1], byId = {};
-    (m.plan || EMPTY).forEach(function (s) { byId[s.id] = s; });
-    var log = all.slice(-5);
-    // a disagreement or a steering diff stays visible until five newer beats have pushed it out
-    var pin = null;
-    for (var k = all.length - 1; k >= 0 && k >= all.length - 12; k--) if (all[k].kind === 'disagree' && log.indexOf(all[k]) < 0) { pin = all[k]; break; }
-    if (pin) log = [pin].concat(log.slice(1));
-    return html`<div className="mr-narr">
-      <h2 className="mr-h">What the team is saying</h2>
-      <ol>${log.map(function (b, i) {
-        var newest = i === log.length - 1, dis = b.kind === 'disagree', diff = diffOf(b);
-        var st = b.stepId ? byId[b.stepId] : null, dec = b.decision || (st && st.decision && b.kind !== 'ask' ? st.decision : null);
-        return html`<li key=${b.tick + ':' + b.agentId + ':' + b.text.slice(0, 24)} className=${cx(newest && 'is-new', 'k-' + b.kind)}>
-          <b><${Mark} id=${b.agentId} size=${13} />${agentName(b.agentId)}<span>${DOT} ${ago(b.tick, tick)}</span></b>
-          <span className="mr-narr-t">${b.text}</span>
-          ${dis ? html`<${Disagree} b=${b} />` : null}
-          ${diff.length ? html`<${DiffList} diff=${diff} />` : null}
-          ${dec && dec.options && dec.options.length ? html`<details className="mr-narr-why"><summary>What ${agentName(b.agentId)} weighed</summary><${Decision} d=${dec} compact=${true} /></details>` : null}</li>`;
-      })}</ol>
-      <div className="mr-sr" role="status" aria-live="polite">${last ? agentName(last.agentId) + ': ' + last.text : ''}</div>
+      <${Panel} title="Audience" agent="scout" ready=${!!seg} working=${busy(['audience', 'widen'])}>${seg ? html`<${SegmentPanel} seg=${seg} m=${m} />` : null}<//>
+      <${Panel} title=${msgId ? "Message" : "Email"} agent="copy" ready=${vs.length > 0} working=${busy(['copy', 'rewrite'])}>${vs.length ? (msgId && MC.content && MC.content.message ? html`<${MessagePanel} world=${w} messageId=${msgId} channels=${camp ? camp.channels : null} />` : html`<${EmailPanel} variants=${vs} brand=${brand} />`) : null}<//>
+      <${Panel} title="Journey" agent="planner" ready=${!!camp} working=${busy(['campaign', 'extend', 'offer', 'channel'])}>${camp ? html`<${JourneyPanel} camp=${camp} world=${w} />` : null}<//>
+      <${Panel} title="Budget" agent="pacer" ready=${!!camp && camp.budget.total > 0} working=${busy(['pacer', 'budget'])}>${camp ? html`<${BudgetPanel} camp=${camp} stats=${st} />` : null}<//>
     </div>`;
   }
 
@@ -584,161 +506,90 @@
     </div>`;
   }
 
-  /* ---- Lead conversation ---- */
-  function threadOf(m) {
-    var items = [{ k: 'g', who: 'you', text: m.goalText, tick: m.createdTick, o: 0 }], n = 1;
-    (m.steers || EMPTY).forEach(function (s) { items.push({ k: 's' + n, who: 'you', text: s.text, tick: s.tick, o: n++ }); });
-    (m.log || EMPTY).forEach(function (b) { if (b.agentId === 'lead') items.push({ k: 'l' + b.tick + ':' + b.text.slice(0, 20), who: 'lead', text: b.text, tick: b.tick, o: n++, diff: diffOf(b) }); });
-    items.sort(function (a, b) { return a.tick - b.tick || a.o - b.o; });
-    return items.slice(-30);
-  }
-  function LeadColumn(p) {
-    var React = R(), m = p.m, st = React.useState(''), text = st[0], setText = st[1];
-    var thread = m && p.mode === 'steer' ? threadOf(m) : EMPTY, asks = m ? openAsks(m) : EMPTY;
-    var endRef = React.useRef(null), taRef = React.useRef(null);
-    var fitRef = React.useRef('');
-    // Open on the latest message. When the whole conversation fits in a little more than the default window, grow the
-    // window to fit it (once per mission and mode) so the first message and the top padding are never clipped.
-    React.useEffect(function () {
-      var e = endRef.current, t = e && e.parentNode;
-      if (!t) return;
-      var key = (m ? m.id : '') + '|' + p.mode;
-      if (fitRef.current !== key && t.scrollHeight > 0) {
-        fitRef.current = key;
-        t.style.maxHeight = '';
-        var cap = Math.round(window.innerHeight * 0.7);
-        if (t.scrollHeight > t.clientHeight && t.scrollHeight <= cap) t.style.maxHeight = t.scrollHeight + 'px';
-      }
-      t.scrollTop = t.scrollHeight;
-    }, [thread.length, asks.length, p.creating, p.open, m && m.id, p.mode]);
+  /* ======================= right column: Steer and Activity ======================= */
+  function Steer(p) {
+    var React = R(), st = React.useState(''), text = st[0], setText = st[1], taRef = React.useRef(null);
+    var chips = ['Keep the discount under 10%', 'Skip SMS', 'Pause until Monday'];
     React.useEffect(function () { if (p.focusTick && taRef.current) taRef.current.focus(); }, [p.focusTick]);
     function send() {
       var t = text.trim();
-      if (!t || p.creating) return;
+      if (!t) return;
       p.onSend(t, function (ok) { if (ok) setText(''); });
     }
-    var steerMode = p.mode === 'steer' && m;
-    var chips = steerMode ? ['Keep the discount under 10%', 'Skip SMS', 'Pause until Monday'] : ['Win back 300 lapsed customers by Dec 20', 'Hit $15k from a weekend flash sale'];
-    return html`<aside className=${cx('mr-lead', p.open ? 'is-open' : 'is-shut')} aria-label="Conversation with Lead" data-tour="lead">
-      <div className="mr-lead-head">
-        <span className="mr-lead-id"><${Mark} id="lead" size=${14} badge=${true} /><b>Lead</b></span>
-        <button type="button" className="mr-lead-toggle" aria-expanded=${p.open ? 'true' : 'false'} aria-controls="mr-lead-body" onClick=${p.onToggle}>${p.open ? 'Hide' : 'Talk to Lead'}</button>
-      </div>
-      <div id="mr-lead-body" className="mr-lead-body" hidden=${!p.open}>
-        <div className="mr-thread">
-          ${steerMode ? null : html`<p className="mr-msg lead"><span className="who">Lead</span>What should the team get done? Give me an outcome, a deadline and any limits, in a sentence.</p>`}
-          ${thread.map(function (x) {
-            return x.who === 'you' ? html`<p key=${x.k} className="mr-msg you">${x.text}</p>`
-              : html`<div key=${x.k} className="mr-msg lead"><span className="who">Lead</span>${x.text}${x.diff && x.diff.length ? html`<${DiffList} diff=${x.diff} />` : null}</div>`;
-          })}
-          ${asks.map(function (a) {
-            return html`<div key=${a.id} className="mr-msg ask"><span className="who">${agentName(a.agentId)} asks</span>${a.question}
-              <span className="mr-msg-opts">${a.options.map(function (o) { return html`<button key=${o} type="button" disabled=${p.busy} onClick=${function () { p.onAnswer(a, o); }}>${o}</button>`; })}</span></div>`;
-          })}
-          ${p.creating ? html`<p className="mr-msg lead is-typing" role="status"><span className="who">Lead</span>Reading your goal and drafting a plan…</p>` : null}
-          <span ref=${endRef}></span>
-        </div>
-        ${p.error ? html`<p className="mr-lead-err" role="alert">${p.error}</p>` : null}
-        <div className="mr-chips">${chips.map(function (c) { return html`<button key=${c} type="button" onClick=${function () { setText(c); if (taRef.current) taRef.current.focus(); }}>${c}</button>`; })}</div>
-        <div className="mr-compose">
-          <div className="mr-mode" role="group" aria-label="What this message does">
-            ${m ? html`<button type="button" aria-pressed=${steerMode ? 'true' : 'false'} onClick=${function () { p.onMode('steer'); }}>Steer this mission</button>` : null}
-            <button type="button" aria-pressed=${steerMode ? 'false' : 'true'} onClick=${function () { p.onMode('new'); }}>New goal</button>
-          </div>
-          <label className="mr-sr" htmlFor="mr-lead-input">${steerMode ? 'Steer this mission in plain language' : 'Describe a new goal'}</label>
-          <textarea id="mr-lead-input" ref=${taRef} rows="3" value=${text} placeholder=${steerMode ? 'Keep the discount under 10%, skip SMS…' : 'Win back 300 lapsed customers by Dec 20 without discounting more than 15%…'}
-            onChange=${function (e) { setText(e.target.value); }}
-            onKeyDown=${function (e) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }}></textarea>
-          <button type="button" className="mr-send" disabled=${!text.trim() || p.creating} onClick=${send}>${steerMode ? 'Steer' : 'Start mission'}</button>
-        </div>
-      </div>
-    </aside>`;
+    return html`<section className="mr-steer" aria-labelledby="mr-steer-h" data-tour="lead">
+      <h2 id="mr-steer-h" className="mr-h">Steer</h2>
+      <p className="mr-steer-hint">Say what to change, in plain language. Limits, deadline, channels, pause or stop.</p>
+      <label className="mr-sr" htmlFor="mr-steer-input">Steer this goal in plain language</label>
+      <textarea id="mr-steer-input" ref=${taRef} rows="3" value=${text} placeholder="Keep the discount under 10%, skip SMS…"
+        onChange=${function (e) { setText(e.target.value); }}
+        onKeyDown=${function (e) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }}></textarea>
+      <div className="mr-chips">${chips.map(function (c) { return html`<button key=${c} type="button" onClick=${function () { setText(c); if (taRef.current) taRef.current.focus(); }}>${c}</button>`; })}</div>
+      ${p.error ? html`<p className="mr-lead-err" role="alert">${p.error}</p>` : null}
+      <button type="button" className="mr-send" disabled=${!text.trim()} onClick=${send}>Steer</button>
+    </section>`;
   }
 
-  /* ======================= the view ======================= */
-  function MissionRoom(props) {
-    var React = R(), useState = React.useState, useEffect = React.useEffect, useMemo = React.useMemo;
-    useStoreTick();
-    var focusId = MC.hooks.useUi ? MC.hooks.useUi(function (u) { return u.missionFocus || null; }) : null;
-    var w = getWorld();
-    var missions = w && w.missions ? MC.missions.list(w) : EMPTY;
-    var st = useState(function () { return (props && (props.id || props.missionId)) || focusId || hashId(); }), wantId = st[0], setWantId = st[1];
-    var os = useState(false), newMode = os[0], setNewMode = os[1];
-    var ls = useState(function () { return window.innerWidth >= 1100; }), leadOpen = ls[0], setLeadOpen = ls[1];
-    var cs = useState(false), creating = cs[0], setCreating = cs[1];
+  function ActivityItem(p) {
+    var f = p.fact, G = MC.goalUi, D = MC.ui && MC.ui.Details, diff = f.diff ? diffOf(f) : EMPTY;
+    var dis = f.kind === 'disagree' && sidesOf(f.beat).length;
+    return html`<${G.FactRow} fact=${f} now=${p.now}>
+      ${diff.length ? html`<${DiffList} diff=${diff} />` : null}
+      ${dis && D ? html`<${D} summary="What each agent said"><${Disagree} b=${f.beat} /><//>` : null}
+    <//>`;
+  }
+  function Activity(p) {
+    var G = MC.goalUi, D = MC.ui && MC.ui.Details;
+    if (!G) return null;
+    var all = G.factsOf(p.m).sort(function (a, b) { return b.tick - a.tick; }), top = all.slice(0, 8), rest = all.slice(8);
+    return html`<section className="mr-activity" aria-labelledby="mr-act-h">
+      <h2 id="mr-act-h" className="mr-h">Activity</h2>
+      ${all.length ? html`<ul className="act-list">${top.map(function (f) { return html`<${ActivityItem} key=${f.key} fact=${f} now=${p.now} />`; })}</ul>`
+        : html`<p className="mr-quiet">Nothing has happened yet.</p>`}
+      ${rest.length && D ? html`<${D} summary=${'Earlier activity (' + rest.length + ')'}><ul className="act-list">${rest.map(function (f) { return html`<${ActivityItem} key=${f.key} fact=${f} now=${p.now} />`; })}</ul><//>` : null}
+    </section>`;
+  }
+
+  /* ======================= Goals list (#missions) ======================= */
+  function openNewGoal() { try { MC.uiStore.set({ drawer: 'goal' }); } catch (e) { /* shell not ready */ } }
+  function GoalsList(p) {
+    var G = MC.goalUi, Btn = MC.ui && MC.ui.Button, E = MC.ui && MC.ui.EmptyState, w = p.world;
+    var live = p.missions.filter(function (m) { return m.status !== 'done' && m.status !== 'stopped'; });
+    var past = p.missions.filter(function (m) { return m.status === 'done' || m.status === 'stopped'; });
+    var newBtn = Btn ? html`<${Btn} kind="primary" onClick=${openNewGoal}>New goal<//>` : html`<button type="button" onClick=${openNewGoal}>New goal</button>`;
+    var waiting = 0; live.forEach(function (m) { waiting += openAsks(m).length; });
+    return html`<section className="v-missions v-goals" aria-label="Goals">
+      <header className="mr-page-head">
+        <div><h1 className="mr-goal-h" id="page-title" tabIndex="-1">Goals</h1>
+          <p className="mr-status">${live.length ? live.length + (live.length === 1 ? ' goal' : ' goals') + ' in progress' + (waiting ? ' · ' + waiting + (waiting === 1 ? ' decision needs you' : ' decisions need you') : '') + '.' : 'No goals in progress.'}</p></div>
+        <div>${newBtn}</div>
+      </header>
+      ${p.missions.length && G ? html`
+        ${live.length ? html`<${G.GoalRows} world=${w} goals=${live} />` : null}
+        ${past.length ? html`<h2 className="mr-h mr-past-h">Finished and stopped</h2><${G.GoalRows} world=${w} goals=${past} />` : null}`
+        : (E ? html`<${E} title="No goals yet" body="Say the outcome, the deadline and any limits. Agents plan it, do the work and ask you only for decisions." action=${newBtn} />` : null)}
+    </section>`;
+  }
+
+  /* ======================= Goal page (#missions/<id>) ======================= */
+  function GoalPage(p) {
+    var React = R(), w = p.world, m = p.m, useState = React.useState;
+    var ss = useState(null), selStep = ss[0], setSelStep = ss[1];
     var es = useState(null), error = es[0], setError = es[1];
     var fs = useState(0), focusTick = fs[0], setFocusTick = fs[1];
-    var as = useState(false), busy = as[0], setBusy = as[1];
-    var ss = useState(null), selStep = ss[0], setSelStep = ss[1];
-
-    useEffect(function () {
-      function on() { var h = hashId(); if (h) { setWantId(h); setNewMode(false); } else if (/^#?\/?missions\/new/.test(window.location.hash || '')) { setNewMode(true); setLeadOpen(true); setFocusTick(function (t) { return t + 1; }); } }
-      window.addEventListener('hashchange', on);
-      on();
-      MC.missionRoom = { newGoal: function () { setNewMode(true); setLeadOpen(true); setFocusTick(function (t) { return t + 1; }); }, focus: function (id) { setWantId(id); setNewMode(false); } };
-      return function () { window.removeEventListener('hashchange', on); if (MC.missionRoom) delete MC.missionRoom; };
-    }, []);
-    useEffect(function () { if (focusId) { setWantId(focusId); setNewMode(false); } }, [focusId]);
-    useEffect(function () { if (props && (props.id || props.missionId)) setWantId(props.id || props.missionId); }, [props && props.id, props && props.missionId]);
-
-    var m = useMemo(function () {
-      if (!missions.length) return null;
-      var f = wantId && missions.filter(function (x) { return x.id === wantId; })[0];
-      if (f) return f;
-      return missions.filter(function (x) { return x.status !== 'done' && x.status !== 'stopped'; })[0] || missions[0];
-    }, [missions, wantId]);
-    var mid = m ? m.id : null;
-    useEffect(function () {
-      if (!mid) return;
-      try { var want = '#missions/' + mid; if (window.location.hash !== want && /^#?\/?missions/.test(window.location.hash || '#missions')) window.history.replaceState(null, '', want); } catch (e) { /* ignore */ }
-    }, [mid]);
-
-    var lay = useMemo(function () { return m ? layout(m) : null; }, [m]);
-    var sig = {};
-    if (m) {
-      (m.plan || EMPTY).forEach(function (s) { sig[s.id] = s.status + ':' + (s.artifact ? s.artifact.id : ''); });
-      sig.seg = (m.artifacts || EMPTY).filter(function (a) { return a.kind === 'segment'; }).length;
-      var camp0 = w ? campaignOf(w, m) : null;
-      sig.mail = camp0 ? MC.catalog.variantsOf(w, camp0.id).length : 0;
-      sig.jour = camp0 ? camp0.ver : 0; sig.bud = camp0 ? JSON.stringify(camp0.budget) : 0;
-    }
-    var flash = useFlash(mid || 'none', sig);
-
-    function pick(id) { setWantId(id); setNewMode(false); setError(null); try { MC.uiStore.set({ missionFocus: id }); } catch (e) { /* ignore */ } }
-    function openNew() { setNewMode(true); setLeadOpen(true); setError(null); setFocusTick(function (t) { return t + 1; }); }
+    var bs = useState(false), busy = bs[0], setBusy = bs[1];
+    var lay = React.useMemo(function () { return layout(m); }, [m]);
     function answer(ask, option) {
-      if (!m) return;
       setBusy(true);
       var r = MC.missions.answer(m.id, ask.id, option);
       setBusy(false);
-      setError(r && r.ok ? null : (r && r.error) || 'That didn’t go through.');
+      setError(r && r.ok ? null : (r && r.error) || 'That did not go through.');
     }
-    function send(textIn, done) {
+    function steer(text, done) {
       setError(null);
-      if (newMode || !m) {
-        setCreating(true);
-        MC.missions.create(textIn).then(function (r) {
-          setCreating(false);
-          if (r && r.ok) { setWantId(r.id); setNewMode(false); done(true); } else { setError((r && r.error) || 'I couldn’t start that.'); done(false); }
-        }, function () { setCreating(false); setError('I couldn’t start that.'); done(false); });
-        return;
-      }
-      var r = MC.missions.steer(m.id, textIn);
-      if (r && r.ok) done(true); else { setError((r && r.error) || 'That didn’t go through.'); done(false); }
+      var r = MC.missions.steer(m.id, text);
+      if (r && r.ok) done(true); else { setError((r && r.error) || 'That did not go through.'); done(false); }
     }
-
-    if (!w) return html`<section className="v-missions"><h1 className="mr-goal-h">Loading the mission room</h1></section>`;
-    var leadProps = { m: m, mode: newMode || !m ? 'new' : 'steer', open: leadOpen, onToggle: function () { setLeadOpen(!leadOpen); }, onSend: send, onAnswer: answer,
-      onMode: function (md) { setNewMode(md === 'new'); }, creating: creating, error: error, busy: busy, focusTick: focusTick };
-
-    if (!m) {
-      return html`<section className="v-missions is-empty"><div className="mr-main">
-        <div className="mr-center"><h1 className="mr-goal-h" id="page-title" tabIndex="-1" data-tour="goal">What should the team get done?</h1>
-          <p className="mr-status">Say the outcome, the deadline and any limits. Lead will plan it and the agents will start working in front of you.</p></div>
-        <${LeadColumn} ...${leadProps} open=${true} /></div></section>`;
-    }
-
-    var tick = w.meta.tick, camp = campaignOf(w, m), seg = segmentOf(w, m), cids = campaignIds(w, m), pr = progressOf(w, m);
+    var tick = w.meta.tick, camp = campaignOf(w, m), seg = segmentOf(w, m), pr = progressOf(w, m);
     var tot = totalsFromMetrics(metricsOf(w, m)) || { sent: 0, deliv: 0, reached: null, rev: 0, cost: 0, conv: 0 };
     var whyStep = (m.plan || EMPTY).filter(function (x) { return x.id === selStep && x.decision; })[0] || null;
     if (!whyStep) {
@@ -746,37 +597,55 @@
       withDec.sort(function (a, b) { return (b.doneTick || b.startedTick || 0) - (a.doneTick || a.startedTick || 0); });
       whyStep = withDec[0] || null;
     }
-    var asks = openAsks(m), ask = asks[0], sentence = statusSentence(w, m, tot, seg, camp);
-    var anyWork = workingSteps(m).length > 0;
-    return html`<section className=${cx('v-missions', leadOpen && 'lead-open')} aria-label="Mission room">
-      <${Switcher} world=${w} missions=${missions} currentId=${m.id} onPick=${pick} onNew=${openNew} />
+    var asks = openAsks(m), ask = asks[0], sentence = statusSentence(w, m, tot, seg, camp), anyWork = workingSteps(m).length > 0;
+    var Btn = MC.ui && MC.ui.Button, G = MC.goalUi, flash = {};
+    var primary = ask
+      ? { label: 'Review decision', run: function () { var el = document.getElementById('mr-ask-q'); if (el) { el.scrollIntoView({ block: 'center' }); } } }
+      : (m.status === 'done' || m.status === 'stopped' ? null : { label: 'Steer this goal', run: function () { var el = document.getElementById('mr-steer-input'); if (el) el.focus(); } });
+    return html`<section className="v-missions" aria-label="Goal">
+      <p className="mr-crumb"><a href="#missions" onClick=${function (e) { e.preventDefault(); MC.nav.go('missions'); }}>Goals</a></p>
       <div className="mr-main">
         <div className="mr-center">
           <header className="mr-goal">
             <h1 className="mr-goal-h" id="page-title" tabIndex="-1" data-tour="goal">${m.goalText}</h1>
             <${Verdict} world=${w} m=${m} progress=${pr} />
+            <p className="mr-status">${sentence.map(function (x, i) { return typeof x === 'string' ? x : html`<${Live} key=${i} text=${x.b} />`; })}</p>
+            ${primary ? (Btn ? html`<${Btn} kind="primary" onClick=${primary.run}>${primary.label}<//>` : html`<button type="button" onClick=${primary.run}>${primary.label}</button>`) : null}
             <${Meta} world=${w} m=${m} progress=${pr} />
             <${MissionLinks} world=${w} m=${m} />
           </header>
-          <p className="mr-status">${sentence.map(function (x, i) { return typeof x === 'string' ? x : html`<${Live} key=${i} value=${x.b} text=${x.b} />`; })}</p>
           ${ask ? html`<${AskCard} ask=${ask} m=${m} count=${asks.length} busy=${busy} error=${error} onAnswer=${answer} />` : null}
-          <div className="mr-board">
+          <section className="mr-board" aria-labelledby="mr-plan-h">
+            <h2 id="mr-plan-h" className="mr-h">Plan</h2>
             <div className="mr-board-lanes">
               <${Board} m=${m} world=${w} lay=${lay} flash=${flash} selId=${whyStep ? whyStep.id : selStep} onSelect=${setSelStep} />
             </div>
-            <p className="mr-board-foot">${m.status === 'paused' ? 'Paused. Tell Lead when to pick it back up.' : m.status === 'done' ? 'This mission has finished.' : m.status === 'stopped' ? 'This mission was stopped.' : ask ? 'Waiting on your decision. Steps that don’t depend on it keep going.' : anyWork ? 'The team is working. This board updates as they finish.' : m.phase === 'monitoring' ? 'The plan is in place. Insight Analyst checks results every morning.' : 'Next steps start as soon as their inputs are ready.'}</p>
-          </div>
-          <${StepWhy} step=${whyStep} />
+            <p className="mr-board-foot">${m.status === 'paused' ? 'Paused. Steer to resume.' : m.status === 'done' ? 'This goal is finished.' : m.status === 'stopped' ? 'This goal was stopped.' : ask ? 'Waiting on your decision. Steps that do not depend on it continue.' : anyWork ? 'Work in progress. Status updates as steps finish.' : m.phase === 'monitoring' ? 'The plan is in place. Insight Analyst checks results every morning.' : 'Next steps start as soon as their inputs are ready.'}</p>
+          </section>
+          <${StepWhy} step=${whyStep} world=${w} m=${m} />
           <div className="mr-bay">
             <${Artifacts} world=${w} m=${m} camp=${camp} seg=${seg} flash=${flash} />
-            <${Narration} m=${m} tick=${tick} />
             <${Counters} tot=${tot} camp=${camp} />
           </div>
         </div>
-        <${LeadColumn} ...${leadProps} />
+        <aside className="mr-side" aria-label="Steer and activity">
+          <${Steer} onSend=${steer} error=${ask ? null : error} focusTick=${focusTick} />
+          <${Activity} m=${m} now=${tick} />
+        </aside>
       </div>
     </section>`;
   }
 
-  MC.views.missions = MissionRoom;
+  function Goals(props) {
+    useStoreTick();
+    var focusId = MC.hooks.useUi ? MC.hooks.useUi(function (u) { return u.missionFocus || null; }) : null;
+    var w = getWorld();
+    if (!w) return html`<section className="v-missions"><h1 className="mr-goal-h" id="page-title" tabIndex="-1">Goals</h1><p className="mr-status">Loading…</p></section>`;
+    var missions = w.missions ? MC.missions.list(w) : EMPTY;
+    var id = (props && (props.id || props.missionId)) || focusId || hashId();
+    var m = id ? missions.filter(function (x) { return x.id === id; })[0] : null;
+    return m ? html`<${GoalPage} key=${m.id} world=${w} m=${m} />` : html`<${GoalsList} world=${w} missions=${missions} />`;
+  }
+
+  MC.views.missions = Goals;
 })();

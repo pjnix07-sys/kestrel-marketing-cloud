@@ -785,7 +785,7 @@
     return html`<${U.Drawer} ...${p} side=${p.side || 'bottom'} className=${cx('k-sheet', p.className)} />`;
   };
 
-  // {anchorRef, open, onClose, children, label, id, placement:'bottom-start'|'bottom-end'|'top-start', width}
+  // {anchorRef, open, onClose, children, label, id, placement:'bottom-start'|'bottom-end'|'top-start'|'right'|'right-end', width}
   U.Popover = function Popover(p) {
     var html = H(), React = R();
     var box = React.useRef(null);
@@ -804,11 +804,19 @@
         var w = el ? el.offsetWidth : (p.width || 320);
         var hgt = el ? el.offsetHeight : 200;
         var pl = p.placement || 'bottom-start';
-        var left = pl.indexOf('end') >= 0 ? r.right - w : r.left;
-        left = Math.max(8, Math.min(left, vw - w - 8));
-        var top = pl.indexOf('top') === 0 ? r.top - hgt - 6 : r.bottom + 6;
-        if (top + hgt > vh - 8 && r.top - hgt - 6 > 8) top = r.top - hgt - 6;
-        top = Math.max(8, top);
+        var left, top;
+        if (pl.indexOf('right') === 0) {
+          // Beside the anchor (the side rail): aligned to its top, or its bottom for 'right-end'; kept on screen.
+          left = Math.min(r.right + 8, vw - w - 8);
+          top = pl === 'right-end' ? r.bottom - hgt : r.top;
+          top = Math.max(8, Math.min(top, vh - hgt - 8));
+        } else {
+          left = pl.indexOf('end') >= 0 ? r.right - w : r.left;
+          left = Math.max(8, Math.min(left, vw - w - 8));
+          top = pl.indexOf('top') === 0 ? r.top - hgt - 6 : r.bottom + 6;
+          if (top + hgt > vh - 8 && r.top - hgt - 6 > 8) top = r.top - hgt - 6;
+          top = Math.max(8, top);
+        }
         setPos(function (old) { return old && old.left === left && old.top === top ? old : { left: left, top: top }; });
       }
       place();
@@ -1075,7 +1083,7 @@
     if (kind === 'segment') cams.forEach(function (cid) { X.messagesOfCampaign(w, cid).forEach(function (x) { if (!msgs.some(function (y) { return y.id === x.id; })) msgs.push(x); }); });
     function L(lab, items) { if (items.length) parts.push(html`<span key=${lab} className="xref-part"><span className="xref-k">${lab}</span> ${items}</span>`); }
     function join(arr) { var out = []; arr.forEach(function (x, i) { if (i) out.push(', '); out.push(x); }); return out; }
-    L(ms.length === 1 ? 'Mission' : 'Missions', join(ms.slice(0, 3).map(function (m) { return html`<${U.Xlink} key=${m.id} kind="mission" id=${m.id}>${trunc(X.missionTitle(m), 46)}<//>`; })));
+    L(ms.length === 1 ? 'Goal' : 'Goals', join(ms.slice(0, 3).map(function (m) { return html`<${U.Xlink} key=${m.id} kind="mission" id=${m.id}>${trunc(X.missionTitle(m), 46)}<//>`; })));
     if (ag.made || ag.changed) {
       var items = [];
       if (ag.made) items.push(html`<span key="m">made by <${U.Xlink} kind="agent" id=${ag.made}>${agentName(ag.made)}<//></span>`);
@@ -1087,6 +1095,23 @@
     if (cams.length) L(cams.length === 1 ? 'Campaign' : 'Campaigns', join(cams.slice(0, 3).map(function (cid) { return html`<${U.Xlink} key=${cid} kind="campaign" id=${cid}>${w.campaigns.byId[cid].name}<//>`; })));
     if (!parts.length) return null;
     return html`<p className=${cx('xref', p.className)} aria-label="Where this fits">${parts.map(function (x, i) { return html`<span key=${i} className="xref-w">${i ? html`<span className="xref-sep" aria-hidden="true"> ${DOT} </span>` : null}${x}</span>`; })}</p>`;
+  };
+
+  /* <Details summary="More detail" id? open?>…</Details>: progressive disclosure for advanced content.
+     Closed by default in Simple mode, open by default in Detailed mode (Settings → Detail level). The person can
+     still open or close any one; that choice holds until the detail level changes. Native <details>, so it is
+     keyboard and screen-reader friendly with no script. */
+  function selDetail(s) { return s.detail; }
+  U.Details = function Details(p) {
+    var html = H(), React = R();
+    var level = MC.hooks.useUi(selDetail);
+    var want = p.open != null ? !!p.open : level === 'detailed';
+    var ref = React.useRef(null);
+    React.useEffect(function () { if (ref.current) ref.current.open = want; }, [want]);
+    return html`<details ref=${ref} id=${p.id} className=${cx('mc-details', p.className)}>
+      <summary className="mc-details-sum"><span>${p.summary || 'More detail'}</span></summary>
+      <div className="mc-details-body">${p.children}</div>
+    </details>`;
   };
   function trunc(s, n) { s = String(s || ''); return s.length > n ? s.slice(0, n - 1).replace(/\s+\S*$/, '') + '…' : s; }
 })();

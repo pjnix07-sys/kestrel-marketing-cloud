@@ -1,9 +1,12 @@
 /* Marketing Cloud - MC.engine: boots the Fernway Outfitters sample world and keeps it moving.
-   One tick = one hour of world time (5 s of wall clock). The wall-clock scheduler is a setTimeout chain that runs
-   continuously at one default pace (PACE_MS) regardless of which view is open; each fire advances
-   exactly one tick inside a single store batch, so subscribers see one notify per tick.
-   Pacing lives only here (§11.1): the UI exposes no speed or clock. setSpeed/getSpeed/step remain for
-   internal and dev use (headless tests pause; the overflow menu's "Jump ahead" calls step).
+   Two clocks. (1) The WORLD clock tracks the real wall clock: one tick = one world hour, the world is caught up to the real
+   date and hour on boot, and after that a tick happens when the real hour turns (the next fire is scheduled for the next
+   hour boundary; a tab that slept catches up the missed hours in one batch). Each tick runs inside a single store batch,
+   so subscribers see one notify per tick. (2) The WORK pulse: while any mission has a step that is claimable or working,
+   a mission-work step (the logged catalog action mission/work) runs about once a second WITHOUT moving the world clock, so
+   agents plan, hand off and finish in seconds. When no mission has pending work the pulse stops: no idle timers.
+   Pacing lives only here (§11.1): the UI exposes no speed or clock. setSpeed/getSpeed/step/SPEEDS remain for internal and
+   dev use (headless tests pause and call step / pulse; the overflow menu's "Jump ahead" calls step).
    advance(world) is the shared tick pipeline used by both the live world and replay. */
 (function () {
   'use strict';
@@ -11,12 +14,13 @@
   var E = MC.engine = MC.engine || {};
 
   var assign = Object.assign;
-  // Default pace: one world hour every 5 s (a day in 2 minutes), so figures hold still while you read them. Missions do not
-  // slow down: they advance one dependency level per tick (see MC.missions.advance). Other keys are dev-only.
-  E.PACE_MS = 5000;
-  E.DEFAULT_SPEED = '1x';
-  E.SPEEDS = { pause: 0, '1x': E.PACE_MS, '4x': E.PACE_MS / 4, '16x': E.PACE_MS / 16 };
-  E.SPEED_KEYS = ['pause', '1x', '4x', '16x'];
+  // Default pace: real time. The world is one hour per real hour, so figures hold still while you read them. Missions do
+  // not wait for it: they run on the work pulse (PULSE_MS). The fast keys are dev-only (they fire a tick every N ms).
+  E.PACE_MS = 3600000;
+  E.PULSE_MS = 1000;
+  E.DEFAULT_SPEED = 'live';
+  E.SPEEDS = { pause: 0, live: E.PACE_MS, '1x': 5000, '4x': 1250, '16x': 312.5 };
+  E.SPEED_KEYS = ['pause', 'live', '1x', '4x', '16x'];
   E.PHASES = [
     { id: 'profiles', label: 'Generating 6,000 sample customer profiles' },
     { id: 'history', label: 'Replaying 60 days of sample history' },
@@ -60,7 +64,12 @@
     if (h === 0) MC.sim.dayRoll(world, d);
     MC.sim.step(world, t);
     if (MC.runtime && typeof MC.runtime.runDue === 'function') MC.runtime.runDue(world, t);
-    if (MC.missions && typeof MC.missions.advance === 'function') MC.missions.advance(world, t);
+    // Daily mission work (check-in, re-plan, resume) rides the world clock. Mission STEPS run on the work pulse; only the
+    // catch-up region (ticks up to meta.seedTarget, generated unlogged in both live boot and replay) runs them per tick.
+    if (MC.missions) {
+      if (typeof MC.missions.advance === 'function') MC.missions.advance(world, t);
+      if (typeof MC.missions.work === 'function' && t <= (world.meta.seedTarget || 0)) MC.missions.work(world, t);
+    }
     return world;
   };
 
@@ -95,11 +104,32 @@
   };
 
   /* ======================= wall-clock scheduler ======================= */
+  var pulseTimer = null, stalled = null;
   function clear() { if (timer !== null) { clearTimeout(timer); timer = null; } }
   function schedule(delay) { clear(); timer = setTimeout(fire, Math.max(0, delay)); }
+  // Milliseconds until the next real (local) hour boundary, plus a little slack so the timer never fires just before it.
+  function msToNextHour() {
+    var d = new Date();
+    return ((59 - d.getMinutes()) * 60 + (59 - d.getSeconds())) * 1000 + (1000 - d.getMilliseconds()) + 50;
+  }
+  function liveBehind() {
+    var w = MC.store.getState();
+    if (!w) return 0;
+    var target = E.catchUpTarget(new Date());
+    return target > w.meta.tick ? target - w.meta.tick : 0;
+  }
+  function scheduleLive() { schedule(liveBehind() > 0 ? 0 : msToNextHour()); }
   function fire() {
     timer = null;
     if (speed === 'pause' || !booted) return;
+    if (speed === 'live') {
+      // The real hour turned (or the tab slept through several): catch the world up in one batch, then wait for the next hour.
+      var behind = liveBehind();
+      var n = behind > 0 ? Math.min(behind, 24 * 7) : (E.catchUpTarget(new Date()) === 0 ? 1 : 0); // outside the season: one tick per hour
+      if (n > 0) E.step(n);
+      if (speed === 'live') scheduleLive();
+      return;
+    }
     var start = now();
     E.tickOnce();
     if (speed === 'pause') return;
@@ -112,7 +142,9 @@
     var changed = key !== speed;
     speed = key;
     clear();
-    if (key !== 'pause' && booted) schedule(E.SPEEDS[key]);
+    if (key === 'live' && booted) scheduleLive();
+    else if (key !== 'pause' && booted) schedule(E.SPEEDS[key]);
+    if (key === 'pause') { if (pulseTimer !== null) { clearTimeout(pulseTimer); pulseTimer = null; } } else kick();
     if (changed) {
       try { if (MC.uiStore && MC.uiStore.set) MC.uiStore.set({ speed: key }); } catch (e) { report(e); }
       emit();
@@ -121,6 +153,44 @@
   };
   E.getSpeed = function () { return speed; };
   E.isBooted = function () { return booted; };
+
+  /* ======================= work pulse ======================= */
+  // One mission-work step on the live world: the logged catalog action mission/work (replay applies the same entries in order).
+  // Returns true if it changed anything. It never touches meta.tick. If a pulse changes nothing it marks the missions as
+  // stalled, so the pulse stays off until something (a tick, an answer, a steer) changes them.
+  E.pulse = function () {
+    var w = MC.store.getState();
+    if (!w || !MC.missions || !MC.missions.hasWork(w)) return false;
+    var before = w.missions, ok = false;
+    try {
+      var r = MC.store.dispatch({ type: 'mission/work', payload: {}, by: null });
+      ok = !!r.ok;
+    } catch (e) { report(e); }
+    if (!ok || w.missions === before) { stalled = w.missions; return false; }
+    return true;
+  };
+  function pulsePending() {
+    var w = MC.store.getState();
+    return !!w && !!MC.missions && stalled !== w.missions && MC.missions.hasWork(w);
+  }
+  // Arms the next pulse only if mission work is pending; otherwise there is no timer at all.
+  function kick() {
+    if (pulseTimer !== null || !booted || speed === 'pause') return;
+    if (!pulsePending()) return;
+    pulseTimer = setTimeout(function () {
+      pulseTimer = null;
+      if (speed === 'pause' || !booted) return;
+      E.pulse();
+      kick();
+    }, E.PULSE_MS);
+  }
+  E.pulsePending = function () { return pulseTimer !== null; };
+  var subscribed = false;
+  function watchStore() {
+    if (subscribed || !MC.store || !MC.store.subscribe) return;
+    subscribed = true;
+    MC.store.subscribe(kick);
+  }
 
   // Advances n ticks (1..168) synchronously with a single notify; the live pace then continues.
   E.step = function (n) {
@@ -263,6 +333,7 @@
       try { if (MC.time && MC.time.anchorDisplay) MC.time.anchorDisplay('2026-11-07', 0); } catch (e) { report(e); }
       MC.store.init(w);
       booted = true;
+      watchStore();
       E.setSpeed(opts.speed && E.SPEEDS[opts.speed] !== undefined ? opts.speed : E.DEFAULT_SPEED);
       emit();
       return w;
@@ -299,6 +370,8 @@
       try { if (MC.uiStore && MC.uiStore.clearToasts) MC.uiStore.clearToasts(); } catch (e) { report(e); }
       MC.store.init(w);
       booted = true;
+      stalled = null;
+      watchStore();
       resetFocus(w);
       E.setSpeed(E.DEFAULT_SPEED);
       emit();
