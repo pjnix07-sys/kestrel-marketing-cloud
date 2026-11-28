@@ -633,7 +633,7 @@
       </div>
       ${can ? null : html`<p className="app-ask-note">Your role can read this but not answer it.</p>`}
       ${msg ? html`<p className="app-ask-note" role="alert">${msg}</p>` : null}
-      <button type="button" className="app-ask-open" onClick=${function () { setUi({ drawer: null }); go('missions', m.id); }}>Open mission</button>
+      <button type="button" className="app-ask-open" onClick=${function () { setUi({ drawer: null }); go('missions', m.id); }}>Open goal</button>
     </article>`;
   }
   // The mission a proposal belongs to: its own missionId, else the mission that made the campaign or audience it targets.

@@ -93,7 +93,7 @@
         content: { variantId: null, channel: 'email' },
         audiences: { tab: 'segments', segmentId: null, profileIdx: null },
         analytics: { range: 30, campaignIds: [], channel: 'all', metric: 'revenue', showAgents: true },
-        agents: { tab: 'roster', agentId: 'optimizer', auditId: null }
+        agents: { tab: 'roster', agentId: null, auditId: null }
       },
       plannerBrief: null, toasts: [], notify: defaultNotify()
     };
